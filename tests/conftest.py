@@ -17,6 +17,17 @@ from hub import lockguard
 
 
 @pytest.fixture(autouse=True)
+def screen_unlocked(monkeypatch):
+    """The ears ask the real screen lock; a CI runner has none, which counts as locked. Tests
+    about the lock patch ears.locked themselves."""
+    try:
+        from voice import ears
+    except ImportError:
+        return
+    monkeypatch.setattr(ears, "locked", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def lock_state_in_tmp(tmp_path, monkeypatch):
     monkeypatch.setattr(lockguard, "STATE", tmp_path / "lockguard")
     monkeypatch.setattr(lockguard, "LOG", tmp_path / "lockguard" / "locked.log")
