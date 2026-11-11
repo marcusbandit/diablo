@@ -290,3 +290,10 @@ def test_the_standby_remembers_a_failure_outside_the_mirrored_settings(root, mon
     assert run(autoship.standby_step()) == "failed"
     assert settings.get(autoship.FAILED_KEY) in (None, "")
     assert run(autoship.standby_step()) == "current"
+
+
+def test_autoship_follows_the_public_repo_not_the_release_archive():
+    from hub import releases
+
+    assert autoship.REPO == "marcusbandit/diablo"
+    assert autoship.REPO != releases.REPO

@@ -32,7 +32,9 @@ from . import brains, releases, selfrestart, settings, standby
 
 logger = logging.getLogger(__name__)
 
-REPO = releases.REPO
+# The hub ships from the public repo; releases.REPO is the private archive that keeps the old
+# desktop app's releases, so the two must never share a name.
+REPO = "marcusbandit/diablo"
 BRANCH = "main"
 ROOT = Path(__file__).resolve().parent.parent
 SHIPPED = ("hub/", "web/")
