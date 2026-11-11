@@ -205,6 +205,66 @@ ShellRoot {
         id: theme
     }
 
+    // The web view for HTML pages (webcard.py, its own GTK process: Quickshell cannot host
+    // Qt WebEngine). It starts with the first page and stays; it gets one JSON line per change:
+    // which page, and where the spot kept free for it is, in the monitor's coordinates.
+    Process {
+        id: webview
+
+        command: ["env", "LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so", "python3", Quickshell.shellPath("webcard.py")]
+        stdinEnabled: true
+        onExited: root.webSent = ""
+    }
+
+    property string webSent: ""
+
+    // The spot for the page that should show now: the central card's, else the newest card
+    // with a page, and only once it has finished growing, so the view never chases a scaling card.
+    function webTarget(): var {
+        if (!follow.visible)
+            return null;
+        if (root.panelOpen) {
+            const card = root.panelState.card;
+            if (root.panelState.view !== "now" || !card?.page || panelGrow.xScale < 0.999)
+                return null;
+            return { page: card.page, item: panel.pageArea };
+        }
+        if (!cards.showing || grow.xScale < 0.999)
+            return null;
+        for (let i = cardColumn.children.length - 1; i >= 0; i--) {
+            const c = cardColumn.children[i];
+            if (c && c.page && c.visible && c.scale > 0.999)
+                return { page: c.page, item: c.pageSlot };
+        }
+        return null;
+    }
+
+    Timer {
+        interval: 50
+        repeat: true
+        running: root.up || root.webSent !== ""
+        onTriggered: {
+            const t = root.webTarget();
+            let msg = { page: "" };
+            if (t && t.item && t.item.width > 0) {
+                const p = t.item.mapToItem(null, 0, 0);
+                msg = { page: t.page, x: Math.round(p.x), y: Math.round(p.y), w: Math.round(t.item.width), h: Math.round(t.item.height),
+                    monitor: follow.screen?.name ?? "" };
+            }
+            const line = JSON.stringify(msg);
+            if (line === root.webSent || (msg.page === "" && root.webSent === ""))
+                return;
+            // Started on this tick, written on the next one, once it reads its stdin.
+            if (msg.page !== "" && !webview.running) {
+                webview.running = true;
+                return;
+            }
+            if (webview.running)
+                webview.write(line + "\n");
+            root.webSent = msg.page === "" ? "" : line;
+        }
+    }
+
     FileView {
         id: earsFile
 
