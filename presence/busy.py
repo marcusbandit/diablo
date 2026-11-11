@@ -72,15 +72,34 @@ def read_json(path, fallback):
 
 
 def save_page(card_id, html):
-    """The page as a file the web view loads; only the newest KEEP_PAGES stay."""
+    """The page as a file the web view loads; only the newest KEEP_PAGES stay. The name is the
+    card id kept to letters and digits, so nothing from the stream picks the path."""
     pages = STATE / "pages"
     pages.mkdir(parents=True, exist_ok=True)
-    path = pages / f"{card_id}.html"
+    name = "".join(ch for ch in str(card_id) if ch.isalnum())[:32] or "page"
+    path = pages / f"{name}.html"
     path.write_text(html)
     old = sorted(pages.glob("*.html"), key=lambda p: p.stat().st_mtime)[:-KEEP_PAGES]
     for stale in old:
         stale.unlink(missing_ok=True)
     return str(path)
+
+
+def number(value, fallback):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def locked():
+    """The same lock voice/presence.py takes, so the ears and this never write over each other."""
+    import fcntl
+
+    STATE.mkdir(parents=True, exist_ok=True)
+    handle = open(STATE / "presence.lock", "a")
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    return handle
 
 
 def show(event, now=None):
@@ -97,9 +116,11 @@ def show(event, now=None):
         panel = read_json(STATE / "panel.json", {})
         write_json(STATE / "panel.json", {**panel, "open": True, "view": "now", "card": card, "at": now})
         return "large"
-    cards = [c for c in read_json(STATE / "presence.json", {"cards": []}).get("cards") or []
-             if isinstance(c, dict) and now < float(c.get("at") or 0) + float(c.get("ttl") or 10)]
-    write_json(STATE / "presence.json", {"cards": (cards + [card])[-KEEP_CARDS:]})
+    with locked():
+        body = read_json(STATE / "presence.json", {"cards": []})
+        cards = [c for c in body.get("cards") or []
+                 if isinstance(c, dict) and now < number(c.get("at"), now) + number(c.get("ttl"), 10)]
+        write_json(STATE / "presence.json", {**body, "cards": (cards + [card])[-KEEP_CARDS:]})
     return "small"
 
 
@@ -139,7 +160,7 @@ def follow(cfg):
                     elif isinstance(event, dict) and event.get("kind") == "screen":
                         try:
                             show(event)
-                        except OSError as error:
+                        except Exception as error:  # a bad card never cuts the busy feed
                             sys.stderr.write(f"screen: {error}\n")
     finally:
         done.set()

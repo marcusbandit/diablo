@@ -98,3 +98,18 @@ class TestTool(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDesktopSideIsCareful(TestDesktopSide):
+    def test_a_strange_id_never_leaves_pages(self):
+        busy.show({"card": {"id": "../../x", "html": "<b>hi</b>", "ttl": 60}, "size": "small"}, now=1000)
+        card = self.read("presence.json")["cards"][0]
+        self.assertEqual(Path(card["page"]).parent, Path(self.tmp.name) / "pages")
+
+    def test_other_keys_and_odd_stamps_survive(self):
+        (Path(self.tmp.name) / "presence.json").write_text(json.dumps(
+            {"cards": [{"id": "ears", "at": "soon", "ttl": None}], "extra": 1}))
+        busy.show({"card": {"id": "new", "ttl": 60}, "size": "small"}, now=1000)
+        body = self.read("presence.json")
+        self.assertEqual(body["extra"], 1)
+        self.assertEqual([c["id"] for c in body["cards"]], ["ears", "new"])
