@@ -20,6 +20,20 @@ EARS = {"panel-settings": "trained", "panel-training": "speech", "panel-now": "t
 PORT = 18758
 
 
+def wait_for_port(port, seconds=10):
+    """Until the fake ears answer, so a slow machine never shoots a panel saying they are gone."""
+    import socket
+
+    end = time.time() + seconds
+    while time.time() < end:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return True
+        except OSError:
+            time.sleep(0.05)
+    return False
+
+
 def render(scene, out):
     code = (
         "import sys\n"
@@ -53,7 +67,7 @@ def main():
         if scene in EARS:
             ears = subprocess.Popen([sys.executable, str(ROOT / "scripts/fakeears.py"), str(PORT), EARS[scene]],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(0.4)
+            wait_for_port(PORT)
         try:
             path = out / f"{scene}.png"
             code = render(scene, path)

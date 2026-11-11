@@ -176,6 +176,10 @@ Rectangle {
         visible: panel.view === "now"
 
         Column {
+            id: nowText
+
+            readonly property bool hasText: !!(panel.card?.title || panel.card?.big || (panel.card?.lines ?? []).length)
+
             width: parent.width
             spacing: 8
             visible: panel.card !== null
@@ -223,9 +227,9 @@ Rectangle {
 
             readonly property bool wanted: panel.view === "now" && (panel.card?.page ?? "") !== ""
 
-            y: panel.card && (panel.card.title || panel.card.big) ? 0 : 0
+            y: nowText.hasText ? nowText.implicitHeight + 16 : 0
             width: parent.width
-            height: parent.height
+            height: parent.height - y
             visible: pageArea.wanted
             radius: 12
             color: panel.style.base
