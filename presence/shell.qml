@@ -33,8 +33,25 @@ ShellRoot {
     property string moment: ""
 
     // The setting: false keeps the orb in the bottom right corner of the cursor's monitor.
-    // Quickshell reloads on save, so flipping it here takes effect at once.
-    readonly property bool followCursor: true
+    // Settings in the central card flip it; it is kept in presence-settings.json.
+    property bool followCursor: true
+
+    // The central card (Panel.qml): Diablo opened up in the middle of the screen. panel.json
+    // holds {open, view, card}; the ears write it for "open up", "enlarge this" and "close",
+    // and this file writes it when the card is closed here.
+    property var panelState: ({ open: false, view: "settings", card: null })
+    readonly property bool panelOpen: !!root.panelState.open
+
+    function setPanel(changes: var) {
+        const next = Object.assign({}, root.panelState, changes, { at: Date.now() / 1000 });
+        root.panelState = next;
+        panelFile.setText(JSON.stringify(next));
+    }
+
+    function setFollow(on: bool) {
+        root.followCursor = on;
+        settingsFile.setText(JSON.stringify({ follow: on }));
+    }
 
     // For scripts/presence-shots.sh: a fixed cursor ("x,y" in global coordinates) instead of
     // asking Hyprland, and no hub feed, so a test instance never moves or reads anything real.
@@ -60,7 +77,7 @@ ShellRoot {
     // moment ago, so a count left behind (#215) can never hold the orb up on its own.
     readonly property bool earsBehind: (root.ears.thinking ?? 0) > 0 && root.clock - root.lastBusyAt < 15000
     readonly property bool busy: root.hubBusy || root.earsBehind
-    readonly property bool up: root.awake || root.busy || root.cardsUp
+    readonly property bool up: root.awake || root.busy || root.cardsUp || root.panelOpen
     readonly property string busyWords: {
         const turns = root.hubTurns;
         if (turns.length === 0)
@@ -211,6 +228,24 @@ ShellRoot {
     }
 
     FileView {
+        id: panelFile
+
+        path: root.stateDir + "/panel.json"
+        watchChanges: true
+        printErrors: false
+        onFileChanged: panelFile.reload()
+        onLoaded: root.panelState = root.parse(panelFile.text(), root.panelState)
+    }
+
+    FileView {
+        id: settingsFile
+
+        path: root.stateDir + "/presence-settings.json"
+        printErrors: false
+        onLoaded: root.followCursor = root.parse(settingsFile.text(), { follow: true }).follow !== false
+    }
+
+    FileView {
         id: presenceFile
 
         path: root.stateDir + "/presence.json"
@@ -301,11 +336,12 @@ ShellRoot {
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        WlrLayershell.keyboardFocus: root.panelOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         WlrLayershell.namespace: "diablo-orb"
         // Only the cards take the pointer; the orb and the rest of the screen pass it through.
+        // With the central card open the whole screen takes it, so a click outside closes it.
         mask: Region {
-            item: cards
+            item: root.panelOpen ? outside : cards
         }
 
         anchors {
@@ -323,10 +359,11 @@ ShellRoot {
         readonly property real localY: follow.anchor.y - (follow.screen?.y ?? 0)
         readonly property bool flipX: root.followCursor && follow.localX + follow.gap + group.width > follow.width - follow.edge
         readonly property bool flipY: root.followCursor && follow.localY + follow.gap + group.height > follow.height - follow.edge
-        readonly property real targetX: Math.max(follow.edge, Math.min(follow.width - group.width - follow.edge,
+        readonly property var panelSpot: Place.panelRect({ w: follow.width, h: follow.height }, follow.edge)
+        readonly property real targetX: root.panelOpen ? follow.panelSpot.x + 18 : Math.max(follow.edge, Math.min(follow.width - group.width - follow.edge,
             !root.followCursor ? follow.width - group.width - 22
             : follow.flipX ? follow.localX - follow.gap - group.width : follow.localX + follow.gap))
-        readonly property real targetY: Math.max(follow.edge, Math.min(follow.height - group.height - follow.edge,
+        readonly property real targetY: root.panelOpen ? follow.panelSpot.y + 4 : Math.max(follow.edge, Math.min(follow.height - group.height - follow.edge,
             !root.followCursor ? follow.height - group.height - 22
             : follow.flipY ? follow.localY - follow.gap - group.height : follow.localY + follow.gap))
 
@@ -348,6 +385,8 @@ ShellRoot {
             }
 
             function onCursorChanged() {
+                if (root.panelOpen)
+                    return;
                 if (!root.cardsUp) {
                     follow.anchor = root.cursor;
                     return;
@@ -420,9 +459,10 @@ ShellRoot {
                     control: !!root.ears.loop
                     dictating: !!root.ears.dictation
                     thinkingBehind: root.busy
-                    presenting: root.cardsUp && !root.awake && !root.busy
+                    presenting: (root.cardsUp || root.panelOpen) && !root.awake && !root.busy
                     moment: root.moment
                     mouthTrack: root.mouthTrack
+                    facesDir: `${Quickshell.shellDir}/../assets/faces`
 
                     Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                 }
@@ -433,7 +473,7 @@ ShellRoot {
                 id: pill
 
                 // Words only while he is doing something; holding out a card says it already.
-                visible: root.awake || root.busy || root.moment !== ""
+                visible: (root.awake || root.busy || root.moment !== "") && !root.panelOpen
                 x: follow.flipX ? 0 : orbBox.width + 8
                 anchors.verticalCenter: orbBox.verticalCenter
                 width: label.implicitWidth + 24 + (dots.visible ? dots.width + 6 : 0)
@@ -505,6 +545,63 @@ ShellRoot {
             }
         }
 
+        // Behind the central card: a click anywhere else closes it.
+        MouseArea {
+            id: outside
+
+            anchors.fill: parent
+            z: -2
+            enabled: root.panelOpen
+            onClicked: root.setPanel({ open: false })
+        }
+
+        // The central card, grown out of the orb: it scales up from where he was and he moves
+        // into its top left corner. Escape closes it.
+        Panel {
+            id: panel
+
+            readonly property var spot: follow.panelSpot
+
+            x: panel.spot.x
+            y: panel.spot.y
+            width: panel.spot.w
+            height: panel.spot.h
+            z: -1
+            style: theme
+            visible: root.panelOpen || panelGrow.xScale > 0.05
+            opacity: root.panelOpen ? 1 : 0
+            view: root.panelState.view ?? "settings"
+            card: root.panelState.card ?? null
+            followCursor: root.followCursor
+            earsUrl: Quickshell.env("DIABLO_EARS_URL") || "http://127.0.0.1:8758"
+            focus: root.panelOpen
+            Keys.onEscapePressed: root.setPanel({ open: false })
+            onCloseRequested: root.setPanel({ open: false })
+            onViewRequested: view => root.setPanel({ view: view })
+            onFollowChanged: on => root.setFollow(on)
+
+            Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+
+            transform: Scale {
+                id: panelGrow
+
+                origin.x: group.x + orbBox.width / 2 - panel.x
+                origin.y: group.y + orbBox.height / 2 - panel.y
+                xScale: root.panelOpen ? 1 : 0.05
+                yScale: root.panelOpen ? 1 : 0.05
+
+                Behavior on xScale { NumberAnimation { duration: 380; easing.type: Easing.OutCubic } }
+                Behavior on yScale { NumberAnimation { duration: 380; easing.type: Easing.OutCubic } }
+            }
+
+            // Clicks on the card itself stay in it.
+            MouseArea {
+                anchors.fill: parent
+                z: -1
+                onClicked: {}
+            }
+        }
+
         // The cards, grown out of the orb: placed by Place.cardRect from where the orb is now,
         // scaled up from the point nearest it, and carried along when the orb moves.
         Item {
@@ -518,8 +615,10 @@ ShellRoot {
             y: cards.spot.y
             width: 300
             height: cardColumn.implicitHeight
-            visible: root.cardsUp || grow.xScale > 0.05
-            opacity: root.cardsUp ? 1 : 0
+            readonly property bool showing: root.cardsUp && !root.panelOpen
+
+            visible: cards.showing || grow.xScale > 0.05
+            opacity: cards.showing ? 1 : 0
 
             Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
@@ -528,8 +627,8 @@ ShellRoot {
 
                 origin.x: cards.spot.originX
                 origin.y: cards.spot.originY
-                xScale: root.cardsUp ? 1 : 0.15
-                yScale: root.cardsUp ? 1 : 0.15
+                xScale: cards.showing ? 1 : 0.15
+                yScale: cards.showing ? 1 : 0.15
 
                 Behavior on xScale { NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.2 } }
                 Behavior on yScale { NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.2 } }

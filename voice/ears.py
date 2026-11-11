@@ -31,7 +31,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from . import chime, commands, ears_api, endturn, feedback, hubclient, jevfast, mouth, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake
+from . import chime, commands, ears_api, endturn, feedback, hubclient, jevfast, mouth, panel, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake
 from . import state as vstate
 from .config import load_config
 
@@ -851,6 +851,13 @@ def local_line(mic, settings, vad, text, tl, speaker=None):
         return dictate(mic, settings, vad, tl, speaker)
     if commands.wants_animation(text):
         return animate(mic, settings, vad, tl, speaker)
+    panel_kind = panel.intent(text)
+    if panel_kind:
+        words = panel.apply(panel_kind)
+        tl.mark("act_done")
+        tl.note(act=f"panel {panel_kind}", outcome=words[:80])
+        feedback.done()
+        return words
     quick_answer = quick.answer(text, settings.get())
     if quick_answer is not None:
         words, card = quick_answer

@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Effects
-import Quickshell
 
 // Diablo himself: his hand-drawn face (assets/faces, four frames a mood, boiling like a
 // cartoon) on a small dark disc, tinted and haloed by what he is doing. Every animation runs
@@ -17,6 +16,8 @@ Item {
     property bool presenting: false     // only showing a card: he holds it out, pleased with it
     property bool hovered: false
     property var mouthTrack: ({ start: 0, duration: 0, cues: [] })
+    // Where his drawings are: shell.qml and the offscreen preview (presence/preview) set it.
+    property string facesDir: ""
 
     // While a measured track plays, the talking face is drawn in two parts: the head without
     // its mouth, and one of Marcus's mouth drawings for the sound being said this instant.
@@ -125,8 +126,8 @@ Item {
             // The repo's own faces, next to presence/: the drawings the apps use.
             // horns alone; the eyes and the mouth are drawn on top as their own layers
             source: orb.lipSync
-                ? `file://${Quickshell.shellDir}/../assets/faces/horns/${face.frame}.png`
-                : `file://${Quickshell.shellDir}/../assets/faces/${orb.face}/${face.frame}.png`
+                ? `file://${orb.facesDir}/horns/${face.frame}.png`
+                : `file://${orb.facesDir}/${orb.face}/${face.frame}.png`
             sourceSize: Qt.size(160, 160)
             fillMode: Image.PreserveAspectFit
             smooth: true
@@ -150,7 +151,7 @@ Item {
                 anchors.fill: parent
                 visible: orb.lipSync
                 // the eyes boil with the horns: same frame number, four takes each
-                source: orb.lipSync ? `file://${Quickshell.shellDir}/../assets/faces/eyes/${orb.blinking ? "closed" : orb.eyeLook}/${face.frame}.png` : ""
+                source: orb.lipSync ? `file://${orb.facesDir}/eyes/${orb.blinking ? "closed" : orb.eyeLook}/${face.frame}.png` : ""
                 sourceSize: Qt.size(160, 160)
                 fillMode: Image.PreserveAspectFit
                 smooth: true
@@ -161,7 +162,7 @@ Item {
             Image {
                 anchors.fill: parent
                 visible: orb.lipSync
-                source: orb.lipSync ? `file://${Quickshell.shellDir}/../assets/faces/mouths/${orb.mouthShape}/${orb.mouthTake}.png` : ""
+                source: orb.lipSync ? `file://${orb.facesDir}/mouths/${orb.mouthShape}/${orb.mouthTake}.png` : ""
                 sourceSize: Qt.size(160, 160)
                 fillMode: Image.PreserveAspectFit
                 smooth: true

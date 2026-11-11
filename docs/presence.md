@@ -15,10 +15,33 @@ screen runs out, lined up with his side, and scales up from the point nearest hi
 proud face, and the two hold still while the cursor is within reach of them, so a card can be
 read and clicked. Once the cursor is well clear (`shouldRejoin`, 280 px) they glide after it.
 
-`node --test tests/presence/place.test.mjs` checks the placement; CI runs it. `scripts/presence-shots.sh`
-shoots the real thing against fake state into `captures/presence/`: a throwaway Quickshell
-instance with its own state dir, a fixed cursor (`DIABLO_PRESENCE_CURSOR`) and no hub feed
-(`DIABLO_PRESENCE_TEST`), so it never moves the pointer or reads anything real.
+`node --test tests/presence/place.test.mjs` checks the placement; CI runs it.
+`scripts/presence-shots.sh` draws every scene into `captures/presence/`: by default offscreen
+(`presence/preview/render.py` runs the real components with Qt, no compositor, no window, so it
+works with the screen locked; CI runs it too and keeps the PNGs as an artifact). `--live` shoots
+on the real compositor instead: a throwaway Quickshell instance with its own state dir, a fixed
+cursor (`DIABLO_PRESENCE_CURSOR`) and no hub feed (`DIABLO_PRESENCE_TEST`), so it never moves the
+pointer or reads anything real. The components stay free of Quickshell imports so the offscreen
+preview can load them; what needs Quickshell lives in `shell.qml` or a file loaded on demand
+(`CardActions.qml`).
+
+## The central card
+
+Asked to, he opens up: the orb glides to the middle of the monitor and a big card grows out of
+him (`Panel.qml`, sized by `Place.panelRect`). It no longer follows the cursor. Escape, the
+close button or a click anywhere outside puts him back. Two pages:
+
+- **Now**: a card shown big. "Enlarge this" moves the newest card here.
+- **Settings**: whether he follows the cursor (kept in `presence-settings.json`), whether the
+  ears listen for his name, live meters for the microphone and the wake score, how well he knows
+  your voice, and the voice setup itself, driven through the ears' control panel on
+  `127.0.0.1:8758` (`voice/ears_api.py`).
+
+The spoken quick actions (`voice/panel.py`, no model turn): "open up", "expand", "show your
+settings" open it; "enlarge this", "make it bigger" enlarge the newest card; "close", "shrink",
+"make it small again" close it. "Close it" and "make it bigger" also mean a window, so they only
+count while the central card is open or a card is on screen. The state is `panel.json`
+(`{open, view, card, at}`) in the same state dir; the ears and `shell.qml` both write it.
 
 ## What it reads
 

@@ -1,6 +1,5 @@
 import QtQuick
 import QtMultimedia
-import Quickshell.Io
 
 // One thing Diablo shows: a title, an optional big figure, and a few short lines.
 Rectangle {
@@ -101,54 +100,14 @@ Rectangle {
             }
         }
 
-        Row {
-            visible: card.video !== ""
-            spacing: 6
-            topPadding: 6
-
-            Repeater {
-                model: [
-                    { label: "Copy", run: ["sh", "-c", "printf '%s\\r\\n' \"$(python3 -c 'import sys, pathlib; print(pathlib.Path(sys.argv[1]).as_uri())' \"$1\")\" | wl-copy --type text/uri-list", "sh", card.video], done: "Copied, paste it anywhere" },
-                    { label: "Save", run: ["sh", "-c", "d=$(zenity --file-selection --save --confirm-overwrite --filename=\"$HOME/Videos/$(basename \"$1\")\") && cp \"$1\" \"$d\" && echo \"$d\"", "sh", card.video], done: "Saved" },
-                    { label: "Open", run: ["xdg-open", card.video], done: "" }
-                ]
-
-                Rectangle {
-                    required property var modelData
-
-                    width: label.implicitWidth + 22
-                    height: 26
-                    radius: 13
-                    color: button.containsMouse ? card.style.line : card.style.raised
-                    border.width: 1
-                    border.color: card.style.line
-
-                    Text {
-                        id: label
-
-                        anchors.centerIn: parent
-                        text: modelData.label
-                        color: card.style.text
-                        font.family: card.style.family
-                        font.pixelSize: card.style.small
-                    }
-
-                    Process {
-                        id: job
-
-                        command: modelData.run
-                        onExited: (code, status) => card.said = code === 0 ? modelData.done : ""
-                    }
-
-                    MouseArea {
-                        id: button
-
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: job.running = true
-                    }
-                }
+        // Copy, save and open for a take; they run commands, so they load only for a video.
+        Loader {
+            active: card.video !== ""
+            visible: active
+            source: "CardActions.qml"
+            onLoaded: {
+                item.card = card;
+                item.style = card.style;
             }
         }
 
