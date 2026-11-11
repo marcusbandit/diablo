@@ -20,6 +20,21 @@ SHARED = (
 )
 EXTRA = [
     {
+        "name": "show_on_screen",
+        "description": "Show something on Marcus's desktop, beside your orb, whichever channel he asked on. size small: a card that grows out of the orb and fades after a while, for a quick fact, a figure, a short list. size large: the big central card, for anything worth looking at properly; he can also say \"enlarge this\" to make a small one big. A whole HTML page (html) renders in the card, scripts and https resources allowed, no local files: use it for interactive explanations, charts and 3D. Plain facts go in title, big (one short figure) and lines.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "a few words, shown small above"},
+                "big": {"type": "string", "description": "one short figure or word, shown large (at most 24 characters)"},
+                "lines": {"type": "array", "items": {"type": "string"}, "description": "a few short lines"},
+                "html": {"type": "string", "description": "a whole HTML page to render instead of or below the lines, at most 512 KB"},
+                "size": {"type": "string", "enum": ["small", "large"]},
+                "ttl": {"type": "number", "description": "seconds a small card stays; leave out for the default"},
+            },
+        },
+    },
+    {
         "name": "notify",
         "description": "Send Marcus a Telegram message right now, outside the current reply. For reports he should see on his phone when the reply itself goes elsewhere, like the web app.",
         "inputSchema": {
@@ -295,6 +310,25 @@ def restart_text(verdict):
     return "\n".join(lines)
 
 
+def show_on_screen(arguments):
+    token = str(get_config().get("hub_token") or "")
+    body = {key: arguments[key] for key in ("title", "big", "lines", "html", "size", "ttl") if arguments.get(key) is not None}
+    if isinstance(body.get("lines"), str):
+        body["lines"] = [body["lines"]]
+    try:
+        response = httpx.post(f"{devices.public_url()}/v1/screen", headers={"X-Diablo-Token": token}, json=body, timeout=20)
+    except httpx.HTTPError as error:
+        return f"could not reach the hub: {error}"
+    if response.status_code != 200:
+        try:
+            why = response.json().get("detail")
+        except ValueError:
+            why = response.text[:200]
+        return f"not shown: {why}"
+    size = body.get("size") or "small"
+    return "shown in the central card" if size == "large" else "shown beside the orb; he can say enlarge this"
+
+
 def restart(arguments):
     token = str(get_config().get("hub_token") or "")
     body = {
@@ -373,6 +407,8 @@ def call(name, arguments):
         return wake(arguments)
     if name == "notify":
         return notify(arguments.get("text"))
+    if name == "show_on_screen":
+        return show_on_screen(arguments)
     if name == "send_voice":
         return send_voice(arguments.get("text"), arguments.get("language"))
     if name == "watch_t3_thread":

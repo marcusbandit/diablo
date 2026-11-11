@@ -112,3 +112,13 @@ as `diablo-act`) into `~/Videos/diablo/`, and a card beside the cursor plays it 
 sound. Click the video to play it again; **Copy** puts the file on the clipboard as a URI list,
 so a chat pastes it as a video; **Save** asks where to put a copy; **Open** opens it.
 
+
+## Showing things on request
+
+The brain shows things here from any channel with the `show_on_screen` tool
+(`hub/mcp_server.py`): a title, a big figure, lines, or a whole HTML page, small or large. It
+posts to `POST /v1/screen` (hub token only), which goes out as a `screen` event. `busy.py`, the
+same process that follows the hub's turns, writes a small one into `presence.json` beside the
+ears' own cards and a large one into `panel.json`, which opens the central card on Now. An HTML
+page is saved under `pages/` in the state dir, the newest 20 kept, and the card carries its path.
+"Enlarge this" then moves a small one into the central card like any other.

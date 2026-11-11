@@ -28,6 +28,16 @@ def _read():
     return [c for c in cards if isinstance(c, dict) and now < float(c.get("at") or 0) + float(c.get("ttl") or TTL_S)]
 
 
+def _file_lock():
+    """presence/busy.py writes this file too; both take presence.lock around a write."""
+    import fcntl
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    handle = open(STATE_DIR / "presence.lock", "a")
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    return handle
+
+
 def show(title="", big="", lines=(), kind="text", ttl=TTL_S, video=None):
     """Puts a card beside the orb. Returns its id. With `video` (a file path) the card plays
     it once and offers copy, save and open."""
@@ -35,7 +45,7 @@ def show(title="", big="", lines=(), kind="text", ttl=TTL_S, video=None):
             "lines": [str(line)[:240] for line in lines if str(line).strip()][:6], "at": time.time(), "ttl": float(ttl)}
     if video:
         card["video"] = str(video)
-    with _lock:
+    with _lock, _file_lock():
         cards = (_read() + [card])[-KEEP:]
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
