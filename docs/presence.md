@@ -122,3 +122,18 @@ same process that follows the hub's turns, writes a small one into `presence.jso
 ears' own cards and a large one into `panel.json`, which opens the central card on Now. An HTML
 page is saved under `pages/` in the state dir, the newest 20 kept, and the card carries its path.
 "Enlarge this" then moves a small one into the central card like any other.
+
+## HTML pages in a card
+
+A card or the central card can hold a whole HTML page (`page` on the card, a file under
+`pages/`). Quickshell cannot host Qt WebEngine (it crashes on start), so the page lives in its
+own small GTK process, `webcard.py`: a layer-shell window with WebKit in it, started with the
+first page and kept. `shell.qml` keeps a spot free for the page (`Card.pageSlot`, 190 px under
+the title; `Panel.pageArea`, below the text in Now) and, once the card has finished growing,
+writes one JSON line to the web view's stdin with the page and that spot in the monitor's
+coordinates. It moves with the orb and hides when the card goes.
+
+Pages load as a string with no base URL, so they reach no local file; scripts, WebGL and https
+resources work, links open in the browser, and new windows are refused. Two things keep the
+layer surface from ever mapping on Hyprland, so the view avoids them: a GTK CSS provider and a
+fade in from opacity 0. `webcard.py --snapshot PAGE OUT.png` renders a page once, to check it.

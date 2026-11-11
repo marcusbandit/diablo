@@ -6,8 +6,11 @@ Rectangle {
     id: card
 
     required property var style
-    required property var info   // {id, kind, title, big, lines, at, ttl, video?}
+    required property var info   // {id, kind, title, big, lines, at, ttl, video?, page?}
     readonly property string video: info.video ?? ""
+    // An HTML page: this spot is kept free and the web view (webcard.py) is drawn over it.
+    readonly property string page: info.page ?? ""
+    readonly property alias pageSlot: pageSlot
     property string said: ""
     signal dismiss(string id)
 
@@ -118,6 +121,16 @@ Rectangle {
             color: card.style.quiet
             font.family: card.style.family
             font.pixelSize: card.style.small
+        }
+
+        Rectangle {
+            id: pageSlot
+
+            width: parent.width
+            height: card.page !== "" ? 190 : 0
+            visible: card.page !== ""
+            radius: 8
+            color: card.style.base
         }
 
         Repeater {
