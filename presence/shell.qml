@@ -1,6 +1,7 @@
 // Diablo on the screen: an orb that shows what he is doing, and cards for what he answers.
-// A card opens beside the cursor on the cursor's monitor and stays where it opened; the bottom
-// right corner is only the fallback when Hyprland cannot say where the cursor is.
+// A card grows out of the orb and stays with it (presence/place.js works out where): the orb is
+// up whenever a card is, and the two hold still while the cursor is near them, so a card can be
+// read and clicked, then catch up once the cursor moves well away.
 // While Marcus is talking to him (listening, thinking, speaking, a voice loop,
 // dictation) the orb sits beside the cursor and follows it from monitor to monitor; while he
 // sleeps it fades out and its surface goes away, so nothing polls and nothing is drawn. Its own Quickshell instance, so a crash here never touches banditshell:
@@ -17,6 +18,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import "place.js" as Place
 
 ShellRoot {
     id: root
@@ -33,6 +35,11 @@ ShellRoot {
     // The setting: false keeps the orb in the bottom right corner of the cursor's monitor.
     // Quickshell reloads on save, so flipping it here takes effect at once.
     readonly property bool followCursor: true
+
+    // For scripts/presence-shots.sh: a fixed cursor ("x,y" in global coordinates) instead of
+    // asking Hyprland, and no hub feed, so a test instance never moves or reads anything real.
+    readonly property string fixedCursor: Quickshell.env("DIABLO_PRESENCE_CURSOR") ?? ""
+    readonly property bool testRun: (Quickshell.env("DIABLO_PRESENCE_TEST") ?? "") !== ""
 
     // Awake is only what Marcus started by talking to him: a turn he is listening to, thinking
     // on or answering, a voice loop, dictation. Everything else stays hidden: "waking" comes
@@ -53,7 +60,7 @@ ShellRoot {
     // moment ago, so a count left behind (#215) can never hold the orb up on its own.
     readonly property bool earsBehind: (root.ears.thinking ?? 0) > 0 && root.clock - root.lastBusyAt < 15000
     readonly property bool busy: root.hubBusy || root.earsBehind
-    readonly property bool up: root.awake || root.busy
+    readonly property bool up: root.awake || root.busy || root.cardsUp
     readonly property string busyWords: {
         const turns = root.hubTurns;
         if (turns.length === 0)
@@ -79,13 +86,14 @@ ShellRoot {
         id: hubFeed
 
         command: ["python3", "-I", Quickshell.shellPath("busy.py")]
-        running: true
+        running: !root.testRun
         stdout: SplitParser {
             onRead: line => root.hubLine(line)
         }
         onExited: {
             root.hubTurns = [];
-            feedAgain.restart();
+            if (!root.testRun)
+                feedAgain.restart();
         }
     }
 
@@ -112,10 +120,12 @@ ShellRoot {
     property point cursor: Qt.point(-1, -1)
     // Set on waking: the cursor kept above is from the last wake until Hyprland answers again.
     property bool freshWake: false
-    readonly property var cursorScreen: {
+    readonly property var cursorScreen: root.screenAt(root.cursor)
+
+    function screenAt(p: point): var {
         const all = Quickshell.screens;
         for (const s of all) {
-            if (root.cursor.x >= s.x && root.cursor.x < s.x + s.width && root.cursor.y >= s.y && root.cursor.y < s.y + s.height)
+            if (p.x >= s.x && p.x < s.x + s.width && p.y >= s.y && p.y < s.y + s.height)
                 return s;
         }
         return all.length > 0 ? all[0] : null;
@@ -159,60 +169,12 @@ ShellRoot {
         }
     }
 
-    // The orb's geometry beside the cursor, shared with the cards so they stay clear of it.
+    // The orb's geometry beside the cursor.
     readonly property real orbGap: 26
     readonly property real orbEdge: 12
     readonly property real orbHeight: 100
 
-    // Where the cards open. A showing starts when the first card goes up and ends when the last
-    // one goes away. It asks Hyprland for the cursor once, waits for the answer (or gives up
-    // after a moment) and keeps that spot until the showing ends, so a card never walks away
-    // from under the pointer while it is read.
     readonly property bool cardsUp: root.shown.length > 0
-    property bool cardPending: false
-    property bool cardPlaced: false
-    property point cardAt: Qt.point(0, 0)
-    property var cardScreen: null
-    // Fixed at placement, so a card never jumps while it is read: whether the orb sits above the
-    // cursor (it flips near the bottom edge) and whether the card goes below the cursor.
-    property bool cardOrbUp: false
-    property bool cardBelow: false
-
-    onCardsUpChanged: {
-        root.cardPlaced = false;
-        if (root.cardsUp) {
-            root.cardPending = true;
-            giveUp.restart();
-            hypr.connected = true;
-        } else {
-            root.cardPending = false;
-            giveUp.stop();
-        }
-    }
-
-    // The cursor answered while a showing was waiting for it.
-    function placeCards() {
-        giveUp.stop();
-        root.cardPending = false;
-        root.cardAt = root.cursor;
-        root.cardScreen = root.cursorScreen;
-        const sh = root.cursorScreen?.height ?? 0;
-        const ly = root.cursor.y - (root.cursorScreen?.y ?? 0);
-        root.cardOrbUp = ly + root.orbGap + root.orbHeight > sh - root.orbEdge;
-        // Above the cursor, past the orb when it is up there; below only when there is no room.
-        // The orb may wake after the card is up, so its room is always kept free.
-        const need = content.implicitHeight + root.orbGap + (root.cardOrbUp ? root.orbHeight + 10 : 0);
-        root.cardBelow = ly - need < root.orbEdge;
-        root.cardPlaced = true;
-    }
-
-    // No answer from Hyprland: show the card in the corner, as before.
-    Timer {
-        id: giveUp
-
-        interval: 400
-        onTriggered: root.cardPending = false
-    }
 
     function parse(text: string, fallback: var): var {
         try {
@@ -292,8 +254,6 @@ ShellRoot {
                 const m = /(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/.exec(data);
                 if (m) {
                     root.cursor = Qt.point(Number(m[1]), Number(m[2]));
-                    if (root.cardPending)
-                        root.placeCards();
                     // The first answer after waking is where he is now; start there.
                     if (root.freshWake) {
                         root.freshWake = false;
@@ -312,99 +272,17 @@ ShellRoot {
         triggeredOnStart: true
         running: root.up
         onTriggered: {
+            if (root.fixedCursor !== "") {
+                const xy = root.fixedCursor.split(",");
+                root.cursor = Qt.point(Number(xy[0]), Number(xy[1]));
+                if (root.freshWake) {
+                    root.freshWake = false;
+                    follow.snap();
+                }
+                return;
+            }
             if (!hypr.connected)
                 hypr.connected = true;
-        }
-    }
-
-    // The cards: a small layer of their own, pinned beside the cursor where the showing began, or
-    // to the bottom right corner when the cursor could not be read. It only exists while a card
-    // is up, and only what is drawn takes the pointer.
-    PanelWindow {
-        id: win
-
-        // Everything here is in the monitor's own coordinates, the same space as the orb's, and
-        // the window is always placed from the top left.
-        readonly property real gap: root.orbGap
-        readonly property real edge: root.orbEdge
-        readonly property real clear: root.orbHeight + 10
-        readonly property real sw: win.screen?.width ?? 0
-        readonly property real sh: win.screen?.height ?? 0
-        readonly property real lx: root.cardAt.x - (win.screen?.x ?? 0)
-        readonly property real ly: root.cardAt.y - (win.screen?.y ?? 0)
-        readonly property real h: content.implicitHeight
-
-        // Right of the cursor, or left of it when the right side runs out of room; the corner
-        // when the cursor was not read.
-        readonly property real cardX: {
-            if (!root.cardPlaced)
-                return win.sw - win.implicitWidth - 22;
-            const right = win.lx + win.gap;
-            const x = right + win.implicitWidth > win.sw - win.edge ? win.lx - win.gap - win.implicitWidth : right;
-            return Math.max(win.edge, Math.min(win.sw - win.implicitWidth - win.edge, x));
-        }
-        // Above the cursor, past the orb when it sits there; below it, past the orb, when there
-        // was no room above.
-        readonly property real cardY: {
-            if (!root.cardPlaced)
-                return win.sh - win.h - 22;
-            const y = root.cardBelow ? win.ly + win.gap + (root.cardOrbUp ? 0 : win.clear)
-                : win.ly - win.gap - (root.cardOrbUp ? win.clear : 0) - win.h;
-            return Math.max(win.edge, Math.min(win.sh - win.h - win.edge, y));
-        }
-
-        screen: root.cardPlaced ? root.cardScreen : root.cursorScreen
-        visible: root.cardsUp && !root.cardPending
-        color: "transparent"
-        exclusionMode: ExclusionMode.Ignore
-        WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-        WlrLayershell.namespace: "diablo"
-        implicitWidth: 300
-        implicitHeight: content.implicitHeight
-        mask: Region {
-            item: content
-        }
-
-        anchors {
-            top: true
-            left: true
-        }
-
-        margins {
-            top: win.cardY
-            left: win.cardX
-        }
-
-        Column {
-            id: content
-
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            spacing: 10
-
-            HoverHandler {
-                id: cardArea
-
-                readonly property bool containsMouse: hovered
-            }
-
-            Repeater {
-                model: cardModel
-
-                Card {
-                    required property string json
-
-                    anchors.right: parent.right
-                    style: theme
-                    info: JSON.parse(json)
-                    onDismiss: id => {
-                        const next = Object.assign({}, root.dismissed);
-                        next[id] = true;
-                        root.dismissed = next;
-                    }
-                }
-            }
         }
     }
 
@@ -414,14 +292,21 @@ ShellRoot {
     PanelWindow {
         id: follow
 
-        screen: root.cursorScreen
+        // The point the orb sits beside: the cursor, except while cards are up, when it holds
+        // where it was until the cursor is well clear of the orb and its cards.
+        property point anchor: root.cursor
+
+        screen: root.screenAt(follow.anchor)
         visible: root.up || group.opacity > 0.01
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         WlrLayershell.namespace: "diablo-orb"
-        mask: Region {}
+        // Only the cards take the pointer; the orb and the rest of the screen pass it through.
+        mask: Region {
+            item: cards
+        }
 
         anchors {
             top: true
@@ -434,8 +319,8 @@ ShellRoot {
         // a right or bottom edge it swaps to the other side, and it always stays on the screen.
         readonly property real gap: root.orbGap
         readonly property real edge: root.orbEdge
-        readonly property real localX: root.cursor.x - (follow.screen?.x ?? 0)
-        readonly property real localY: root.cursor.y - (follow.screen?.y ?? 0)
+        readonly property real localX: follow.anchor.x - (follow.screen?.x ?? 0)
+        readonly property real localY: follow.anchor.y - (follow.screen?.y ?? 0)
         readonly property bool flipX: root.followCursor && follow.localX + follow.gap + group.width > follow.width - follow.edge
         readonly property bool flipY: root.followCursor && follow.localY + follow.gap + group.height > follow.height - follow.edge
         readonly property real targetX: Math.max(follow.edge, Math.min(follow.width - group.width - follow.edge,
@@ -448,8 +333,26 @@ ShellRoot {
         // A fresh appearance, or a jump to another monitor, starts where he is, not where the
         // orb last was.
         function snap() {
+            follow.anchor = root.cursor;
             group.x = follow.targetX;
             group.y = follow.targetY;
+        }
+
+        Connections {
+            target: root
+
+            function onCursorChanged() {
+                if (!root.cardsUp) {
+                    follow.anchor = root.cursor;
+                    return;
+                }
+                const sx = follow.screen?.x ?? 0, sy = follow.screen?.y ?? 0;
+                const here = { x: root.cursor.x - sx, y: root.cursor.y - sy };
+                const rects = [{ x: group.x, y: group.y, w: group.width, h: group.height },
+                    { x: cards.x, y: cards.y, w: cards.width, h: cards.height }];
+                if (Place.shouldRejoin(here, rects))
+                    follow.anchor = root.cursor;
+            }
         }
 
         onScreenChanged: follow.snap()
@@ -480,7 +383,7 @@ ShellRoot {
         Item {
             id: group
 
-            width: orbBox.width + 8 + pill.width
+            width: orbBox.width + (pill.visible ? 8 + pill.width : 0)
             height: orbBox.height
             opacity: root.up ? 1 : 0
             scale: root.up ? 1 : 0.6
@@ -511,6 +414,7 @@ ShellRoot {
                     control: !!root.ears.loop
                     dictating: !!root.ears.dictation
                     thinkingBehind: root.busy
+                    presenting: root.cardsUp && !root.awake && !root.busy
                     moment: root.moment
                     mouthTrack: root.mouthTrack
 
@@ -522,6 +426,8 @@ ShellRoot {
             Rectangle {
                 id: pill
 
+                // Words only while he is doing something; holding out a card says it already.
+                visible: root.awake || root.busy || root.moment !== ""
                 x: follow.flipX ? 0 : orbBox.width + 8
                 anchors.verticalCenter: orbBox.verticalCenter
                 width: label.implicitWidth + 24 + (dots.visible ? dots.width + 6 : 0)
@@ -588,6 +494,78 @@ ShellRoot {
                         repeat: true
                         running: dots.visible && follow.visible
                         onTriggered: dots.lit = (dots.lit + 1) % 3
+                    }
+                }
+            }
+        }
+
+        // The cards, grown out of the orb: placed by Place.cardRect from where the orb is now,
+        // scaled up from the point nearest it, and carried along when the orb moves.
+        Item {
+            id: cards
+
+            readonly property var spot: Place.cardRect({ x: group.x, y: group.y, w: group.width, h: group.height },
+                { w: cards.width, h: Math.max(1, cardColumn.implicitHeight) }, { w: follow.width, h: follow.height },
+                follow.edge, 10)
+
+            x: cards.spot.x
+            y: cards.spot.y
+            width: 300
+            height: cardColumn.implicitHeight
+            visible: root.cardsUp || grow.scale > 0.05
+            opacity: root.cardsUp ? 1 : 0
+
+            Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+            transform: Scale {
+                id: grow
+
+                origin.x: cards.spot.originX
+                origin.y: cards.spot.originY
+                xScale: root.cardsUp ? 1 : 0.15
+                yScale: root.cardsUp ? 1 : 0.15
+
+                Behavior on xScale { NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.2 } }
+                Behavior on yScale { NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.2 } }
+            }
+
+            HoverHandler {
+                id: cardArea
+
+                readonly property bool containsMouse: hovered
+            }
+
+            Column {
+                id: cardColumn
+
+                width: parent.width
+                spacing: 10
+
+                Repeater {
+                    model: cardModel
+
+                    Card {
+                        required property string json
+
+                        style: theme
+                        info: JSON.parse(json)
+                        // A card after the first grows out of the stack the same way.
+                        transformOrigin: cards.spot.below ? Item.Top : Item.Bottom
+                        scale: 0.6
+                        opacity: 0
+                        Component.onCompleted: {
+                            scale = 1;
+                            opacity = 1;
+                        }
+
+                        Behavior on scale { NumberAnimation { duration: 280; easing.type: Easing.OutBack } }
+                        Behavior on opacity { NumberAnimation { duration: 180 } }
+
+                        onDismiss: id => {
+                            const next = Object.assign({}, root.dismissed);
+                            next[id] = true;
+                            root.dismissed = next;
+                        }
                     }
                 }
             }

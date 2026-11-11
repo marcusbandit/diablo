@@ -7,6 +7,19 @@ Diablo can change his own look by editing those files.
 
 Install once: `cp deploy/diablo-presence.service ~/.config/systemd/user/ && systemctl --user enable --now diablo-presence`.
 
+## Cards grow out of him
+
+A card is never placed at the cursor. It opens next to the orb, below it or above it when the
+screen runs out, lined up with his side, and scales up from the point nearest him
+(`presence/place.js`, `cardRect`). While a card is up the orb is up too, holding it out with his
+proud face, and the two hold still while the cursor is within reach of them, so a card can be
+read and clicked. Once the cursor is well clear (`shouldRejoin`, 280 px) they glide after it.
+
+`node --test tests/presence/` checks the placement; CI runs it. `scripts/presence-shots.sh`
+shoots the real thing against fake state into `captures/presence/`: a throwaway Quickshell
+instance with its own state dir, a fixed cursor (`DIABLO_PRESENCE_CURSOR`) and no hub feed
+(`DIABLO_PRESENCE_TEST`), so it never moves the pointer or reads anything real.
+
 ## What it reads
 
 | File | Written by | Holds |

@@ -14,6 +14,7 @@ Item {
     property bool dictating: false
     property bool thinkingBehind: false // an answer still thinking in the background
     property string moment: ""          // a short feeling after something: delighted, sorry, relieved
+    property bool presenting: false     // only showing a card: he holds it out, pleased with it
     property bool hovered: false
     property var mouthTrack: ({ start: 0, duration: 0, cues: [] })
 
@@ -26,7 +27,7 @@ Item {
     onLipSyncChanged: eyeLook = "neutral"
     property bool blinking: false
 
-    readonly property bool awake: mood !== "asleep" || control || dictating || thinkingBehind || moment !== ""
+    readonly property bool awake: mood !== "asleep" || control || dictating || thinkingBehind || moment !== "" || presenting
 
     // Which drawing: what he feels just now wins, then what he is doing.
     readonly property string face: moment !== "" ? moment
@@ -38,6 +39,7 @@ Item {
         : mood === "untrained" ? "worried"
         : mood === "off" ? "resting"
         : thinkingBehind ? "working"
+        : presenting ? "proud"
         : control ? "expectant"
         : "asleep"
 
@@ -49,6 +51,7 @@ Item {
         : mood === "speaking" ? style.speaking
         : mood === "off" || mood === "untrained" ? style.trouble
         : thinkingBehind ? style.thinking
+        : presenting ? style.listening
         : control ? style.control
         : style.asleep
 
