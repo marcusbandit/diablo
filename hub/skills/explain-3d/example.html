@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How an atom is built</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0f1114; color: #d0d7dd;
+    font: 14px/1.4 system-ui, sans-serif; }
+  #scene { position: absolute; inset: 0; }
+  .panel { position: absolute; left: 16px; top: 14px; max-width: 34%; pointer-events: none; }
+  .panel h1 { margin: 0 0 6px; font-size: 18px; font-weight: 600; color: #eef2f5; }
+  .panel p { margin: 0 0 6px; color: #a5aeb8; }
+  .legend { position: absolute; left: 16px; bottom: 14px; display: flex; gap: 14px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    margin-right: 6px; background: var(--c); vertical-align: -1px; }
+  .hint { position: absolute; right: 16px; bottom: 14px; color: #78838f; font-size: 12px; }
+  .tag { position: absolute; padding: 2px 8px; border-radius: 10px; background: rgba(15,17,20,.8);
+    border: 1px solid #3a4149; font-size: 12px; pointer-events: none; transform: translate(-50%, -140%); }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+<div class="panel">
+  <h1>How an atom is built</h1>
+  <p>Carbon: six protons and six neutrons packed in the nucleus, six electrons in two shells around it.</p>
+  <p>The nucleus holds almost all the mass; the shells set how the atom bonds.</p>
+</div>
+<div class="legend">
+  <span style="--c:#e0915a">proton</span><span style="--c:#7fb3d4">neutron</span><span style="--c:#6fc49a">electron</span>
+</div>
+<div class="hint">drag to turn, scroll to zoom</div>
+<div class="tag" id="tag-nucleus">nucleus</div>
+<div class="tag" id="tag-inner">inner shell, 2 electrons</div>
+<div class="tag" id="tag-outer">outer shell, 4 electrons</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const box = document.getElementById("scene");
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(devicePixelRatio);
+box.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+camera.position.set(0, 7, 11);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const light = new THREE.PointLight(0xffffff, 60);
+light.position.set(4, 6, 6);
+scene.add(light);
+
+// The nucleus: protons and neutrons in a loose ball.
+const nucleus = new THREE.Group();
+const ball = new THREE.SphereGeometry(0.32, 24, 16);
+const proton = new THREE.MeshStandardMaterial({ color: 0xe0915a, roughness: 0.5 });
+const neutron = new THREE.MeshStandardMaterial({ color: 0x7fb3d4, roughness: 0.5 });
+for (let i = 0; i < 12; i++) {
+  const m = new THREE.Mesh(ball, i % 2 ? proton : neutron);
+  const p = new THREE.Vector3().randomDirection().multiplyScalar(0.25 + Math.random() * 0.35);
+  m.position.copy(p);
+  nucleus.add(m);
+}
+scene.add(nucleus);
+
+// Two shells, drawn as rings, with electrons travelling round them.
+const electrons = [];
+const electron = new THREE.MeshStandardMaterial({ color: 0x6fc49a, emissive: 0x2a5a44 });
+function shell(radius, count, tilt, speed) {
+  // A shell is its own group, tilted; the ring and its electrons lie flat in it.
+  const group = new THREE.Group();
+  group.rotation.x = tilt;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.015, 8, 128),
+    new THREE.MeshBasicMaterial({ color: 0x545d67 }));
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+  for (let i = 0; i < count; i++) {
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), electron);
+    group.add(mesh);
+    electrons.push({ mesh, radius, speed, phase: (i / count) * Math.PI * 2 });
+  }
+  scene.add(group);
+}
+shell(2.4, 2, 0.15, 1.4);
+shell(4.2, 4, -0.35, 0.8);
+
+const tags = {
+  nucleus: [document.getElementById("tag-nucleus"), new THREE.Vector3(0, 0.8, 0)],
+  inner: [document.getElementById("tag-inner"), new THREE.Vector3(2.4, 0.4, 0)],
+  outer: [document.getElementById("tag-outer"), new THREE.Vector3(-4.2, -0.6, 0)],
+};
+
+function resize() {
+  const w = box.clientWidth, h = box.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize);
+resize();
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const t = clock.getElapsedTime();
+  nucleus.rotation.y = t * 0.2;
+  for (const e of electrons) {
+    const a = e.phase + t * e.speed;
+    e.mesh.position.set(Math.cos(a) * e.radius, 0, Math.sin(a) * e.radius);
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  for (const [el, at] of Object.values(tags)) {
+    const p = at.clone().project(camera);
+    el.style.left = `${(p.x * 0.5 + 0.5) * box.clientWidth}px`;
+    el.style.top = `${(-p.y * 0.5 + 0.5) * box.clientHeight}px`;
+  }
+});
+</script>
+</body>
+</html>
