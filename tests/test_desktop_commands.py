@@ -292,6 +292,7 @@ class TestControlEndpoint(unittest.TestCase):
         self.addCleanup(server.app.dependency_overrides.clear)
         with mock.patch.object(server.jev, "control", return_value=answer("copy", conf=0.9)), \
                 mock.patch.object(route.settings, "get", return_value=""), \
+                mock.patch.object(server.lockguard, "for_turn", return_value=mock.Mock(restricted=False)), \
                 mock.patch.object(server.db, "add_message") as stored:
             reply = TestClient(server.app).post("/v1/voice/control", json={"text": "copy that", "desktop": DESKTOP})
         self.assertEqual(reply.status_code, 200)

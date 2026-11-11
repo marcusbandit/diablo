@@ -173,9 +173,13 @@ class TestLiveVoiceprintTimeout(unittest.TestCase):
 
         from voice import voiceid, wake
 
-        with mock.patch.object(voiceid, "_load_encoder", return_value=object()), \
-                mock.patch.object(voiceid, "embed", side_effect=TimeoutError) as embed, \
-                mock.patch("resemblyzer.preprocess_wav", side_effect=lambda a, source_sr: a):
+        import sys
+        import types
+
+        fake = types.SimpleNamespace(preprocess_wav=lambda a, source_sr: a)
+        with mock.patch.dict(sys.modules, {"resemblyzer": fake}), \
+                mock.patch.object(voiceid, "_load_encoder", return_value=object()), \
+                mock.patch.object(voiceid, "embed", side_effect=TimeoutError) as embed:
             self.assertIsNone(wake._voice_embed(np.ones(16000, dtype=np.float32), timeout=0.1))
         self.assertEqual(embed.call_args.kwargs["timeout"], 0.1)
 
