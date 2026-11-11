@@ -15,7 +15,7 @@ screen runs out, lined up with his side, and scales up from the point nearest hi
 proud face, and the two hold still while the cursor is within reach of them, so a card can be
 read and clicked. Once the cursor is well clear (`shouldRejoin`, 280 px) they glide after it.
 
-`node --test tests/presence/` checks the placement; CI runs it. `scripts/presence-shots.sh`
+`node --test tests/presence/place.test.mjs` checks the placement; CI runs it. `scripts/presence-shots.sh`
 shoots the real thing against fake state into `captures/presence/`: a throwaway Quickshell
 instance with its own state dir, a fixed cursor (`DIABLO_PRESENCE_CURSOR`) and no hub feed
 (`DIABLO_PRESENCE_TEST`), so it never moves the pointer or reads anything real.

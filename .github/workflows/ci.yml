@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: "22"
       - name: card placement
-        run: node --test tests/presence/
+        run: node --test tests/presence/place.test.mjs
 
   phone-core:
     runs-on: ubuntu-latest

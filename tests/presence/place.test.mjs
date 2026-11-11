@@ -1,4 +1,4 @@
-// The card placement in presence/place.js, run in node: `node --test tests/presence/`.
+// The card placement in presence/place.js, run in node: `node --test tests/presence/place.test.mjs`.
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
