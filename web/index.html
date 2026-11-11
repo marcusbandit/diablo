@@ -1,0 +1,1062 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diablo.</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#1e2024">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  @font-face { font-family: "Libron"; src: url("fonts/libron.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+  @font-face { font-family: "Source Sans 3"; src: url("fonts/sourcesans3.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+  @font-face { font-family: "JetBrains Mono"; src: local("JetBrainsMono Nerd Font"), local("JetBrains Mono"); }
+  * { box-sizing: border-box; margin: 0; border-radius: 0 !important; }
+  body {
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--reading);
+    font-size: var(--fs-normal);
+    line-height: 1.55;
+  }
+  .mono { font-family: var(--mono); }
+  .hud { font-family: var(--titles); font-size: var(--fs-small); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+  ::selection { background: var(--accent); color: #fff; }
+  button, input, textarea { font: inherit; }
+  .inv { transition: background-color var(--sweep-fast) linear, color var(--sweep-fast) linear; }
+  .inv:hover { background: var(--invert-bg); color: var(--invert-fg); }
+
+  .sheet { position: relative; width: 100%; display: flex; flex-direction: column; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+  .tick { position: absolute; top: -5px; width: 11px; height: 11px; z-index: 3; }
+  .tick::before, .tick::after { content: ""; position: absolute; background: var(--line-strong); }
+  .tick::before { left: 5px; top: 0; bottom: 0; width: 1px; }
+  .tick::after { top: 5px; left: 0; right: 0; height: 1px; }
+  .tick.l { left: -6px; }
+  .tick.r { right: -5px; }
+
+  .body { flex: 1; display: flex; min-height: 0; }
+  .rail { width: 280px; flex: none; border-right: 1px solid var(--line); background: var(--raised); display: flex; flex-direction: column; overflow-y: auto; }
+  .railhead { flex: none; height: calc(var(--sp) * 12); display: flex; align-items: center; justify-content: space-between; padding: 0 calc(var(--sp) * 5); border-bottom: 1px solid var(--line); }
+  .mark { font-family: var(--titles); font-size: var(--fs-large); font-weight: 700; letter-spacing: -0.02em; }
+  .mark span { color: var(--accent-ink); }
+  .railhead .idx { color: var(--faint); font-family: var(--mono); font-size: var(--fs-small); }
+  .railchip { font-family: var(--mono); font-size: var(--fs-small); color: var(--faint); padding: calc(var(--sp) * 2) calc(var(--sp) * 5); }
+  button.railchip { width: 100%; text-align: left; border: none; background: none; cursor: pointer; border-bottom: 1px solid var(--line); }
+  button.railchip:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  button.railchip.on { color: var(--accent-ink); }
+  .new { border: none; border-bottom: 1px solid var(--line); background: none; color: var(--muted); text-align: left; padding: calc(var(--sp) * 3.5) calc(var(--sp) * 5); cursor: pointer; }
+  .new:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  .rail .group { color: var(--faint); padding: calc(var(--sp) * 4) calc(var(--sp) * 5) calc(var(--sp) * 1); display: flex; gap: calc(var(--sp) * 2); }
+  .rail .group .idx { color: var(--line-strong); font-family: var(--mono); }
+  .s { position: relative; padding: calc(var(--sp) * 2) calc(var(--sp) * 5); color: var(--muted); cursor: pointer; display: flex; justify-content: space-between; align-items: baseline; gap: calc(var(--sp) * 2); border-bottom: 1px solid var(--line); }
+  .s::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent-ink); transform: scaleY(0); transform-origin: top; transition: transform var(--sweep) ease-out; }
+  .s:hover { background: rgba(242, 241, 238, 0.04); color: var(--ink); }
+  .s:hover::before { transform: scaleY(1); }
+  .s.on { border-left: 2px solid var(--accent); color: var(--ink); background: var(--sunken); }
+  .s .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .s .when { font-size: var(--fs-small); color: var(--faint); flex: none; font-family: var(--mono); }
+  .s .when.done { color: var(--ok); }
+  .s .when.moving { color: var(--accent-ink); }
+
+  .wsrow { position: relative; display: flex; justify-content: space-between; align-items: baseline; gap: calc(var(--sp) * 2); }
+  .wsrow .chev { flex: none; border: none; background: none; color: var(--faint); font-family: var(--mono); font-size: var(--fs-small); cursor: pointer; padding: 0 calc(var(--sp) * 1); }
+  .wsrow .chev:hover { color: var(--ink); }
+  .subchats { display: none; border-bottom: 1px solid var(--line); }
+  .wsrow.open + .subchats { display: block; }
+  .subchats .chat { position: relative; padding: calc(var(--sp) * 1.5) calc(var(--sp) * 5) calc(var(--sp) * 1.5) calc(var(--sp) * 9); color: var(--muted); cursor: pointer; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: baseline; gap: calc(var(--sp) * 2); }
+  .subchats .chat:hover { background: rgba(242, 241, 238, 0.04); color: var(--ink); }
+  .subchats .chat.on { color: var(--ink); box-shadow: inset 2px 0 0 var(--accent); }
+  .subchats .chat .settle { flex: none; border: 1px solid var(--line); background: none; color: var(--faint); font-family: var(--titles); font-size: var(--fs-small); letter-spacing: 0.1em; text-transform: uppercase; padding: 0 calc(var(--sp) * 1.5); cursor: pointer; opacity: 0; transition: opacity var(--sweep) ease-out; }
+  .subchats .chat:hover .settle { opacity: 1; }
+  .subchats .chat .settle:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  .settledfold { margin-top: auto; padding: calc(var(--sp) * 3) calc(var(--sp) * 5); color: var(--faint); cursor: pointer; border-top: 1px solid var(--line); }
+  .settledfold:hover { color: var(--muted); }
+  #settledlist { display: none; }
+  #settledlist.open { display: block; }
+  #settledlist .chat { padding-left: calc(var(--sp) * 5); }
+  #settledlist .unsettle { flex: none; border: none; background: none; color: var(--accent-ink); font-family: var(--titles); font-size: var(--fs-small); letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; }
+
+  .col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .colhead { flex: none; height: calc(var(--sp) * 11); display: flex; align-items: center; gap: calc(var(--sp) * 3); padding: 0 calc(var(--sp) * 10); border-bottom: 1px solid var(--line); color: var(--muted); }
+  .colhead .idx { color: var(--faint); font-family: var(--mono); }
+  .colhead .live { margin-left: auto; font-family: var(--mono); font-size: var(--fs-small); color: var(--accent-ink); }
+  .stream { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; padding: calc(var(--sp) * 6) calc(var(--sp) * 10) calc(var(--sp) * 4); display: flex; flex-direction: column; gap: calc(var(--sp) * 2); }
+  .stream > * { width: min(860px, 100%); margin-inline: auto; }
+  .entry { display: flex; flex-direction: column; }
+  .entry + .entry { margin-top: calc(var(--sp) * 3); }
+  .line { position: relative; padding: calc(var(--sp) * 1) 0; }
+  .line .when { position: absolute; left: calc(-1 * var(--sp) * 30); width: calc(var(--sp) * 26); top: calc(var(--sp) * 1.5); font-family: var(--mono); font-size: var(--fs-small); color: rgba(242, 241, 238, 0.3); text-align: right; }
+  .line .when .d { position: absolute; bottom: 100%; right: 0; white-space: nowrap; color: rgba(242, 241, 238, 0.35); }
+  .line .txt { display: block; max-width: 64ch; }
+  .results { display: flex; flex-direction: column; gap: calc(var(--sp) * 2); padding: calc(var(--sp) * 1) 0 calc(var(--sp) * 3); margin-top: calc(var(--sp) * 1); }
+
+  .obj { position: relative; display: flex; flex-direction: column; border: 1px solid var(--line); background: var(--sunken); }
+  .obj .bar { display: flex; align-items: center; gap: calc(var(--sp) * 3); padding: calc(var(--sp) * 1.5) calc(var(--sp) * 3); border-bottom: 1px solid var(--line); color: var(--muted); }
+  .obj .bar .type { flex: none; width: 8px; height: 8px; background: var(--tc, var(--accent)); }
+  .obj .bar .live { margin-left: auto; font-family: var(--mono); font-size: var(--fs-small); color: var(--accent-ink); }
+  .obj.done .bar .live { color: var(--ok); }
+  .obj.working .bar { position: relative; overflow: hidden; }
+  .obj.working .bar::after { content: ""; position: absolute; bottom: 0; left: -30%; width: 30%; height: 2px; background: var(--accent); animation: sweep 1.6s ease-in-out infinite; }
+  @keyframes sweep { 0% { left: -30%; } 100% { left: 100%; } }
+  .obj .bar .go { margin-left: auto; font-family: var(--mono); font-size: var(--fs-small); color: var(--muted); cursor: pointer; padding: 0 var(--sp); }
+  .obj .bar .go:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  .obj .bar .go + .live { margin-left: 0; }
+  .q-opts { list-style: none; margin: 0; padding: 0 calc(var(--sp) * 3) calc(var(--sp) * 2); display: flex; flex-direction: column; gap: var(--sp); }
+  .q-opt { width: 100%; text-align: left; font: inherit; color: var(--ink); background: var(--raised, var(--sunken)); border: 1px solid var(--line); padding: calc(var(--sp) * 2) calc(var(--sp) * 3); cursor: pointer; }
+  .q-opt:hover { border-color: var(--muted); }
+  .q-rec, .q-desc, .q-hint { color: var(--muted); font-size: var(--fs-small); }
+  .q-hint { padding: 0 calc(var(--sp) * 3) calc(var(--sp) * 2); }
+  .obj .readout { display: flex; align-items: stretch; }
+  .obj .readout .cell { flex: 1; padding: calc(var(--sp) * 3) calc(var(--sp) * 4); border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: calc(var(--sp) * 1); }
+  .obj .readout .cell:last-child { border-right: none; }
+  .obj .readout .v { font-family: var(--mono); font-size: var(--fs-large); font-weight: 700; letter-spacing: -0.01em; }
+  .obj .readout .k { color: var(--faint); }
+  .obj .code { font-family: var(--mono); font-size: var(--fs-small); padding: calc(var(--sp) * 3) calc(var(--sp) * 4); overflow-x: auto; color: var(--muted); line-height: 1.7; white-space: pre; }
+  .obj table { width: 100%; border-collapse: collapse; }
+  .obj table th, .obj table td { text-align: left; padding: calc(var(--sp) * 1.5) calc(var(--sp) * 4); border-bottom: 1px solid var(--line); font-family: var(--titles); font-size: var(--fs-small); }
+  .obj table th { color: var(--faint); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+  .obj table td.n { font-family: var(--mono); color: var(--ink); }
+  .obj .artifact { display: flex; align-items: center; gap: calc(var(--sp) * 4); padding: calc(var(--sp) * 3) calc(var(--sp) * 4); }
+  .obj .artifact .sig { flex: none; width: calc(var(--sp) * 12); height: calc(var(--sp) * 12); background: var(--accent); color: #000; display: grid; place-items: center; font-family: var(--titles); font-weight: 700; font-size: var(--fs-large); }
+  .obj .artifact .facts { flex: 1; display: flex; flex-direction: column; gap: calc(var(--sp) * 0.5); }
+  .obj .artifact .facts .v { font-family: var(--titles); font-weight: 600; }
+  .obj .artifact .facts .k { color: var(--faint); font-size: var(--fs-small); }
+  .obj .artifact .act { flex: none; border: 1px solid var(--line-strong); color: var(--ink); background: none; padding: calc(var(--sp) * 2) calc(var(--sp) * 4); cursor: pointer; font-family: var(--titles); font-size: var(--fs-small); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+  .obj .artifact .act:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  .obj .conv { display: flex; align-items: stretch; }
+  .obj .conv .side { flex: 1; display: flex; flex-direction: column; gap: var(--sp); padding: calc(var(--sp) * 3) calc(var(--sp) * 4); }
+  .obj .conv .side:first-child { border-right: 1px solid var(--line); }
+  .obj .conv .amt { background: none; border: none; color: var(--ink); font-family: var(--mono); font-size: var(--fs-large); font-weight: 700; letter-spacing: -0.01em; width: 100%; padding: 0; }
+  .obj .conv .amt:focus { outline: none; color: var(--accent-ink); }
+  .obj .conv .swap { flex: none; border: none; border-left: 1px solid var(--line); border-right: 1px solid var(--line); background: none; color: var(--muted); font-family: var(--mono); font-size: var(--fs-normal); padding: 0 calc(var(--sp) * 3); cursor: pointer; }
+  .obj .conv .swap:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  .obj .placewrap { border-top: 1px solid var(--line); }
+  .obj .placemap { display: block; width: 100%; height: 420px; border: 0; }
+  .obj .place { display: flex; align-items: stretch; border-top: 1px solid var(--line); }
+  .obj .place .swap { flex: none; width: 44px; background: none; color: var(--muted); font-family: var(--mono); font-size: var(--fs-normal); cursor: pointer; border: none; }
+  .obj .place .swap:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  .obj .place .pname { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: calc(var(--sp) * 0.5); padding: calc(var(--sp) * 2) calc(var(--sp) * 4); }
+  .obj .place .pname .n2 { font-family: var(--titles); font-weight: 600; }
+  .obj .place .pname .addr { color: var(--faint); font-size: var(--fs-small); }
+  .obj .place .plabel { margin-left: auto; align-self: center; font-family: var(--mono); font-size: var(--fs-small); color: var(--faint); padding-right: calc(var(--sp) * 4); }
+  .obj .place #pprev { border-right: 1px solid var(--line); }
+  .obj .place #pnext { border-left: 1px solid var(--line); }
+  .obj .r { display: flex; align-items: baseline; gap: calc(var(--sp) * 3); padding: calc(var(--sp) * 1.5) calc(var(--sp) * 4); border-bottom: 1px solid var(--line); }
+  .obj .r:last-child { border-bottom: none; }
+  .kdot { flex: none; width: 8px; height: 8px; }
+  .kdot.add { background: var(--ok); }
+  .kdot.chg { background: var(--accent); }
+  .kdot.fix { background: var(--warn); }
+  .obj .r .rtext { font-family: var(--titles); font-size: var(--fs-small); }
+  .obj .r .rtime { margin-left: auto; font-family: var(--mono); font-size: var(--fs-small); color: var(--faint); }
+  .obj .r .rstate { flex: none; font-family: var(--titles); font-size: var(--fs-small); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ok); }
+  .obj .lamps { display: flex; flex-direction: column; }
+  .note { padding: calc(var(--sp) * 3) calc(var(--sp) * 4); }
+  .note .who { color: var(--faint); margin-bottom: calc(var(--sp) * 1); }
+  .note .prose { max-width: 58ch; color: var(--ink); white-space: pre-wrap; }
+  .states { display: flex; flex-wrap: wrap; gap: calc(var(--sp) * 2); padding: calc(var(--sp) * 2.5) calc(var(--sp) * 3); }
+  .btn { font-family: var(--titles); border: 1px solid var(--line-strong); padding: calc(var(--sp) * 1) calc(var(--sp) * 2.5); color: var(--ink); background: none; cursor: pointer; font-size: var(--fs-small); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+  .btn:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  .divider { display: flex; align-items: center; gap: calc(var(--sp) * 3); color: var(--faint); margin: calc(var(--sp) * 2) 0; }
+  .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+  .pairview { margin: 0 auto; max-width: 640px; width: 100%; padding: calc(var(--sp) * 8) calc(var(--sp) * 5); display: flex; flex-direction: column; gap: calc(var(--sp) * 4); }
+  .pairview h2 { font-family: var(--titles); font-size: var(--fs-large); font-weight: 700; }
+  .pairview p { color: var(--muted); }
+  .pairview .fine { color: var(--faint); font-size: var(--fs-small); }
+  .pairview ol { padding-left: calc(var(--sp) * 5); display: flex; flex-direction: column; gap: calc(var(--sp) * 2); }
+  .pairview .row { display: flex; gap: calc(var(--sp) * 3); align-items: center; flex-wrap: wrap; }
+  .pairview input { background: var(--sunken); color: var(--ink); border: 1px solid var(--line-strong); padding: calc(var(--sp) * 2.5) calc(var(--sp) * 3); font-family: var(--mono); letter-spacing: 0.12em; text-transform: uppercase; width: 14ch; }
+  .pairview button { align-self: flex-start; border: 1px solid var(--line-strong); background: none; color: var(--ink); padding: calc(var(--sp) * 2.5) calc(var(--sp) * 4); cursor: pointer; }
+  .pairview button.go { color: var(--accent-ink); border-color: var(--accent); }
+  .pairview button:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  .pairview .status { display: flex; gap: calc(var(--sp) * 2.5); align-items: baseline; }
+  .pairview .status::before { content: ""; width: 8px; height: 8px; flex: none; background: var(--faint); transform: translateY(-1px); }
+  .pairview .status.ok::before { background: var(--ok); }
+  .pairview .status.bad::before { background: var(--warn); }
+  .pairview .code { display: flex; gap: calc(var(--sp) * 6); align-items: center; background: var(--raised); border: 1px solid var(--line); padding: calc(var(--sp) * 5); flex-wrap: wrap; }
+  .pairview .qr { background: #fff; padding: 6px; line-height: 0; }
+  .pairview .qr svg { width: 184px; height: 184px; }
+  .pairview .letters { font-family: var(--mono); font-size: var(--fs-large); letter-spacing: 0.14em; }
+  .pairview .devices { border-top: 1px solid var(--line); }
+  .pairview .device { display: flex; justify-content: space-between; align-items: center; gap: calc(var(--sp) * 3); padding: calc(var(--sp) * 3) 0; border-bottom: 1px solid var(--line); }
+  .pairview .device .k { color: var(--faint); font-family: var(--mono); font-size: var(--fs-small); }
+  .empty { margin: auto; text-align: center; color: var(--faint); }
+  .empty .big { font-family: var(--titles); font-size: var(--fs-large); font-weight: 700; color: var(--muted); margin-bottom: calc(var(--sp) * 2); }
+
+  .dock { flex: none; padding: calc(var(--sp) * 4) calc(var(--sp) * 10) calc(var(--sp) * 6); }
+  .input { max-width: 860px; margin: 0 auto; display: flex; align-items: stretch; border: 1px solid var(--line-strong); background: var(--raised); transition: border-color var(--sweep) ease-out; }
+  .input:focus-within { border-color: var(--accent-ink); }
+  .input textarea { flex: 1; resize: none; background: none; border: none; color: var(--ink); padding: calc(var(--sp) * 3.5) calc(var(--sp) * 4); height: calc(var(--sp) * 13); }
+  .input textarea:focus { outline: none; }
+  .send { flex: none; border: none; border-left: 1px solid var(--line); background: none; color: var(--muted); padding: 0 calc(var(--sp) * 5); cursor: pointer; font-family: var(--titles); font-size: var(--fs-small); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .send:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  .send.typed { background: var(--accent); color: #ffffff; }
+
+  @media (max-width: 900px) { .rail { display: none; } .stream { padding: calc(var(--sp) * 6) calc(var(--sp) * 6) calc(var(--sp) * 4); } .line .when { display: none; } }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <span class="tick l"></span><span class="tick r"></span>
+  <div class="body">
+    <nav class="rail">
+      <div class="railhead">
+        <div class="mark">Diablo<span>.</span></div>
+        <span class="idx">01 /</span>
+      </div>
+      <button class="railchip" id="modechip" title="speaking and listening, on or off">speaking, off</button>
+      <div class="railchip" id="hubchip">reaching the hub</div>
+      <button class="railchip" id="deviceschip" title="pair a phone or a browser, revoke one">devices</button>
+      <button class="new hud inv" id="newstream">new stream</button>
+      <div class="group hud"><span class="idx">02 /</span> streams</div>
+      <div id="streamlist"></div>
+      <div class="group hud"><span class="idx">03 /</span> workspaces</div>
+      <div id="wslist"></div>
+      <div class="settledfold hud" id="settledfold">settled (0)</div>
+      <div id="settledlist"></div>
+    </nav>
+
+    <section class="col">
+      <div class="colhead hud" id="colhead">
+        <span class="idx">04 /</span> <span id="coltitle">the stream</span>
+        <span class="live" id="colstate"></span>
+      </div>
+      <div class="stream" id="stream"><div class="empty" id="empty"><div class="big">Speak, sir.</div>type below and diablo answers here. everything in this room is remembered.</div></div>
+      <div class="dock">
+        <div class="input">
+          <textarea id="ta" placeholder="speak, sir" spellcheck="false"></textarea>
+          <button class="send" id="send">send</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script src="qrcode.js"></script>
+<script src="devicename.js"></script>
+<script>
+  const qs = new URLSearchParams(location.search);
+  if (qs.get('token')) {
+    if (!localStorage.getItem('diablo-token')) localStorage.setItem('diablo-token', qs.get('token'));
+    qs.delete('token');
+    history.replaceState(null, '', location.pathname + (qs.toString() ? '?' + qs : '') + location.hash);
+  }
+  const TOKEN = localStorage.getItem('diablo-token') || '';
+  const HUB = location.port === '8123' ? 'http://diablo-pi:8755' : location.origin;
+  const H = { 'Content-Type': 'application/json', 'X-Diablo-Token': TOKEN };
+  const NOT_PAIRED = 'not paired: open devices';
+  // Through Diablo's own tailnet name (http://diablo) the hub knows who you are, so a new
+  // browser is paired with no code. Anywhere else the hub answers 403 and the tab stops
+  // asking; any other failure (hub restarting, network) leaves it free to try on reload.
+  if (!TOKEN && !sessionStorage.getItem('diablo-door')) {
+    fetch(HUB + '/v1/pair/tailnet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: deviceLabel() }) })
+      .then(r => { if (r.status === 403) sessionStorage.setItem('diablo-door', 'shut'); return r.ok ? r.json() : null; })
+      .then(body => { if (body && body.token) { localStorage.setItem('diablo-token', body.token); location.replace(location.pathname); } })
+      .catch(() => {});
+  }
+  let pairTimer = null;
+
+  let active = { ws: null, chat: null };
+  const workspaces = [];
+
+  const $ = id => document.getElementById(id);
+  const stream = $('stream'), ta = $('ta'), send = $('send');
+  const clock = ts => { const d = new Date(ts * 1000); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  const day = ts => { const d = new Date(ts * 1000); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); };
+  const esc = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+
+  function empty(state) {
+    stream.innerHTML = '<div class="empty"><div class="big">Speak, sir.</div>' + esc(state) + '</div>';
+  }
+
+  function entryEl(ts, text, firstOfDay) {
+    const e = document.createElement('div');
+    e.className = 'entry';
+    if (firstOfDay === undefined) firstOfDay = Number(stream.dataset.day) !== new Date(ts * 1000).getDate();
+    stream.dataset.day = new Date(ts * 1000).getDate();
+    e.innerHTML = '<div class="line">' +
+      (firstOfDay ? '<span class="when"><span class="d">' + day(ts) + '</span>' + clock(ts) + '</span>' : '<span class="when">' + clock(ts) + '</span>') +
+      '<span class="txt"></span></div>';
+    e.querySelector('.txt').textContent = text;
+    return e;
+  }
+
+  function replyEl(m, wsId, firstOfDay) {
+    const e = document.createElement('div');
+    e.className = 'entry';
+    e.innerHTML = '<div class="line"><span class="when">' + (firstOfDay ? '<span class="d">' + day(m.ts) + '</span>' : '') + clock(m.ts) + '</span></div>' +
+      '<div class="results"></div>';
+    const results = e.querySelector('.results');
+    const objects = (m.meta && m.meta.objects) || [];
+    if (!objects.length) {
+      const note = document.createElement('div');
+      note.className = 'obj note';
+      note.innerHTML = '<div class="who hud"></div><div class="prose"></div>';
+      note.querySelector('.who').textContent = 'diablo, from the ' + wsId + ' workspace';
+      note.querySelector('.prose').textContent = m.text;
+      results.appendChild(note);
+    } else {
+      const note = document.createElement('div');
+      note.className = 'obj note';
+      note.innerHTML = '<div class="who hud"></div><div class="prose"></div>';
+      note.querySelector('.who').textContent = 'diablo, from the ' + wsId + ' workspace';
+      note.querySelector('.prose').textContent = m.text;
+      results.appendChild(note);
+      objects.forEach(o => results.appendChild(objectEl(o)));
+    }
+    return e;
+  }
+
+  function objectEl(o) {
+    if (o.kind === 'lights') return lightsEl(o);
+    if (o.kind === 'todos') return todosEl(o);
+    if (o.kind === 'readout') return readoutEl(o);
+    if (o.kind === 'code') return codeEl(o);
+    if (o.kind === 'table') return tableEl(o);
+    if (o.kind === 'places') return placesEl(o);
+    if (o.kind === 'git') return gitEl(o);
+    if (o.kind === 'artifact') return artifactEl(o);
+    if (o.kind === 'converter') return converterEl(o);
+    if (o.kind === 'question') return questionEl(o);
+    const d = document.createElement('div');
+    d.className = 'obj note';
+    d.innerHTML = '<div class="prose"></div>';
+    d.querySelector('.prose').textContent = JSON.stringify(o);
+    return d;
+  }
+
+  function questionEl(o) {
+    const opts = (o.options || []).slice(0, 4);
+    const open = (o.state || 'pending') === 'pending';
+    const answer = o.answer || {};
+    let body;
+    if (open) {
+      body = '<div class="prose">' + esc(o.question || '') + '</div><ol class="q-opts">' + opts.map((x, i) =>
+        '<li><button class="q-opt" data-n="' + (i + 1) + '"><b>' + (i + 1) + '. ' + esc(x.label) + '</b>' +
+        (i === o.recommended ? ' <span class="q-rec">recommended</span>' : '') +
+        (x.description ? '<br><span class="q-desc">' + esc(x.description) + '</span>' : '') + '</button></li>').join('') +
+        '</ol><div class="q-hint">Reply with the number' + (o.multi ? 's, like 1 and 3' : '') + (o.allow_text ? ', or in your own words.' : '.') + '</div>';
+    } else {
+      const said = o.state === 'answered' ? ((answer.labels || []).join(', ') + (answer.text ? ' ' + answer.text : '')) :
+        o.state === 'expired' ? 'No answer in time' : o.state === 'superseded' ? 'Replaced by a newer question' : 'Withdrawn';
+      body = '<div class="prose">' + esc(o.question || '') + '</div><div class="q-hint">' + esc(said) + '</div>';
+    }
+    const inner = document.createElement('div');
+    inner.innerHTML = body;
+    const d = objFrame(o, o.header || 'Question', inner);
+    d.querySelectorAll('.q-opt').forEach(b => b.addEventListener('click', () => { if (!inFlight) speak(b.dataset.n); }));
+    return d;
+  }
+
+  function objFrame(o, title, body) {
+    const d = document.createElement('div');
+    d.className = 'obj';
+    d.innerHTML = '<div class="bar hud"><span class="type"></span> ' + esc(title) + '</div>';
+    d.appendChild(body);
+    return d;
+  }
+
+  function readoutEl(o) {
+    const body = document.createElement('div');
+    body.className = 'readout';
+    (o.cells || []).forEach(c => {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.innerHTML = '<span class="v"></span><span class="k hud"></span>';
+      cell.querySelector('.v').textContent = c.v;
+      cell.querySelector('.k').textContent = c.k || '';
+      body.appendChild(cell);
+    });
+    return objFrame(o, o.title || 'the readout', body);
+  }
+
+  function codeEl(o) {
+    const body = document.createElement('div');
+    body.className = 'code';
+    body.textContent = o.code || '';
+    return objFrame(o, o.title || 'the code', body);
+  }
+
+  function tableEl(o) {
+    const body = document.createElement('table');
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+    (o.head || []).forEach(h => { const th = document.createElement('th'); th.textContent = h; trh.appendChild(th); });
+    thead.appendChild(trh);
+    body.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    (o.rows || []).forEach(r => {
+      const tr = document.createElement('tr');
+      r.forEach((c, i) => { const td = document.createElement('td'); if (i > 0) td.className = 'n'; td.textContent = c; tr.appendChild(td); });
+      tbody.appendChild(tr);
+    });
+    body.appendChild(tbody);
+    return objFrame(o, o.title || 'the table', body);
+  }
+
+  function artifactEl(o) {
+    const body = document.createElement('div');
+    body.className = 'artifact';
+    body.innerHTML = '<span class="sig">D</span><div class="facts"><span class="v"></span><span class="k"></span></div><button class="act hud inv">install</button>';
+    body.querySelector('.v').textContent = o.version || 'the build';
+    body.querySelector('.k').textContent = (o.facts || []).join(' · ');
+    body.querySelector('.act').addEventListener('click', async () => {
+      body.querySelector('.act').textContent = 'installing';
+      const reply = await api('/v1/chat/completions', { method: 'POST', body: JSON.stringify({ messages: [{ role: 'user', content: 'install ' + (o.version || 'the latest build') + ' on my devices' }], rank: 'marquis', workspace: active.ws || 'scratch', chat: active.chat || active.ws || 'scratch', device: DEVICE }) });
+      body.querySelector('.act').textContent = 'installing';
+      body.querySelector('.act').disabled = true;
+    });
+    return objFrame(o, o.title || 'the artifact', body);
+  }
+
+  function converterEl(o) {
+    const body = document.createElement('div');
+    body.className = 'conv';
+    const rate = parseFloat(o.rate) || 1;
+    body.innerHTML = '<div class="side"><input class="amt" inputmode="decimal"><span class="k hud">eur</span></div>' +
+      '<button class="swap">&lt;-&gt;</button>' +
+      '<div class="side"><input class="amt" inputmode="decimal"><span class="k hud">dkk</span></div>';
+    const ins = body.querySelectorAll('.amt');
+    ins[0].value = '100';
+    ins[1].value = (100 * rate).toFixed(2);
+    let flip = false;
+    const conv = () => {
+      const v = parseFloat(ins[flip ? 1 : 0].value) || 0;
+      if (flip) ins[0].value = (v / rate).toFixed(2); else ins[1].value = (v * rate).toFixed(2);
+    };
+    ins[0].addEventListener('input', () => { if (!flip) conv(); });
+    ins[1].addEventListener('input', () => { if (flip) conv(); });
+    body.querySelector('.swap').addEventListener('click', () => {
+      flip = !flip;
+      body.querySelector('.k').textContent = flip ? 'dkk' : 'eur';
+      body.querySelectorAll('.k')[1].textContent = flip ? 'eur' : 'dkk';
+      conv();
+    });
+    return objFrame(o, o.title || (o.a + ' to ' + o.b + ' at ' + o.rate), body);
+  }
+
+  function gitEl(o) {
+    const body = document.createElement('div');
+    body.className = 'ghudlist';
+    (o.commits || []).forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'r';
+      const kind = ['add', 'chg', 'fix'].includes(c.kind) ? c.kind : 'chg';
+      row.innerHTML = '<span class="kdot ' + kind + '"></span><span class="rtext"></span>' +
+        '<span class="rtime"></span>' + (c.rstate ? '<span class="rstate">' + esc(c.rstate) + '</span>' : '');
+      row.querySelector('.rtext').textContent = c.text;
+      row.querySelector('.rtime').textContent = c.rtime || '';
+      body.appendChild(row);
+    });
+    return objFrame(o, o.title || 'the git feed', body);
+  }
+
+  function placesEl(o) {
+    const d = document.createElement('div');
+    d.className = 'obj t-search';
+    d.dataset.kind = 'places';
+    const places = o.places || [];
+    d.innerHTML = '<div class="bar hud"><span class="type"></span> ' + esc(o.title || 'the places') + ' <span class="live"></span></div>';
+    const wrap = document.createElement('div');
+    wrap.className = 'placewrap';
+    const mapDiv = document.createElement('div');
+    mapDiv.className = 'placemap';
+    wrap.appendChild(mapDiv);
+    const row = document.createElement('div');
+    row.className = 'place';
+    row.innerHTML = '<button class="swap" id="pprev">&lt;</button>' +
+      '<div class="pname"><span class="n2"></span><span class="addr"></span></div>' +
+      '<span class="plabel"></span><button class="swap" id="pnext">&gt;</button>';
+    wrap.appendChild(row);
+    d.appendChild(wrap);
+    let idx = 0;
+    let map = null, marker = null;
+    const show = () => {
+      if (!places.length) return;
+      const p = places[idx];
+      row.querySelector('.n2').textContent = p.name;
+      row.querySelector('.addr').textContent = p.address || '';
+      row.querySelector('.plabel').textContent = (idx + 1) + ' / ' + places.length;
+      d.querySelector('.live').textContent = (idx + 1) + ' of ' + places.length;
+      if (!map) {
+        map = L.map(mapDiv, { attributionControl: false }).setView([p.lat, p.lon], 16);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { referrerPolicy: 'origin-when-cross-origin' }).addTo(map);
+        places.slice(0, 8).forEach((pl, i) => {
+          L.marker([pl.lat, pl.lon]).addTo(map).bindTooltip(pl.name);
+        });
+      }
+      map.panTo([p.lat, p.lon]);
+      requestAnimationFrame(() => map.invalidateSize());
+    };
+    row.querySelector('#pprev').addEventListener('click', () => { idx = (idx - 1 + places.length) % places.length; show(); });
+    row.querySelector('#pnext').addEventListener('click', () => { idx = (idx + 1) % places.length; show(); });
+    setTimeout(show, 60);
+    return d;
+  }
+
+  function lightsEl(o) {
+    const d = document.createElement('div');
+    d.className = 'obj t-lights';
+    d.dataset.kind = 'lights';
+    d.innerHTML = '<div class="bar hud"><span class="type"></span> the lights <span class="live"></span></div>';
+    const body = document.createElement('div');
+    body.className = 'lamps';
+    let on = 0;
+    o.lamps.forEach(l => { if (l.on) on++; });
+    for (const lamp of o.lamps) {
+      const row = document.createElement('div');
+      row.className = 'lamp' + (lamp.on ? ' on' : '');
+      row.style.setProperty('--lamp', lamp.color || '#f2a516');
+      row.dataset.lamp = lamp.id;
+      row.innerHTML = '<span class="bulb"></span><span class="name"></span>' +
+        '<div class="swatches">' + ['#f2f1ee', '#ffd166', '#74aaff', '#ff6b6b', '#7bd88f'].map(c =>
+          '<button class="sw' + (lamp.on && (lamp.color || '').toLowerCase() === c ? ' on' : '') + '" data-c="' + c + '" style="background:' + c + '"></button>'
+        ).join('') + '</div>';
+      row.querySelector('.name').textContent = lamp.name;
+      row.querySelector('.bulb').parentElement.addEventListener('click', async e => {
+        if (e.target.classList.contains('sw')) return;
+        await controlLight(lamp.id, lamp.on ? 'off' : 'on');
+      });
+      row.querySelectorAll('.sw').forEach(sw => sw.addEventListener('click', async e => {
+        e.stopPropagation();
+        await controlLight(lamp.id, 'on', sw.dataset.c);
+      }));
+      body.appendChild(row);
+    }
+    d.appendChild(body);
+    d.querySelector('.live').textContent = on + ' of ' + o.lamps.length + ' on';
+    return d;
+  }
+
+  async function controlLight(lamp, action, color) {
+    try {
+      const data = await api('/v1/lights', { method: 'POST', body: JSON.stringify({ action, target: lamp, color }) });
+      const obj = document.querySelector('.obj[data-kind="lights"]');
+      if (obj) obj.replaceWith(lightsEl({ kind: 'lights', lamps: data.lamps }));
+    } catch (e) {}
+  }
+
+  function todosEl(o) {
+    const d = document.createElement('div');
+    d.className = 'obj t-step';
+    d.dataset.kind = 'todos';
+    d.innerHTML = '<div class="bar hud"><span class="type"></span> the board <span class="live"></span></div>';
+    const body = document.createElement('div');
+    body.className = 'steps';
+    const todos = o.todos || [];
+    let open = 0;
+    for (const todo of todos) {
+      if (todo.state === 'open') open++;
+      const row = document.createElement('div');
+      row.className = 'step' + (todo.state === 'open' ? ' on' : ' did');
+      row.innerHTML = '<span class="box">' + (todo.state === 'open' ? '[ ]' : '[x]') + '</span><span class="txt"></span>';
+      row.querySelector('.txt').textContent = todo.text;
+      row.addEventListener('click', async () => {
+        await api('/v1/todos/' + todo.id, { method: 'POST', body: JSON.stringify({ state: todo.state === 'open' ? 'done' : 'open' }) });
+        const r = await api('/v1/workspaces/' + o.workspace + '/todos');
+        const obj = document.querySelector('.obj[data-kind="todos"]');
+        if (obj) obj.replaceWith(todosEl({ kind: 'todos', workspace: o.workspace, todos: r.todos }));
+      });
+      body.appendChild(row);
+    }
+    if (!todos.length) {
+      const row = document.createElement('div');
+      row.className = 'step';
+      row.innerHTML = '<span class="txt">nothing on the board, sir</span>';
+      body.appendChild(row);
+    }
+    d.appendChild(body);
+    d.querySelector('.live').textContent = open + ' open';
+    return d;
+  }
+
+  function noteEl(ts, who, text) {
+    const e = document.createElement('div');
+    e.className = 'entry';
+    e.innerHTML = '<div class="line"><span class="when">' + clock(ts) + '</span></div>' +
+      '<div class="results"><div class="obj note"><div class="who hud"></div><div class="prose"></div></div></div>';
+    e.querySelector('.who').textContent = who;
+    e.querySelector('.prose').textContent = text;
+    return e;
+  }
+
+  async function api(path, opts) {
+    const r = await fetch(HUB + path, Object.assign({ headers: H }, opts || {}));
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }
+
+  async function loadEntries(wsId, chatId) {
+    clearInterval(pairTimer);
+    active = { ws: wsId, chat: chatId };
+    document.querySelectorAll('.rail .s, .subchats .chat').forEach(el => el.classList.toggle('on', el.dataset.chat === chatId));
+    const ws = workspaces.find(w => w.id === wsId);
+    const chat = ws ? ws.chats.find(c => c.chat_id === chatId) : null;
+    $('coltitle').textContent = chat ? (wsId + ' / ' + (chat.title || chatId)) : (chatId || wsId || 'the stream');
+    $('colstate').textContent = chat && chat.state === 'working' ? 'diablo is at work' : '';
+    try {
+      const data = await api('/v1/chats/' + chatId + '/entries');
+      stream.innerHTML = '';
+      if (!data.messages.length) { empty('nothing in this room yet.'); return; }
+      let lastDay = null;
+      const byPair = {};
+      for (const m of data.messages) {
+        if (m.role === 'assistant' && m.meta && m.meta.reply_to) byPair[m.meta.reply_to] = m;
+      }
+      for (const m of data.messages) {
+        const d = new Date(m.ts * 1000).getDate();
+        const firstOfDay = d !== lastDay;
+        lastDay = d;
+        if (m.role === 'user') {
+          stream.appendChild(entryEl(m.ts, m.text, firstOfDay));
+          const reply = byPair[m.id];
+          if (reply) stream.appendChild(replyEl(reply, wsId, firstOfDay));
+        } else if (m.role === 'assistant' && !(m.meta && m.meta.reply_to)) {
+          stream.appendChild(replyEl(m, wsId, firstOfDay));
+        }
+      }
+      stream.dataset.day = lastDay;
+    } catch (e) {
+      empty('the hub is out of reach, sir.');
+    }
+    stream.scrollTop = stream.scrollHeight;
+  }
+
+  function railRow(id, name, when, cls) {
+    return '<div class="s' + (cls || '') + '" data-chat="' + id + '"><span class="n">' + esc(name) + '</span><span class="when ' + (when === 'working' ? 'moving' : '') + '">' + esc(when) + '</span></div>';
+  }
+
+  function render() {
+    const streams = $('streamlist'), wslist = $('wslist'), settled = $('settledlist');
+    streams.innerHTML = ''; wslist.innerHTML = ''; settled.innerHTML = '';
+    let settledCount = 0;
+    for (const w of workspaces) {
+      const open = w.open || w.id === active.ws;
+      const chats = w.chats.filter(c => c.state !== 'settled');
+      const settledChats = w.chats.filter(c => c.state === 'settled');
+      settledCount += settledChats.length;
+      if (w.id === 'scratch') {
+        const chat = chats[0];
+        if (chat) streams.innerHTML = railRow(chat.chat_id, 'the stream', chat.state === 'working' ? 'working' : clock(chat.last_touched || 0), chat.chat_id === active.chat ? ' on' : '');
+        continue;
+      }
+      const row = document.createElement('div');
+      row.className = 's wsrow' + (open ? ' open' : '');
+      row.dataset.ws = w.id;
+      const working = chats.some(c => c.state === 'working');
+      const last = chats.length ? Math.max(...chats.map(c => c.last_touched || 0)) : 0;
+      row.innerHTML = '<span class="n">' + esc(w.name) + '</span>' +
+        '<span class="when ' + (working ? 'moving' : 'done') + '">' + (working ? 'working' : (last ? clock(last) : 'new')) + '</span>' +
+        '<button class="chev">' + (open ? '[-]' : '[+]') + '</button>';
+      row.addEventListener('click', () => { w.open = !w.open; render(); });
+      wslist.appendChild(row);
+      const sub = document.createElement('div');
+      sub.className = 'subchats';
+      for (const c of chats) {
+        const ch = document.createElement('div');
+        ch.className = 'chat' + (c.chat_id === active.chat ? ' on' : '');
+        ch.dataset.chat = c.chat_id;
+        ch.innerHTML = '<span class="n">' + esc(c.title || c.chat_id) + '</span>' +
+          '<button class="settle">settle</button>';
+        ch.addEventListener('click', e => {
+          if (e.target.classList.contains('settle')) { settleChat(c.chat_id, true); return; }
+          loadEntries(w.id, c.chat_id);
+        });
+        sub.appendChild(ch);
+      }
+      const add = document.createElement('div');
+      add.className = 'newchat hud';
+      add.textContent = '+ new chat here';
+      add.addEventListener('click', () => newChatIn(w));
+      sub.appendChild(add);
+      wslist.appendChild(sub);
+      for (const c of settledChats) {
+        const ch = document.createElement('div');
+        ch.className = 's chat' + (c.chat_id === active.chat ? ' on' : '');
+        ch.dataset.chat = c.chat_id;
+        ch.innerHTML = '<span class="n">' + esc((c.title || c.chat_id) + ' · ' + w.name) + '</span><button class="unsettle hud">wake</button>';
+        ch.addEventListener('click', e => {
+          if (e.target.classList.contains('unsettle')) { settleChat(c.chat_id, false); return; }
+          loadEntries(w.id, c.chat_id);
+        });
+        settled.appendChild(ch);
+      }
+    }
+    $('settledfold').textContent = 'settled (' + settledCount + ')';
+    $('settledfold').style.display = settledCount ? '' : 'none';
+  }
+
+  async function refreshRail() {
+    try {
+      const data = await api('/v1/workspaces');
+      if (!data.workspaces.length) {
+        $('hubchip').textContent = TOKEN ? 'hub, live, nothing yet' : NOT_PAIRED;
+        render();
+        return;
+      }
+      workspaces.length = 0;
+      for (const w of data.workspaces) {
+        workspaces.push({
+          id: w.id, name: w.name, open: w.id === active.ws,
+          chats: w.chats.map(c => ({ chat_id: c.chat_id, title: c.title, state: c.state, last_touched: c.last_touched })),
+        });
+      }
+      $('hubchip').textContent = 'hub, live';
+      render();
+      if (!active.chat) {
+        const scratch = workspaces.find(w => w.id === 'scratch');
+        const first = scratch && scratch.chats.filter(c => c.state !== 'settled')[0];
+        const firstWs = workspaces.find(w => w.chats.some(c => c.state !== 'settled'));
+        if (first) loadEntries('scratch', first.chat_id);
+        else if (firstWs) loadEntries(firstWs.id, firstWs.chats.find(c => c.state !== 'settled').chat_id);
+      } else {
+        const ws = workspaces.find(w => w.id === active.ws);
+        const chat = ws && ws.chats.find(c => c.chat_id === active.chat);
+        $('colstate').textContent = chat && chat.state === 'working' ? 'diablo is at work' : '';
+      }
+    } catch (e) {
+      if (e.message === '403') { $('hubchip').textContent = 'the hub no longer knows this browser'; showDevices(); return; }
+      $('hubchip').textContent = 'the hub is out of reach';
+    }
+  }
+
+  async function settleChat(chatId, settled) {
+    try {
+      await api('/v1/chats/' + chatId + '/settle', { method: 'POST', body: JSON.stringify({ settled }) });
+      if (settled && active.chat === chatId) { active = { ws: null, chat: null }; stream.innerHTML = '<div class="empty"><div class="big">Settled.</div>it lives in the fold below, wake it when needed.</div>'; }
+      await refreshRail();
+    } catch (e) {}
+  }
+
+  async function newChatIn(ws) {
+    const n = ws.chats.length + 1;
+    const chatId = ws.id + '-' + n;
+    await api('/v1/workspaces/' + ws.id + '/chats', { method: 'POST', body: JSON.stringify({ chat_id: chatId, title: 'chat ' + n }) });
+    ws.open = true;
+    await refreshRail();
+    loadEntries(ws.id, chatId);
+  }
+
+  $('newstream').addEventListener('click', async () => {
+    if (!TOKEN) { $('hubchip').textContent = NOT_PAIRED; return; }
+    const n = workspaces.filter(w => w.id.startsWith('s-')).length + 1;
+    const id = 's-' + n;
+    try {
+      await api('/v1/workspaces', { method: 'POST', body: JSON.stringify({ id, name: 'stream ' + n }) });
+      await refreshRail();
+      const ws = workspaces.find(w => w.id === id);
+      if (ws) { ws.open = true; render(); loadEntries(id, id); }
+    } catch (e) { $('hubchip').textContent = 'could not create the stream, sir'; }
+  });
+
+  let liveWork = null;
+  function workingEl(text) {
+    const w = document.createElement('div');
+    w.className = 'obj working';
+    w.innerHTML = '<div class="bar hud"><span class="type"></span> diablo is at work <span class="live">on it</span></div>';
+    const steps = document.createElement('div');
+    steps.className = 'steps';
+    w.appendChild(steps);
+    stream.appendChild(w);
+    stream.scrollTop = stream.scrollHeight;
+    liveWork = w;
+    return w;
+  }
+  function stepEl(label) {
+    if (!liveWork) return;
+    const steps = liveWork.querySelector('.steps');
+    const row = document.createElement('div');
+    row.className = 'step on';
+    row.innerHTML = '<span class="box">&gt;</span><span class="txt"></span>';
+    row.querySelector('.txt').textContent = label;
+    steps.appendChild(row);
+    stream.scrollTop = stream.scrollHeight;
+  }
+
+  function resolveWork(work, who, text) {
+    work.classList.remove('working');
+    work.classList.add('note');
+    work.innerHTML = '<div class="who hud"></div><div class="prose"></div>';
+    work.querySelector('.who').textContent = who;
+    work.querySelector('.prose').textContent = text;
+    stream.scrollTop = stream.scrollHeight;
+  }
+
+  let inFlight = false;
+  const DEVICE = (() => {
+    const ua = navigator.userAgent;
+    if (/Linux/.test(ua) && /Firefox/.test(ua)) return 'banditbox, the linux desktop, firefox';
+    if (/Linux/.test(ua)) return 'a linux browser';
+    if (/Android/.test(ua)) return 'an android device';
+    if (/iPhone|iPad/.test(ua)) return 'an iphone';
+    if (/Mac/.test(ua)) return 'the laptop, kangaeru';
+    return 'a browser';
+  })();
+
+  async function refreshTodos() {
+    if (!active.ws) return;
+    try {
+      const r = await api('/v1/workspaces/' + active.ws + '/todos');
+      let obj = document.querySelector('.obj[data-kind="todos"]');
+      if (!obj) {
+        obj = todosEl({ kind: 'todos', workspace: active.ws, todos: r.todos });
+        stream.prepend(obj);
+      } else obj.replaceWith(todosEl({ kind: 'todos', workspace: active.ws, todos: r.todos }));
+    } catch (e) {}
+  }
+
+  async function speak(text) {
+    inFlight = true;
+    const e = entryEl(Date.now() / 1000, text);
+    stream.appendChild(e);
+    const work = workingEl(text);
+    try {
+      const data = await api('/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: text }],
+          rank: 'marquis',
+          workspace: active.ws || 'scratch',
+          chat: active.chat || active.ws || 'scratch',
+          device: DEVICE,
+        }),
+      });
+      if (data.needs_clarification) {
+        work.remove();
+        const note = document.createElement('div');
+        note.className = 'obj note';
+        note.innerHTML = '<div class="who hud">jev: not sure where this belongs</div><div class="prose"></div><div class="states"></div>';
+        note.querySelector('.prose').textContent = data.question;
+        const states = note.querySelector('.states');
+        (data.candidates || []).forEach(c => {
+          const b = document.createElement('button');
+          b.className = 'btn';
+          b.textContent = c;
+          b.addEventListener('click', async () => {
+            note.remove();
+            active.ws = c; active.chat = c;
+            await speak(text);
+          });
+          states.appendChild(b);
+        });
+        stream.appendChild(note);
+        stream.scrollTop = stream.scrollHeight;
+        return;
+      }
+      const wsFiled = data.filed_to;
+      if (wsFiled && wsFiled !== (active.ws || 'scratch')) {
+        const filed = document.createElement('div');
+        filed.className = 'obj done';
+        filed.innerHTML = '<div class="bar hud"><span class="type"></span> filed to ' + esc(wsFiled) + ' <span class="go" data-view="' + esc(wsFiled) + '">go to workspace &gt;</span><span class="live">done</span></div>';
+        stream.appendChild(filed);
+        filed.querySelector('.go').addEventListener('click', () => loadEntries(wsFiled, wsFiled));
+      }
+      const reply = (data.choices && data.choices[0].message.content) || 'nothing came back, sir.';
+      resolveWork(work, 'diablo, from the ' + (wsFiled || active.ws || 'scratch') + ' workspace', reply);
+      (data.objects || []).forEach(o => stream.appendChild(objectEl(o)));
+      stream.scrollTop = stream.scrollHeight;
+      refreshRail();
+      refreshTodos();
+    } catch (err) {
+      resolveWork(work, 'diablo', 'the hub is out of reach, sir. i could not complete that just now.');
+    } finally {
+      inFlight = false;
+    }
+  }
+
+  function submit() {
+    const text = ta.value.trim();
+    if (!text) return;
+    ta.value = '';
+    send.classList.remove('typed');
+    speak(text);
+  }
+  send.addEventListener('click', submit);
+  ta.addEventListener('input', () => send.classList.toggle('typed', !!ta.value.trim()));
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
+  ta.addEventListener('focus', () => ta.placeholder = '');
+  ta.addEventListener('blur', () => ta.placeholder = 'speak, sir');
+
+  $('settledfold').addEventListener('click', () => $('settledlist').classList.toggle('open'));
+
+
+  function pairEl(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text) e.textContent = text;
+    return e;
+  }
+  function statusEl(text, kind) { return pairEl('div', 'status' + (kind ? ' ' + kind : ''), text); }
+  function qrSvg(text) {
+    const q = qrcode(0, 'M');
+    q.addData(text);
+    q.make();
+    const box = pairEl('div', 'qr');
+    box.innerHTML = q.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+    return box;
+  }
+  function showDevices() {
+    active = { ws: null, chat: null };
+    clearInterval(pairTimer);
+    document.querySelectorAll('.rail .s, .subchats .chat').forEach(el => el.classList.remove('on'));
+    $('coltitle').textContent = 'devices';
+    $('colstate').textContent = '';
+    stream.innerHTML = '';
+    const view = pairEl('div', 'pairview');
+    stream.appendChild(view);
+    api('/v1/whoami').then(me => devicesView(view, me)).catch(e => pairThisBrowser(view, e.message === '403' && TOKEN));
+  }
+
+  function pairThisBrowser(view, refused) {
+    view.appendChild(pairEl('h2', '', 'Pair this browser'));
+    view.appendChild(pairEl('p', '', 'Paired, this page reads and writes every stream and workspace on the hub, live, the same Diablo as Telegram and the phone.'));
+    if (refused) view.appendChild(statusEl('The hub no longer knows the key this browser had. Pair it again.', 'bad'));
+    const steps = pairEl('ol');
+    steps.appendChild(pairEl('li', '', 'Ask Diablo for a code: send him /pair on Telegram.'));
+    steps.appendChild(pairEl('li', '', 'Type the eight letters below. The code lasts ten minutes and works once.'));
+    view.appendChild(steps);
+    const row = pairEl('div', 'row');
+    const input = pairEl('input');
+    input.placeholder = 'ABCD-EFGH';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    const go = pairEl('button', 'go hud', 'pair');
+    row.append(input, go);
+    view.appendChild(row);
+    const out = pairEl('div');
+    view.appendChild(out);
+    view.appendChild(pairEl('p', 'fine', 'This browser gets its own key, kept in its local storage. You can lock it out any time from devices, or with /devices on Telegram.'));
+    async function redeem() {
+      out.replaceChildren(statusEl('pairing...'));
+      try {
+        const r = await fetch(HUB + '/v1/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: input.value, name: deviceLabel() }) });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) { out.replaceChildren(statusEl(body.detail || ('the hub answered ' + r.status), 'bad')); return; }
+        localStorage.setItem('diablo-token', body.token);
+        out.replaceChildren(statusEl('Paired as ' + body.device.name + ' on ' + body.hub + '. Opening the streams...', 'ok'));
+        setTimeout(() => location.replace(location.pathname), 900);
+      } catch (e) { out.replaceChildren(statusEl('the hub is out of reach: is Tailscale on?', 'bad')); }
+    }
+    go.addEventListener('click', redeem);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') redeem(); });
+    input.focus();
+  }
+
+  async function devicesView(view, me) {
+    view.appendChild(pairEl('h2', '', 'Devices'));
+    view.appendChild(pairEl('p', '', me.device ? 'This browser is paired as ' + me.device.name + '.' : 'This browser uses the hub token.'));
+    const mint = pairEl('div');
+    const start = pairEl('button', 'go hud', 'pair a device');
+    view.appendChild(start);
+    view.appendChild(mint);
+    view.appendChild(pairEl('div', 'hud', 'paired'));
+    const list = pairEl('div', 'devices');
+    view.appendChild(list);
+    async function paintList() {
+      try {
+        const data = await api('/v1/devices');
+        list.replaceChildren();
+        if (!data.devices.length) list.appendChild(pairEl('div', 'device', 'nothing paired yet'));
+        for (const d of data.devices) {
+          const row = pairEl('div', 'device');
+          const left = pairEl('div');
+          left.appendChild(pairEl('div', '', d.name + (d.current ? ', this browser' : '')));
+          left.appendChild(pairEl('div', 'k', 'paired ' + day(d.created) + ', last seen ' + day(d.last_seen || d.created) + ' ' + clock(d.last_seen || d.created)));
+          const revoke = pairEl('button', 'hud', 'revoke');
+          revoke.addEventListener('click', async () => {
+            if (!confirm('Lock ' + d.name + ' out of the hub?')) return;
+            await api('/v1/devices/' + d.id, { method: 'DELETE' });
+            if (d.current) { localStorage.removeItem('diablo-token'); location.replace(location.pathname); return; }
+            paintList();
+          });
+          row.append(left, revoke);
+          list.appendChild(row);
+        }
+      } catch (e) {}
+    }
+    devicesView.repaint = paintList;
+    start.addEventListener('click', async () => {
+      clearInterval(pairTimer);
+      mint.replaceChildren(statusEl('making a code...'));
+      let code;
+      try { code = await api('/v1/pair/code', { method: 'POST' }); } catch (e) { mint.replaceChildren(statusEl('the hub did not make a code: ' + e.message, 'bad')); return; }
+      const box = pairEl('div', 'code');
+      box.appendChild(qrSvg(code.url));
+      const right = pairEl('div');
+      right.appendChild(pairEl('div', 'letters', code.code));
+      const steps = pairEl('ol');
+      steps.appendChild(pairEl('li', '', 'On the phone, open the Diablo app at its pairing step, or Edit, then This phone.'));
+      steps.appendChild(pairEl('li', '', 'Tap Scan QR code and point it here, or type the letters.'));
+      right.appendChild(steps);
+      const state = statusEl('');
+      right.appendChild(state);
+      box.appendChild(right);
+      mint.replaceChildren(box);
+      const tick = async () => {
+        const left = Math.max(0, Math.round(code.expires_at - Date.now() / 1000));
+        let st = { state: 'waiting' };
+        try { st = await api('/v1/pair/status?code=' + encodeURIComponent(code.code)); } catch (e) {}
+        if (st.state === 'paired') {
+          clearInterval(pairTimer);
+          state.className = 'status ok';
+          state.textContent = 'Paired with ' + st.device + '. It can talk to Diablo now.';
+          paintList();
+        } else if (st.state === 'expired' || left === 0) {
+          clearInterval(pairTimer);
+          state.className = 'status bad';
+          state.textContent = 'This code ran out. Make a new one.';
+        } else {
+          state.className = 'status';
+          state.textContent = 'waiting for a device, ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' left';
+        }
+      };
+      tick();
+      pairTimer = setInterval(tick, 2000);
+    });
+    paintList();
+  }
+  $('deviceschip').addEventListener('click', showDevices);
+
+  function watchHub() {
+    if (!TOKEN || typeof EventSource === 'undefined') return;
+    const es = new EventSource(HUB + '/v1/events?token=' + encodeURIComponent(TOKEN));
+    es.onmessage = e => {
+      try {
+        const ev = JSON.parse(e.data);
+        if (ev.kind === 'chat') refreshRail();
+        if (ev.kind === 'tool' && ev.chat === active.chat) stepEl(ev.label);
+        if (ev.kind === 'todos' && ev.workspace === active.ws) refreshTodos();
+        if (ev.kind === 'message' && ev.chat === active.chat && !inFlight) loadEntries(active.ws, active.chat);
+        if (ev.kind === 'devices' && devicesView.repaint && $('coltitle').textContent === 'devices') devicesView.repaint();
+      } catch {}
+    };
+  }
+
+  const modechip = $('modechip');
+  function paintMode(on) {
+    modechip.textContent = on ? 'speaking, on' : 'speaking, off';
+    modechip.classList.toggle('on', on);
+  }
+  modechip.addEventListener('click', async () => {
+    if (!TOKEN) { $('hubchip').textContent = NOT_PAIRED; return; }
+    const next = modechip.textContent.includes('off') ? 'on' : 'off';
+    paintMode(next === 'on');
+    try { await api('/v1/settings/speaking_mode', { method: 'PUT', body: JSON.stringify({ value: next }) }); } catch (e) {}
+  });
+  (async () => {
+    if (!TOKEN) { $('hubchip').textContent = NOT_PAIRED; showDevices(); return; }
+    try { paintMode((await api('/v1/settings/speaking_mode')).value === 'on'); } catch (e) {}
+    await refreshRail();
+    watchHub();
+  })();
+</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+</body>
+</html>

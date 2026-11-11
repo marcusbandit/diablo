@@ -1,0 +1,95 @@
+#compdef pushup
+
+_pushup() {
+    local -a cmds exercises activities
+    cmds=(
+        'now:show a set right now'
+        'status:next set, recovery, and today'\''s count'
+        'challenge:the push-up challenge: start, off, feet-up on|off, rows on|off'
+        'stretches:stretch cards on or off, in both modes'
+        'sync:write the overview for nemurenai now, and show what came in'
+        'stats:reps per day'
+        'graph:the receipts: today, the body, every move, muscle groups over time'
+        'log:record sets you did on your own, 15 or 3x10 rows'
+        'train:record training: climbing 90m hard'
+        'add:the logging card, pick what you did'
+        'exercises:which exercises the card asks for'
+        'gear:what you have: a pull-up bar, a table, two chairs, parallettes'
+        'hurt:a body part hurts, ease off it'
+        'pause:no sets for a while'
+        'resume:end a pause'
+        'level:reps per set'
+        'spice:how mean it talks'
+        'intro:show the first-run walkthrough again'
+        'check:what it sees right now: calls, lock, players'
+        'daemon:run the timer (systemd starts this)'
+    )
+    exercises=(${(f)"$(pushup names exercises 2>/dev/null)"})
+    activities=(${(f)"$(pushup names activities 2>/dev/null)"})
+    if (( CURRENT == 2 )); then
+        _describe 'command' cmds
+        return
+    fi
+    case $words[2] in
+        pause) (( CURRENT == 3 )) && _values 'duration' 15m 30m 1h 2h 3h tomorrow ;;
+        hurt)
+            if (( CURRENT == 3 )); then
+                _values 'where' 'off[it got better]' 'left[the next muscle, left side]' 'right[the next muscle, right side]' \
+                    'arms[chest, triceps, shoulders]' 'back[back, biceps, grip]' legs core ${(f)"$(pushup names muscles 2>/dev/null)"}
+            else
+                _values 'where' left right arms back legs core ${(f)"$(pushup names muscles 2>/dev/null)"}
+            fi ;;
+        status) _values 'option' '--json[everything as JSON, for the launcher plugin]' ;;
+        challenge)
+            case $CURRENT in
+                3) _values 'action' 'start[day 1 today, or carry on where it was]' 'off[back to the mixed cards]' \
+                       'feet-up[decline push-ups, your call]' 'rows[body rows at the table edge]' ;;
+                4) [[ $words[3] == feet-up ]] && _values 'feet up' 'on[decline push-ups first]' 'off[plain push-ups]'
+                   [[ $words[3] == rows ]] && _values 'rows' 'on[a few sets a day]' 'off[push-ups and Bulgarians only]'
+                   [[ $words[3] == start ]] && _values 'option' '--over[begin again from day 1]' ;;
+            esac ;;
+        level) (( CURRENT == 3 )) && _values 'level' 'easy[5 to 12]' 'normal[10 to 20]' 'hard[15 to 30]' ;;
+        stats) (( CURRENT == 3 )) && _values 'days' 7 14 30 ;;
+        spice) (( CURRENT == 3 )) && _values 'spice' 'mild[clean language]' 'spicy[swearing]' ;;
+        stretches) (( CURRENT == 3 )) && _values 'stretches' 'on[stretch cards come round]' 'off[no stretch cards]' ;;
+        graph)
+            if [[ $words[CURRENT-1] == --tab ]]; then
+                _values 'tab' 'overview[today and the month]' 'body[the week on the body]' \
+                    'moves[every move]' 'timeline[muscle groups day by day]'
+            elif [[ $PREFIX == -* ]]; then
+                _values 'option' '--tab[which tab it opens on]'
+            else
+                _values 'days' 14 30 60
+            fi ;;
+        log)
+            if (( CURRENT == 3 )); then
+                _values 'reps, or sets x reps' 5 10 15 20 '3x8' '3x10' '3x12' '4x10'
+            elif [[ $PREFIX == -* ]]; then
+                _values 'option' '--sets[how many sets of that]'
+            else
+                _describe 'exercise' exercises
+            fi ;;
+        train)
+            case $CURRENT in
+                3) _describe 'activity' activities ;;
+                4) _values 'duration' 30m 45m 1h 90m 2h 3h ;;
+                5) _values 'effort' 'easy[a light one]' 'normal[a proper session]' 'hard[wrecked after]' ;;
+                *) _values 'option' '--yesterday[it was yesterday]' ;;
+            esac ;;
+        gear)
+            if (( CURRENT == 3 )); then
+                _values 'action' 'on[you have it]' 'off[you do not]'
+            else
+                _values 'tool' 'bar[a pull-up bar]' 'table[a sturdy table]' 'chairs[two sturdy chairs]' \
+                    'parallettes[parallettes or dip bars]'
+            fi ;;
+        exercises)
+            if (( CURRENT == 3 )); then
+                _values 'action' 'on[add to the rotation]' 'off[leave out]'
+            else
+                _describe 'exercise' exercises
+            fi ;;
+    esac
+}
+
+_pushup "$@"

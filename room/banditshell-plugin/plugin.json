@@ -1,0 +1,10 @@
+{
+  "api": 1,
+  "id": "room",
+  "name": "Room",
+  "about": "The Hue lights follow what you are doing: the scene now, pause, resume, try a scene",
+  "icon": "light",
+  "exec": ["python3", "-I", "plugin.py"],
+  "prefix": ["room"],
+  "global": { "minLength": 4, "cap": 2 }
+}

@@ -1,0 +1,20 @@
+[Unit]
+Description=Diablo hub
+After=network-online.target time-sync.target tailscaled.service
+Wants=network-online.target time-sync.target
+
+[Service]
+# A template: deploy/hub-install.sh fills in @USER@ and @HOME@ for the box it installs on.
+# DIABLO_HUB_BIND (this box's Tailscale IP) and the other per-box values come from local.env,
+# written by scripts/setup-local.sh. Without it the unit refuses to start rather than guess.
+User=@USER@
+WorkingDirectory=@HOME@/diablo-hub
+EnvironmentFile=@HOME@/.config/diablo/local.env
+Environment=DIABLO_HUB_CONFIG=@HOME@/diablo-hub/config.toml
+ExecStart=@HOME@/diablo-hub/venv/bin/uvicorn hub.server:app --host ${DIABLO_HUB_BIND} --port 8755 --timeout-graceful-shutdown 5
+TimeoutStopSec=20
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

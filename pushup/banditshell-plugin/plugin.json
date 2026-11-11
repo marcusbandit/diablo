@@ -1,0 +1,10 @@
+{
+  "api": 1,
+  "id": "pushup",
+  "name": "Push-ups",
+  "about": "The push-up challenge: today's count, a set now, logging, feet up",
+  "icon": "fitness_center",
+  "exec": ["python3", "-I", "plugin.py"],
+  "prefix": ["pushup", "pu"],
+  "global": { "minLength": 3, "cap": 2 }
+}

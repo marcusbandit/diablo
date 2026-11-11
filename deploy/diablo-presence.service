@@ -1,0 +1,15 @@
+[Unit]
+Description=Diablo on the screen: the orb and his answer cards (its own Quickshell, not banditshell)
+After=graphical-session.target diablo-ears.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qs -p %h/Projects/diablo/presence
+Restart=always
+RestartSec=2
+MemoryMax=600M
+MemorySwapMax=0
+
+[Install]
+WantedBy=graphical-session.target

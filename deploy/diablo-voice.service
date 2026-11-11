@@ -1,0 +1,12 @@
+[Unit]
+Description=Diablo voice loop
+After=pipewire.service
+
+[Service]
+WorkingDirectory=%h/Projects/diablo
+ExecStart=%h/Projects/diablo/.venv-voice/bin/python -m voice
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,4 @@
+#!/bin/sh
+# diablo-ears: say Diablo, hear a chime, talk, he answers. See voice/ears.py.
+repo="$(dirname "$(readlink -f "$0")")/.."
+cd "$repo" && exec "$repo/.venv-voice/bin/python" -m voice.ears "$@"

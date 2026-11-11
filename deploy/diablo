@@ -1,0 +1,1016 @@
+#!/usr/bin/env python3
+"""diablo: his lord's command line. Run bare, in any directory, and he takes the
+whole screen as your hands-on agent. Subcommands when you want a specific blade:
+
+  diablo train voice    pick a voice from the list, or add a new one; three spoken rounds
+                        blended into it. Shows recordings and sessions per voice, before and after
+  diablo -c             him again exactly where you left: the newest session of this folder
+  diablo -r             the session picker, newest first, across every folder, enter to resume
+  diablo train agent    he records his own voice, nobody else needed
+  diablo reset voice    delete a named profile after confirmation
+  diablo rename voice   give a profile a better name
+  diablo test voice     live ranking of who the microphone hears, scored ten times a second,
+                        smoothed bars with threshold and peak marks, a session summary on quit.
+                        a plays his sample, q quits
+  diablo tasks          his task board, the one source of truth: list, show, add, tell,
+                        cancel, retry. --json on any of them for the dashboard and the panels.
+                        diablo tasks help
+  diablo talk           him in your terminal: type a line, he answers here and out loud,
+                        worker starts and reports scroll by, /tasks shows the board
+  diablo agent          him as your hands-on agent, like a butler in the editor's chair:
+                        one session in your current directory, he reads, edits, runs and
+                        checks with his own tools while you watch, /new and /brain inside
+  diablo messages       login (telegram, once), check, read <chat>; his eyes on your chats
+"""
+
+import json
+import math
+import os
+import random
+import re
+import readline
+import select
+import signal
+import sys
+import termios
+import time
+import tty
+from datetime import datetime
+from pathlib import Path
+import urllib.error
+import urllib.request
+
+API = "http://127.0.0.1:8757"
+
+DIM = "\033[2m"
+CYAN = "\033[96m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RED = "\033[91m"
+END = "\033[0m"
+
+if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+    DIM = CYAN = GREEN = YELLOW = RED = END = ""
+
+VOICES_DIR = Path.home() / ".local/share/diablo/voices"
+DEAF_FILE = Path(os.environ.get("DIABLO_STATE_DIR") or Path.home() / ".local/state/diablo") / "deaf"
+DEAF_LINES = (
+    "Sir, I cannot hear you if you stuff my ears.",
+    "My ears are stuffed, my lord. Shall I open them and listen?",
+    "You speak to a demon with plugged ears, sir. May I pull the wool out?",
+    "I hear nothing but my own thoughts, sir. May I open my ears?",
+    "Your voice cannot reach me through these stuffed ears. May I clear them?",
+    "My lord, my ears are stopped. Grant me leave to uncork them?",
+    "Sir, the ears are sealed tight. May I unseal them?",
+    "I am as deaf as a post, sir. May I lend you my ears again?",
+    "These ears hear only cotton, my lord. Shall I shake it loose?",
+    "Sir, your words knock on shut ears. May I let them in?",
+)
+
+QUIET_LINES = (
+    "I am going to silence myself for a moment while you experiment.",
+    "I will hold my tongue while you test, sir.",
+    "Hush now, my lord, I shall keep quiet while you run your experiments.",
+    "Excuse me while I quiet myself for your experiments, my lord.",
+    "I shall be silent while you play with the microphone, sir.",
+    "Your experiments have the floor, my lord, I will keep silent.",
+    "I will withdraw my voice while you test, sir.",
+    "Silence from me while you experiment, my lord.",
+    "Go ahead, sir, I will keep my voice to myself while you test.",
+    "The microphone is yours, sir, I will stay quiet while you experiment.",
+)
+
+ADD_NEW = object()
+BAR_WIDTH = 40
+FRAME_S = 1 / 30
+SMOOTH_SPEED = 12.0
+
+
+def call(path, body=None, tries=3):
+    last = None
+    for _ in range(tries):
+        try:
+            if body is None:
+                with urllib.request.urlopen(f"{API}{path}", timeout=5) as r:
+                    return json.loads(r.read())
+            data = json.dumps(body).encode()
+            req = urllib.request.Request(
+                f"{API}{path}", data=data, headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return json.loads(r.read())
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+            last = error
+            time.sleep(0.4)
+    raise SystemExit(f"{RED}the voice loop did not answer: {last}{END}")
+
+
+def show(names):
+    print("known voices: " + ", ".join(GREEN + n + END for n in names))
+
+
+def pick(label, names, default):
+    prefill = default if default in names else (names[0] if names else "default")
+    if names:
+        show(names)
+    readline.set_startup_hook(lambda: readline.insert_text(prefill))
+    try:
+        value = input(CYAN + label + END + " ").strip()
+    finally:
+        readline.set_startup_hook()
+    return value or prefill
+
+
+def read_key(fd):
+    """One keypress, escape sequences folded into 'up' / 'down' / 'esc'."""
+    ch = os.read(fd, 1).decode(errors="ignore")
+    if ch != "\x1b":
+        return ch
+    if not select.select([fd], [], [], 0.05)[0]:
+        return "esc"
+    seq = os.read(fd, 2).decode(errors="ignore")
+    return {"[A": "up", "[B": "down"}.get(seq, "esc")
+
+
+def menu(title, options, hint=""):
+    """Arrow-key picker. Returns the chosen value, or None when he backs out.
+
+    options is a list of (label, value). Without a terminal it degrades to the
+    typed prompt so scripts keep working.
+    """
+    if not options:
+        return None
+    if not sys.stdin.isatty():
+        names = [str(v) for _, v in options if v is not ADD_NEW]
+        typed = pick(title, names, names[0] if names else "default")
+        return typed if typed in names else (ADD_NEW if any(v is ADD_NEW for _, v in options) else typed)
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    hint = hint or "up/down or j/k, enter picks, q backs out"
+    cursor = 0
+    drawn = 0
+    chosen = None
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write("\033[?25l")
+        while True:
+            lines = [CYAN + title + END]
+            for i, (label, _value) in enumerate(options):
+                if i == cursor:
+                    lines.append(CYAN + "> " + END + label)
+                else:
+                    lines.append(DIM + "  " + END + label)
+            lines.append(DIM + "  " + hint + END)
+            if drawn:
+                sys.stdout.write(f"\033[{drawn}A")
+            for line in lines:
+                sys.stdout.write("\r\033[2K" + line + "\n")
+            sys.stdout.flush()
+            drawn = len(lines)
+            key = read_key(fd)
+            if key in ("q", "esc", "\x03"):
+                break
+            if key in ("up", "k"):
+                cursor = (cursor - 1) % len(options)
+            elif key in ("down", "j"):
+                cursor = (cursor + 1) % len(options)
+            elif key.isdigit() and 1 <= int(key) <= len(options):
+                cursor = int(key) - 1
+            elif key in ("\r", "\n"):
+                chosen = options[cursor]
+                break
+    finally:
+        if drawn:
+            sys.stdout.write(f"\033[{drawn}A")
+            for _ in range(drawn):
+                sys.stdout.write("\r\033[2K\n")
+            sys.stdout.write(f"\033[{drawn}A")
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    if chosen is None:
+        return None
+    print(CYAN + "> " + END + chosen[0])
+    return chosen[1]
+
+
+def when(iso):
+    if not iso:
+        return "never"
+    try:
+        return datetime.fromisoformat(iso).strftime("%d %b %H:%M")
+    except ValueError:
+        return iso
+
+
+def count(n, noun):
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def stats_line(name, state):
+    info = state.get("voices", {}).get(name, {})
+    parts = [
+        f"blend {info.get('samples', 0)}",
+        count(info.get("recordings", 0), "recording"),
+        count(info.get("sessions", 0), "session"),
+        "last " + when(info.get("last")),
+    ]
+    return " · ".join(parts)
+
+
+def voice_label(name, state, width):
+    tag = GREEN + " active" + END if name == state.get("name") else "       "
+    return f"{name:<{width}}{tag}  {DIM}{stats_line(name, state)}{END}"
+
+
+def totals_line(state):
+    totals = state.get("totals", {})
+    voices = totals.get("voices", len(state.get("profiles", [])))
+    return (
+        f"{count(voices, 'voice')}, {count(totals.get('recordings', 0), 'recording')} "
+        f"over {count(totals.get('sessions', 0), 'session')}"
+    )
+
+
+def voice_options(state, add=False):
+    names = state.get("profiles", [])
+    width = max([len(n) for n in names] + [6])
+    options = [(voice_label(n, state, width), n) for n in names]
+    if add:
+        options.append((GREEN + "+ add a new voice" + END, ADD_NEW))
+    return options
+
+
+def valid_name(name):
+    if not name or any(c in name for c in "/\\ "):
+        print(RED + "one word, no slashes or spaces" + END)
+        return False
+    return True
+
+
+def choose_voice(state, title, add=False):
+    """Menu over the known voices. Returns a name, or None when nothing was chosen."""
+    print(totals_line(state))
+    chosen = menu(title, voice_options(state, add=add))
+    if chosen is ADD_NEW:
+        name = input(CYAN + "name for the new voice: " + END).strip()
+        return name if valid_name(name) else None
+    return chosen
+
+
+def train():
+    state = call("/v1/train/state")
+    if state.get("active"):
+        print(YELLOW + "he is already training: " + state["stage"] + END)
+        return 1
+    if args[1:2] == ["agent"]:
+        name, mode = "agent", "agent"
+        print(f"self-training '{name}': put the microphone close to his speakers, he does the rest")
+    else:
+        mode = None
+        name = choose_voice(state, "voice to train:", add=True)
+        if name is None:
+            print("nothing started.")
+            return 0
+    was_deaf = DEAF_FILE.exists()
+    try:
+        result = call("/v1/train/start", {"name": name, "mode": mode, "was_deaf": was_deaf})
+    except OSError as error:
+        print(RED + f"he is not listening on 8757: {error}" + END)
+        return 1
+    if not result.get("ok"):
+        error = result.get("error", "unknown")
+        if "deaf" not in error:
+            print(RED + "refused: " + error + END)
+            return 1
+        line = random.choice(DEAF_LINES)
+        said = False
+        try:
+            call("/v1/announce", {"text": line})
+            said = True
+        except Exception:
+            pass
+        print((DIM + "he says: " + END if said else "") + line)
+        answer = input("May I unmute the microphone? [Y/n] ")
+        if answer.strip().lower() not in ("", "y", "yes"):
+            print(DIM + "as you wish, training waits for open ears" + END)
+            return 1
+        DEAF_FILE.unlink(missing_ok=True)
+        result = call("/v1/train/start", {"name": name, "mode": mode, "was_deaf": True})
+        if not result.get("ok"):
+            print(RED + "refused: " + result.get("error", "unknown") + END)
+            return 1
+    print(f"training '{name}': he stays silent, counts down, then records. speak when it says recording")
+    last = ""
+    while True:
+        time.sleep(0.4)
+        state = call("/v1/train/state")
+        stage = state.get("stage", "")
+        left = state.get("left")
+        speech = state.get("speech")
+        target = state.get("speech_target") or 0
+        if "recording" in stage and speech is not None and target:
+            frac = min(float(speech) / float(target), 1.0)
+            red = int(170 * (1 - frac))
+            fill = f"\033[38;2;{red};255;60m" if GREEN else ""
+            count = int(round(frac * BAR_WIDTH))
+            cells = "".join(
+                (fill + "#" + END) if i < count else (DIM + "." + END) for i in range(BAR_WIDTH)
+            )
+            aim = ", aim met, finish your thought" if float(speech) >= float(target) else f", aim {target:.0f}s"
+            line = f"{stage}  {cells} {fill}{speech:4.1f}s{END}{DIM} of speech{aim}{END}"
+        else:
+            line = f"{stage}, {left}s left" if left is not None else stage
+        if line != last:
+            color = GREEN if "recording" in line else (YELLOW if "three" in line else CYAN)
+            print("\r  " + color + f"{line:<52}" + END, end="", flush=True)
+            last = line
+        if not state.get("active"):
+            tail = state.get("last", "")
+            good = "added" in tail or "done" in state.get("stage", "")
+            print("\n  " + (GREEN if good else YELLOW) + f"{tail} ({state['profile']['samples']} samples in '{name}')" + END)
+            break
+    state = call("/v1/train/state")
+    print(f"  {name}: {stats_line(name, state)}")
+    print("  " + DIM + totals_line(state) + END)
+    return 0
+
+
+def reset():
+    state = call("/v1/train/state")
+    if state.get("active"):
+        print(YELLOW + "he is mid-training, settle him first" + END)
+        return 1
+    name = choose_voice(state, "voice to reset (this deletes it):")
+    if name is None:
+        print("kept. nothing deleted.")
+        return 0
+    sure = input(RED + f"type the name again to delete '{name}': " + END).strip()
+    if sure != name:
+        print("kept. nothing deleted.")
+        return 0
+    result = call("/v1/train/delete", {"confirm": True, "name": name})
+    if result.get("ok") and result.get("deleted"):
+        print(GREEN + f"'{name}' is gone. the gate opens until another voice is trained." + END)
+    elif result.get("ok"):
+        print("nothing to delete.")
+    else:
+        print(RED + "refused: " + result.get("error", "unknown") + END)
+    return 0 if result.get("ok") else 1
+
+
+def rename():
+    state = call("/v1/train/state")
+    old = choose_voice(state, "voice to rename:")
+    if old is None:
+        print("nothing to do.")
+        return 0
+    readline.set_startup_hook(lambda: readline.insert_text(old.capitalize()))
+    try:
+        new = input(CYAN + "new name: " + END).strip()
+    finally:
+        readline.set_startup_hook()
+    if not new or new == old:
+        print("nothing to do.")
+        return 0
+    if not valid_name(new):
+        return 1
+    try:
+        (VOICES_DIR / f"{old}.npz").rename(VOICES_DIR / f"{new}.npz")
+        history = VOICES_DIR / f"{old}.json"
+        if history.exists():
+            history.rename(VOICES_DIR / f"{new}.json")
+    except OSError as error:
+        print(RED + f"rename failed: {error}" + END)
+        return 1
+    active = VOICES_DIR.parent / "voice-active"
+    try:
+        if active.read_text().strip() == old:
+            active.write_text(new)
+    except OSError:
+        pass
+    print(GREEN + f"'{old}' is now '{new}'." + END)
+    return 0
+
+
+# The task board. One record builder, one stale rule, one place that decides what a task is.
+# Everything else (the dashboard, the panels) reads this command and never the files.
+TASKS_DIR = Path(os.environ.get("DIABLO_TASKS_DIR") or Path.home() / ".local/state/diablo/tasks")
+THINK_FIFO = Path(os.environ.get("DIABLO_THINK_FIFO") or Path.home() / ".local/state/diablo/think.in")
+TASK_STALE_S = 360
+TASK_MARK = {"running": "*", "done": "+", "canceled": "x", "interrupted": "!"}
+TASK_COLOR = {"running": CYAN, "done": GREEN, "canceled": DIM, "interrupted": RED}
+TASK_HELP = """diablo tasks: his task board, the one source of truth.
+
+  diablo tasks [list] [--json] [--limit N]   every task, oldest first
+  diablo tasks show <id|name> [--json]       one task, every field, the report in full
+  diablo tasks add [name] -- <prompt>        give the workers a new task, it runs in
+                                             the background; a name may come first, or
+                                             `--` alone to pick one from the prompt
+  diablo tasks tell <id|name> <message>      push more information into a running task,
+                                             the worker folds it in before it reports
+  diablo tasks cancel <id|name> [--json]     mark it canceled; the workers kill a running one
+  diablo tasks retry <id|name> [--json]      dispatch it again, pointed at its old transcript
+
+A task matches by id substring or name prefix. Exit codes: 0 ok, 1 error or ambiguous,
+2 no such task or wrong state, 3 Raphael or the workers are not listening."""
+
+
+def read_text(path):
+    try:
+        return path.read_text(errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def mtime(path):
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def task_records():
+    now = time.time()
+    records = []
+    if TASKS_DIR.exists():
+        for f in sorted(TASKS_DIR.glob("*.status")):
+            tid = f.stem
+            status = read_text(f) or "?"
+            m = re.match(r"task-(\d+)$", tid)
+            updated = mtime(f)
+            started = int(m.group(1)) if m else int(updated or now)
+            out = TASKS_DIR / f"{tid}.out"
+            out_mtime = mtime(out)
+            reason = ""
+            if status == "running":
+                beat = out_mtime or updated or now
+                if now - beat > TASK_STALE_S:
+                    status = "interrupted"
+                    reason = "no heartbeat since " + time.strftime("%H:%M", time.localtime(beat))
+            elif status == "canceled":
+                reason = "canceled at his request"
+            finished = updated if status in ("done", "canceled", "interrupted") else None
+            records.append({
+                "id": tid,
+                "name": read_text(TASKS_DIR / f"{tid}.name") or tid,
+                "kind": read_text(TASKS_DIR / f"{tid}.kind") or "task",
+                "status": status,
+                "started": started,
+                "updated": updated,
+                "finished": finished,
+                "elapsed": max(0, int((finished if finished else now) - started)),
+                "description": read_text(TASKS_DIR / f"{tid}.prompt"),
+                "report": read_text(TASKS_DIR / f"{tid}.clean"),
+                "reason": reason,
+                "retry_of": read_text(TASKS_DIR / f"{tid}.retry_of"),
+                "retried_by": "",
+                "inbox": sum(1 for line in read_text(TASKS_DIR / f"{tid}.inbox").splitlines() if line.strip()),
+                "out": str(out) if out_mtime is not None else "",
+                "out_bytes": out.stat().st_size if out_mtime is not None else 0,
+            })
+    records.sort(key=lambda r: r["started"])
+    by_id = {r["id"]: r for r in records}
+    for r in records:
+        # Ascending order, so the newest retry is the one that stays.
+        if r["retry_of"] in by_id:
+            by_id[r["retry_of"]]["retried_by"] = r["id"]
+    return records
+
+
+def find_task(records, key):
+    """One record by id substring or name prefix. Returns (record, exit code)."""
+    if not key:
+        print("which task? see: diablo tasks list", file=sys.stderr)
+        return None, 2
+    match = [r for r in records if key in r["id"] or r["name"].lower().startswith(key.lower())]
+    if not match:
+        print(f"no task matching {key!r}", file=sys.stderr)
+        return None, 2
+    if len(match) > 1:
+        for r in match:
+            print(f"  {r['id']}  {r['status']:<12} {r['name']}", file=sys.stderr)
+        print("be specific: give the id", file=sys.stderr)
+        return None, 1
+    return match[0], 0
+
+
+def clock(epoch):
+    return time.strftime("%H:%M", time.localtime(epoch)) if epoch else ""
+
+
+def task_line(r):
+    color = TASK_COLOR.get(r["status"], DIM)
+    mark = TASK_MARK.get(r["status"], "?")
+    fin = clock(r["finished"]) if r["finished"] else "+%02d:%02d" % divmod(r["elapsed"], 60)
+    return f"  {color}{mark} {clock(r['started'])}  {fin:>6}  {r['status']:<12}{END} {r['name']}"
+
+
+def task_sub(r):
+    text = r["description"]
+    if not text and r["status"] in ("interrupted", "canceled"):
+        text = r["reason"]
+    if not text:
+        text = r["report"]
+    text = " ".join(text.split())
+    if not text:
+        return ""
+    if len(text) > 100:
+        text = text[:99] + "…"
+    prefix = f"{r['kind']}: " if r["kind"] != "task" else ""
+    return f"    {DIM}{prefix}{text}{END}"
+
+
+def task_answer(as_json, ok, tid, error="", line=""):
+    if as_json:
+        print(json.dumps({"ok": ok, "id": tid, "error": error}))
+    elif ok:
+        print(line)
+    else:
+        print(error, file=sys.stderr)
+
+
+def task_cancel(r, as_json):
+    if r["status"] in ("done", "canceled"):
+        task_answer(as_json, False, r["id"], f"{r['name']} is already {r['status']}")
+        return 2
+    try:
+        (TASKS_DIR / f"{r['id']}.status").write_text("canceled")
+    except OSError as error:
+        task_answer(as_json, False, r["id"], f"cancel failed: {error}")
+        return 1
+    task_answer(as_json, True, r["id"], line=f"canceled: {r['name']}")
+    return 0
+
+
+def task_retry(r, as_json):
+    new_id = f"task-{int(time.time())}"
+    while (TASKS_DIR / f"{new_id}.status").exists() or (TASKS_DIR / f"{new_id}.prompt").exists():
+        new_id = f"task-{int(new_id[5:]) + 1}"
+    old_out = r["out"] or str(TASKS_DIR / f"{r['id']}.out")
+    prompt = (
+        f"Retry of task {r['id']} ('{r['name']}'), which was interrupted. Its transcript from the "
+        f"earlier session is at {old_out} (opencode json events, the session id is inside). Read the "
+        f"end of it to see how far it got, then continue and finish the work, then report concisely."
+    )
+    # Open the fifo before writing any file, so a worker pool that is down leaves no litter behind.
+    try:
+        fd = os.open(THINK_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError as error:
+        if error.errno == 6:  # ENXIO: nobody has the fifo open for reading
+            task_answer(as_json, False, r["id"], "the workers are not listening")
+            return 3
+        task_answer(as_json, False, r["id"], f"retry failed: {error}")
+        return 1
+    line = f"{new_id}|{r['name']}|{' '.join(prompt.split())}\n"
+    try:
+        TASKS_DIR.mkdir(parents=True, exist_ok=True)
+        (TASKS_DIR / f"{new_id}.prompt").write_text(prompt)
+        (TASKS_DIR / f"{new_id}.retry_of").write_text(r["id"])
+        os.write(fd, line.encode())
+    except OSError as error:
+        task_answer(as_json, False, r["id"], f"retry failed: {error}")
+        return 1
+    finally:
+        os.close(fd)
+    task_answer(as_json, True, new_id, line=f"retrying as {new_id}: {r['name']}")
+    return 0
+
+
+def task_add(rest, as_json):
+    """Give the workers a new task: files first, then the fifo line."""
+    rest = list(rest)
+    name = ""
+    if rest and rest[0] != "--":
+        name = rest[0]
+        rest = rest[1:]
+    elif rest:
+        rest = rest[1:]
+    prompt = " ".join(" ".join(rest).split())
+    if not prompt:
+        task_answer(as_json, False, "", "no prompt given")
+        return 1
+    if not name:
+        name = " ".join(prompt.split()[:4])
+    name = " ".join(name.replace("|", " ").split())[:80]
+    new_id = f"task-{int(time.time())}"
+    while (TASKS_DIR / f"{new_id}.status").exists() or (TASKS_DIR / f"{new_id}.prompt").exists():
+        new_id = f"task-{int(new_id[5:]) + 1}"
+    # Open the fifo before writing any file, so a worker pool that is down
+    # leaves no litter behind.
+    try:
+        fd = os.open(THINK_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError as error:
+        if error.errno == 6:  # ENXIO: nobody has the fifo open for reading
+            task_answer(as_json, False, "", "the workers are not listening")
+            return 3
+        task_answer(as_json, False, "", f"add failed: {error}")
+        return 1
+    line = f"{new_id}|{name}|{prompt}\n"
+    try:
+        TASKS_DIR.mkdir(parents=True, exist_ok=True)
+        (TASKS_DIR / f"{new_id}.kind").write_text("task")
+        (TASKS_DIR / f"{new_id}.prompt").write_text(prompt)
+        os.write(fd, line.encode())
+    except OSError as error:
+        task_answer(as_json, False, "", f"add failed: {error}")
+        return 1
+    finally:
+        os.close(fd)
+    task_answer(as_json, True, new_id, line=f"dispatched: {new_id} {name}")
+    return 0
+
+
+def task_tell(r, as_json, message):
+    """Push more information into a running task; the worker folds it in."""
+    message = " ".join(message.split())
+    if not message:
+        task_answer(as_json, False, r["id"], "nothing to tell")
+        return 1
+    if r["status"] not in ("running", "queued"):
+        task_answer(as_json, False, r["id"], f"{r['name']} is {r['status']}, not running; there is nobody to tell")
+        return 2
+    try:
+        with (TASKS_DIR / f"{r['id']}.inbox").open("a", encoding="utf-8") as inbox:
+            inbox.write(f"[{time.strftime('%H:%M:%S')}] {message}\n")
+    except OSError as error:
+        task_answer(as_json, False, r["id"], f"tell failed: {error}")
+        return 1
+    task_answer(as_json, True, r["id"], line=f"told {r['name']}: {message[:80]}")
+    return 0
+
+
+def tasks():
+    rest = list(args[1:])
+    as_json = "--json" in rest
+    limit = None
+    if "--limit" in rest:
+        i = rest.index("--limit")
+        try:
+            limit = int(rest[i + 1])
+            del rest[i:i + 2]
+        except (IndexError, ValueError):
+            print("--limit needs a number", file=sys.stderr)
+            return 1
+    rest = [a for a in rest if a != "--json"]
+    sub = rest[0] if rest else "list"
+    key = rest[1] if len(rest) > 1 else ""
+    if sub in ("help", "--help", "-h"):
+        print(TASK_HELP)
+        return 0
+    records = task_records()
+    if sub == "list":
+        shown = records[-limit:] if limit else records
+        if as_json:
+            counts = {}
+            for r in records:
+                counts[r["status"]] = counts.get(r["status"], 0) + 1
+            print(json.dumps({"generated": time.time(), "counts": counts, "tasks": shown}))
+            return 0
+        counts = {}
+        for r in records:
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+        print(f"task board, the only truth, {len(records)} tasks:")
+        for r in shown:
+            print(task_line(r))
+            sub_line = task_sub(r)
+            if sub_line:
+                print(sub_line)
+        summary = ", ".join(f"{n} {s}" for s, n in sorted(counts.items())) or "none, ever"
+        print(f"\ntotal: {summary}")
+        return 0
+    if sub == "add":
+        return task_add(rest[1:], as_json)
+    if sub not in ("show", "cancel", "retry", "tell"):
+        print(f"unknown: diablo tasks {sub}\n\n{TASK_HELP}", file=sys.stderr)
+        return 1
+    r, code = find_task(records, key)
+    if r is None:
+        if as_json:
+            print(json.dumps({"ok": False, "id": key, "error": "no such task" if code == 2 else "ambiguous"}))
+        return code
+    if sub == "tell":
+        return task_tell(r, as_json, " ".join(rest[2:]))
+    if sub == "show":
+        if as_json:
+            print(json.dumps(r))
+            return 0
+        color = TASK_COLOR.get(r["status"], DIM)
+        for k, v in r.items():
+            if k == "report":
+                continue
+            if k in ("started", "updated", "finished") and v:
+                v = f"{clock(v)} ({v})"
+            print(f"  {DIM}{k:<12}{END} {color if k == 'status' else ''}{v}{END}")
+        print(f"  {DIM}report{END}")
+        print(f"    {r['report'] or '(none)'}")
+        return 0
+    if sub == "cancel":
+        return task_cancel(r, as_json)
+    return task_retry(r, as_json)
+
+
+def slot(value):
+    return max(0, min(BAR_WIDTH, int(round(float(value) * BAR_WIDTH))))
+
+
+def bar(shown, peak, minimum, color):
+    """A bar of BAR_WIDTH cells: fill, a | at the gate, a ^ at the recent peak."""
+    filled = slot(shown)
+    gate = slot(minimum)
+    top = slot(peak)
+    cells = []
+    for i in range(BAR_WIDTH):
+        if i < filled:
+            cells.append(color + "#" + END)
+        elif i == gate:
+            cells.append(YELLOW + "|" + END)
+        elif i == top and top > filled:
+            cells.append(CYAN + "^" + END)
+        else:
+            cells.append(DIM + "." + END)
+    if gate < filled:
+        cells[gate] = YELLOW + "|" + END
+    return "".join(cells)
+
+
+def test_frame(snap, shown, dt):
+    rows = snap.get("rows", [])
+    minimum = snap.get("minimum", 0.7)
+    factor = 1 - math.exp(-SMOOTH_SPEED * dt)
+    lines = []
+    if not snap.get("profiles"):
+        lines.append(YELLOW + "no voices enrolled yet: diablo train voice" + END)
+    elif not snap.get("heard"):
+        lines.append(DIM + f"quiet (mic {snap.get('rms', 0):.4f}), say something" + END)
+    leader = snap.get("leader") or (rows[0]["name"] if rows else "")
+    width = max([len(r["name"]) for r in rows] + [8])
+    for row in rows:
+        name = row["name"]
+        shown[name] = shown.get(name, 0.0) + (float(row["score"]) - shown.get(name, 0.0)) * factor
+        lead = name == leader
+        name_color = GREEN if lead else DIM
+        score_color = GREEN if row.get("passes") else DIM
+        mark = "pass" if row.get("passes") else f"below {minimum:.2f}"
+        lines.append(
+            f"  {name_color}{name:<{width}}{END} "
+            f"{bar(shown[name], row.get('peak', 0.0), minimum, score_color)} "
+            f"{score_color}{shown[name]:.3f}{END} {DIM}{mark}{END}"
+        )
+        if lead and len(rows) > 1 and snap.get("margin") is not None:
+            runner = next((r["name"] for r in rows if r["name"] != name), "")
+            margin = float(snap["margin"])
+            color = YELLOW if margin < 0.05 else GREEN
+            lines.append(f"  {color}leads {runner} by {margin:+.3f}{END}")
+    if snap.get("playing"):
+        lines.append(CYAN + "  he is speaking his sample now" + END)
+    speech = float(snap.get("speech", 0.0))
+    target = float(snap.get("speech_target") or 60.0)
+    frac = min(speech / target, 1.0) if target else 0.0
+    red = int(170 * (1 - frac))
+    fill = f"\033[38;2;{red};255;60m" if GREEN else ""
+    count = int(round(frac * BAR_WIDTH))
+    cells = "".join(
+        (fill + "#" + END) if i < count else (DIM + "." + END) for i in range(BAR_WIDTH)
+    )
+    aim = ", aim met, keep talking or q to quit" if snap.get("done") else f", aim {target:.0f}s"
+    lines.append(f"  {cells} {fill}{speech:4.1f}s{END}{DIM} of speech{aim}{END}")
+    return lines
+
+
+def test_summary(snap):
+    summary = snap.get("summary", [])
+    speech = snap.get("speech")
+    tail = f", {speech}s of speech" if speech is not None else ""
+    print(f"session: {snap.get('elapsed', 0):.1f}s, {snap.get('ticks', 0)} ticks{tail}")
+    if not summary:
+        print(DIM + "  nothing scored, nobody spoke" + END)
+        return
+    best = max(summary, key=lambda s: s.get("lead", 0.0)).get("name")
+    width = max([len(s["name"]) for s in summary] + [8])
+    print(f"  {DIM}{'voice':<{width}}   mean    max   lead{END}")
+    for entry in summary:
+        color = GREEN if entry["name"] == best else DIM
+        print(
+            f"  {color}{entry['name']:<{width}}  {entry.get('mean', 0.0):.3f}  "
+            f"{entry.get('max', 0.0):.3f}  {entry.get('lead', 0.0) * 100:4.0f}%{END}"
+        )
+
+
+def test():
+    """Live: every enrolled voice ranked by how much the mic sounds like it."""
+    state = call("/v1/train/state")
+    if state.get("active"):
+        print(YELLOW + "he is mid-training, wait for it to end" + END)
+        return 1
+    was_deaf = DEAF_FILE.exists()
+    try:
+        result = call("/v1/test/start", {"was_deaf": was_deaf})
+    except OSError as error:
+        print(RED + f"he is not listening on 8757: {error}" + END)
+        return 1
+    if not result.get("ok"):
+        error = result.get("error", "unknown")
+        if "deaf" in error:
+            line = random.choice(DEAF_LINES)
+            said = False
+            try:
+                call("/v1/announce", {"text": line})
+                said = True
+            except Exception:
+                pass
+            print((DIM + "he says: " + END if said else "") + line)
+            answer = input("May I unmute the microphone? [Y/n] ")
+            if answer.strip().lower() in ("", "y", "yes"):
+                DEAF_FILE.unlink(missing_ok=True)
+                result = call("/v1/test/start", {"was_deaf": True})
+            else:
+                print(DIM + "as you wish, the test waits for open ears" + END)
+                return 1
+    if not result.get("ok"):
+        print(RED + "refused: " + result.get("error", "unknown") + END)
+        return 1
+    mute_file = DEAF_FILE.parent / "muted"
+    was_muted = mute_file.exists()
+    if not was_muted:
+        try:
+            call("/v1/announce", {"text": random.choice(QUIET_LINES)})
+        except Exception:
+            pass
+        time.sleep(3.5)
+        try:
+            mute_file.write_text("1\n")
+        except OSError:
+            pass
+    print("voice test: speak, and watch who he thinks you are. " + DIM + "a plays his sample, q quits" + END)
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd) if sys.stdin.isatty() else None
+    drawn = 0
+    note = ""
+    shown = {}
+    snap = {}
+    last_frame = time.monotonic()
+    last_poll = 0.0
+    misses = 0
+    old_term = signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    try:
+        if old:
+            tty.setcbreak(fd)
+        while True:
+            if old and select.select([sys.stdin], [], [], FRAME_S)[0]:
+                key = sys.stdin.read(1).lower()
+                if key == "q" or key == "\x03":
+                    break
+                if key == "a":
+                    try:
+                        played = call("/v1/test/play", {"what": "sample"})
+                    except Exception:
+                        played = {"ok": False, "error": "the loop blinked, try again"}
+                    note = (
+                        f"playing his sample, {played.get('seconds')}s"
+                        if played.get("ok")
+                        else RED + played.get("error", "no sample") + END
+                    )
+            elif not old:
+                time.sleep(FRAME_S)
+            now = time.monotonic()
+            dt = now - last_frame
+            last_frame = now
+            if now - last_poll >= 0.2:
+                last_poll = now
+                try:
+                    snap = call("/v1/test/state")
+                    misses = 0
+                except SystemExit:
+                    raise
+                except Exception:
+                    misses += 1
+                    if misses >= 10:
+                        print(RED + "\nhe stopped answering mid-test" + END)
+                        break
+                    note = DIM + "the loop blinked, holding on" + END
+                    time.sleep(0.3)
+                    continue
+            if not snap.get("active"):
+                if snap.get("speech", 0.0) >= (snap.get("speech_target") or 60.0):
+                    print(GREEN + "\nyou fell silent with the bar full, the test is done" + END)
+                else:
+                    print(DIM + "\nthe test ended" + END)
+                break
+            lines = test_frame(snap, shown, dt)
+            if note:
+                lines.append("  " + note)
+            if drawn:
+                sys.stdout.write(f"\033[{drawn}A")
+            for line in lines:
+                sys.stdout.write("\r\033[2K" + line + "\n")
+            sys.stdout.flush()
+            drawn = len(lines)
+    finally:
+        signal.signal(signal.SIGTERM, old_term)
+        if old:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        try:
+            call("/v1/test/stop", {})
+        except Exception:
+            pass
+        if was_muted:
+            try:
+                mute_file.write_text("1\n")
+            except OSError:
+                pass
+        else:
+            mute_file.unlink(missing_ok=True)
+    if snap:
+        test_summary(snap)
+        try:
+            summary = snap.get("summary") or []
+            best = max(summary, key=lambda s: s.get("lead", 0.0))["name"] if summary else "nobody"
+            stamp = time.strftime("%Y-%m-%d %H:%M")
+            line = (
+                f"{stamp}  {snap.get('elapsed', 0):.0f}s session, "
+                f"{snap.get('speech', 0)}s speech, best: {best}\n"
+            )
+            with (DEAF_FILE.parent / "voice-test.log").open("a") as f:
+                f.write(line)
+        except (OSError, KeyError):
+            pass
+    print("test over, he is listening again.")
+    return 0
+
+
+VOICE_PYTHON = Path.home() / "Projects/diablo/.venv-voice/bin/python"
+
+
+def messages():
+    """Runs the reader in the voice environment; login is interactive, so it gets the terminal."""
+    sub = args[1:] or ["check"]
+    if sub[0] not in ("login", "check", "read"):
+        print("diablo messages login [telegram|discord] | check [telegram|discord] | read <chat>")
+        return 1
+    import subprocess
+
+    return subprocess.call([str(VOICE_PYTHON), "-m", "voice.messages", *sub], cwd=str(Path.home() / "Projects/diablo"))
+
+
+def talk():
+    import subprocess
+
+    return subprocess.call([sys.executable, str(Path(__file__).resolve().parent / "tui.py")])
+
+
+def agent(resume=None):
+    import shutil
+    import subprocess
+
+    rust_tui = shutil.which("diablo-tui")
+    if rust_tui:
+        args = [rust_tui]
+        if resume == "last":
+            args.append("-c")
+        elif resume == "menu":
+            args.append("-r")
+        return subprocess.call(args)
+    env = {**os.environ, "DIABLO_AGENT_CWD": os.getcwd()}
+    if resume:
+        env["DIABLO_AGENT_RESUME"] = resume
+    return subprocess.call(
+        [sys.executable, "-m", "pool.repl"], cwd=str(Path.home() / "Projects/diablo"), env=env
+    )
+
+
+def main():
+    global args
+    args = sys.argv[1:]
+    try:
+        if args and args[0] == "train":
+            sys.exit(train())
+        if args and args[0] == "reset":
+            sys.exit(reset())
+        if args and args[0] == "rename":
+            sys.exit(rename())
+        if args and args[0] == "tasks":
+            sys.exit(tasks())
+        if args and args[0] == "talk":
+            sys.exit(talk())
+        if args and args[0] == "agent":
+            sys.exit(agent())
+        if args and args[0] == "-c":
+            sys.exit(agent(resume="last"))
+        if args and args[0] == "-r":
+            sys.exit(agent(resume="menu"))
+        if args and args[0] == "test":
+            sys.exit(test())
+        if args and args[0] == "messages":
+            sys.exit(messages())
+    except KeyboardInterrupt:
+        print("\nstopped.")
+        sys.exit(130)
+    if not args:
+        sys.exit(agent())
+    print(__doc__)
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

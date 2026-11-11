@@ -1,0 +1,21 @@
+.venv*
+__pycache__/
+*.pyc
+*.db
+*.log
+config.toml
+.stfolder/
+.stignore
+target/
+/home/
+
+# Screenshots of real data stay local
+pushup/docs/screenshots/
+captures/
+*.local.*
+.env*
+*.jks
+*.keystore
+keystore.properties
+local.env
+room/docs/shots/

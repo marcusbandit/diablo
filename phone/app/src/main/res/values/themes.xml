@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Diablo" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#1E2024</item>
+        <item name="android:colorBackground">#1E2024</item>
+    </style>
+</resources>

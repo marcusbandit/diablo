@@ -1,0 +1,11 @@
+[Unit]
+Description=Diablo stagehand, keeps the stage standing
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/Projects/diablo/deploy/stagehand.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

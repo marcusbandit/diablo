@@ -1,0 +1,22 @@
+[package]
+name = "diablo-phone"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "diablo_phone"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+uniffi = { version = "0.29", features = ["cli"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+rusqlite = { version = "0.37", features = ["bundled"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"

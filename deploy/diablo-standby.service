@@ -1,0 +1,16 @@
+[Unit]
+Description=Diablo standby hub (serves the phone when diablo-pi is down)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/diablo-hub
+EnvironmentFile=%h/.config/diablo/local.env
+Environment=DIABLO_HUB_CONFIG=%h/diablo-hub/config.toml
+ExecStart=%h/diablo-hub/venv/bin/uvicorn hub.server:app --host ${DIABLO_HUB_BIND} --port 8755 --timeout-graceful-shutdown 5
+TimeoutStopSec=20
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Diablo reminder scheduler
+After=diablo-voice.service
+
+[Service]
+WorkingDirectory=%h/Projects/diablo
+ExecStart=%h/Projects/diablo/.venv-voice/bin/python -m remind run
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

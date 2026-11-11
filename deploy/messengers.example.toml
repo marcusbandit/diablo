@@ -1,0 +1,16 @@
+# Copy to ~/.config/diablo/messengers.toml. Read only: he never sends a word.
+
+[telegram]
+# From https://my.telegram.org, "API development tools". Then run: diablo messages login
+api_id = 12345
+api_hash = "0123456789abcdef0123456789abcdef"
+phone = "+4500000000"
+
+[discord]
+# Your own user token, from the Discord app: Ctrl+Shift+I, Network tab, any request to
+# discord.com/api, the Authorization header. Keep it secret; it is your account.
+token = "..."
+# Servers to watch, by name or id. DMs are always watched.
+servers = ["French with friends"]
+# Optional: only these channel ids inside those servers. Empty means every text channel.
+channels = []

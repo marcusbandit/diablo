@@ -1,0 +1,7 @@
+[Unit]
+Description=Diablo hub database backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/diablo
+ExecStart=%h/Projects/diablo/deploy/backup-hub.sh

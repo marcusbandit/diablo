@@ -1,0 +1,9 @@
+node_modules
+.env*
+dist
+build
+target
+.venv
+certs/
+__pycache__/
+captures/

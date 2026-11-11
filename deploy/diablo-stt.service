@@ -1,0 +1,18 @@
+[Unit]
+Description=Diablo local speech to text: Whisper on the GPU for the hub on the tailnet
+After=graphical-session.target
+PartOf=graphical-session.target
+StartLimitIntervalSec=0
+
+[Service]
+WorkingDirectory=%h/Projects/diablo
+EnvironmentFile=-%h/.config/diablo-stt/env
+ExecStart=/bin/sh -c 'ip="$(tailscale ip -4 | head -n1)"; [ -n "$$ip" ] || exit 1; exec %h/Projects/diablo/.venv-stt/bin/python -m voice.stt_server --host "$$ip" --port 8757'
+Restart=always
+RestartSec=2
+MemoryMax=4G
+MemorySwapMax=0
+CPUQuota=400%
+
+[Install]
+WantedBy=graphical-session.target

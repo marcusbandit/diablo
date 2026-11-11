@@ -1,0 +1,12 @@
+[Unit]
+Description=Diablo fast tongue
+After=pipewire.service
+
+[Service]
+WorkingDirectory=%h/Projects/diablo
+ExecStart=%h/Projects/diablo/.venv-voice/bin/python -m pool.panel
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Room setup
+Comment=Hue lights that follow what you are doing: lamps, scenes, night
+Exec=room setup
+Icon=room
+Terminal=false
+Categories=Settings;
+Keywords=hue;lights;lamps;scene;room;

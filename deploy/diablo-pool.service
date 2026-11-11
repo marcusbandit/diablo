@@ -1,0 +1,11 @@
+[Unit]
+Description=Diablo pool, the coordinator and the worker demons
+
+[Service]
+WorkingDirectory=%h/Projects/diablo
+ExecStart=%h/Projects/diablo/.venv-voice/bin/python -m pool
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,29 @@
+#compdef diablo-act
+
+_diablo-act() {
+  local -a looks
+  # the command links into the repo's deploy/, and the looks are the eye folders beside it
+  local dir=${commands[diablo-act]:A:h}/../assets/faces/eyes
+  looks=($dir/*(/N:t))
+  (( ${#looks} )) || looks=(neutral happy proud surprised judging worried sorry thinking)
+  _arguments \
+    '(--last --record)1:audio file:_files -g "*.(wav|m4a|mp3|ogg|opus|flac|webm|mp4)(-.)"' \
+    '(1 --record)--last[the newest gvoice dictation clip]' \
+    '(1 --last)--record[record from the mic until Enter]' \
+    '--text[what is said, instead of asking Whisper]:words' \
+    '--lang[the language spoken]:language:((auto\:"guess it, per stretch of speech" en\:English da\:Danish es\:Spanish ja\:Japanese))' \
+    '(--lang --us --da --dk --es --ja --jp)--en[English]' '(--lang --en --da --dk --es --ja --jp)--us[English]' \
+    '(--lang --en --us --dk --es --ja --jp)--da[Danish]' '(--lang --en --us --da --es --ja --jp)--dk[Danish]' \
+    '(--lang --en --us --da --dk --ja --jp)--es[Spanish]' \
+    '(--lang --en --us --da --dk --es --jp)--ja[Japanese]' '(--lang --en --us --da --dk --es --ja)--jp[Japanese]' \
+    "--look[one eye look for the whole take]:look:(${looks[*]})" \
+    '(-o --out)'{-o,--out}'[where the video goes]:file:_files' \
+    '--size[width and height in pixels]:pixels:(720 1080 1440 2160)' \
+    '--colour[ink colour]:hex colour' \
+    '--background[paper colour]:hex colour' \
+    '--transparent[no background, a .webm with alpha]' \
+    '--no-open[do not open the video when done]' \
+    '(-h --help)'{-h,--help}'[show help]'
+}
+
+_diablo-act "$@"

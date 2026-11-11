@@ -1,0 +1,2020 @@
+#!/usr/bin/python3
+"""pushup: a random set of push-ups about once an hour, shown on top of everything."""
+
+import argparse
+import datetime as dt
+import json
+import math
+import os
+import random
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+import tomllib
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import catalog  # noqa: E402
+import stats  # noqa: E402
+from catalog import ACTIVITIES, EFFORT, EXERCISES, STRETCHES  # noqa: E402
+
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pushup"
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "pushup"
+CONFIG_FILE = CONFIG_DIR / "config.toml"
+ONBOARDED = CONFIG_DIR / "onboarded"
+SEEN_EXERCISES = CONFIG_DIR / "seen-moves-2"  # the intro's newer pages (moves, stretches, training), shown once
+SEEN_FIRST_MOVES = CONFIG_DIR / "seen-exercises"  # the first exercise page, before the second batch of moves
+SECOND_BATCH = ("bulgarian split squats", "squat jumps", "step-ups", "calf raises", "side plank", "hollow hold",
+                "pike push-ups", "cossack squats")
+NEXT_DUE = STATE_DIR / "next_due"
+PAUSED_UNTIL = STATE_DIR / "paused_until"
+TRIGGER = STATE_DIR / "trigger"
+WAITING = STATE_DIR / "waiting"
+LOG = STATE_DIR / "log.jsonl"
+# Shared with nemurenai over Syncthing (docs/sync.md): this box sends the log and the overview, and
+# reads what other devices drop in the inbox: the Diablo app, Health Connect through it.
+OVERVIEW = STATE_DIR / "overview.json"
+INBOX = STATE_DIR.parent / "pushup-inbox"
+OVERVIEW_SCHEMA = 1
+OVERVIEW_EVERY = 15 * 60  # the daemon rewrites the overview this often, besides after every log
+SEEN_CHALLENGE = CONFIG_DIR / "seen-challenge"
+DAY_START = STATE_DIR / "day_start"  # when today's challenge day began: the first time back after a night
+LAST_ACTIVE = STATE_DIR / "last_active"  # the last tick the screen was unlocked and the daemon running
+WOKE = STATE_DIR / "woke"  # the last time you came back after AWAY or longer
+
+RECEIPT_TABS = ("overview", "body", "moves", "timeline")  # `pushup graph --tab`, in the receipts' order
+SPICES = ("mild", "spicy")
+LEVELS = {"easy": (5, 12), "normal": (10, 20), "hard": (15, 30)}
+DEFAULTS = {
+    "interval_min": 45,
+    "interval_max": 70,
+    "reps_min": 10,
+    "reps_max": 20,
+    "exercises": list(catalog.DEFAULT_EXERCISES),
+    "gear": [],  # what you have beyond a floor, a wall and a chair: catalog.TOOLS
+    "stretches": list(catalog.MIXED_STRETCHES),
+    "stretch_every": 3,  # every third card is a stretch
+    "stretching": True,  # stretch cards at all, in both modes: `pushup stretches off` takes them out
+    "sound": True,
+    "spice": "spicy",
+    # The challenge: push-ups (feet up once you say so) and Bulgarian split squats, nothing else, as
+    # many push-ups a day as you can, toward 100 a day.
+    "mode": "mixed",  # or "challenge"
+    "challenge_start": "",
+    "challenge_days": 30,
+    "target_start": 50,  # push-ups on day one
+    "target": 100,  # push-ups a day once the ramp is done
+    "feet_up": False,  # decline push-ups, switched on by you and nobody else
+    "day_ends": 3,  # the hour the push-ups should be done by; short of the target, sets keep coming after it
+    "bss_every": 3,  # every third card can be Bulgarians
+    "rows": True,  # body rows at the table edge, the pull to the push-ups
+    "rows_every": 3,  # and every third card can be rows
+    "challenge_stretch_every": 5,  # once the target is in, every fifth card is one of David's hard stretches
+}
+
+DISCORD_NAMES = ("discord", "vesktop", "legcord", "armcord", "webcord", "equibop", "dissent")
+MUSIC_PLAYERS = (
+    "spotify", "spotifyd", "ncspot", "spotube", "cider", "tidal", "youtube-music", "ytmdesktop",
+    "strawberry", "elisa", "rhythmbox", "lollypop", "amberol", "mpd", "cmus", "quodlibet",
+    "audacious", "clementine", "feishin", "sublime-music", "termusic", "deadbeef", "g4music",
+)
+MUSIC_SITES = ("music.youtube.com", "open.spotify.com", "soundcloud.com", "bandcamp.com", "music.apple.com", "tidal.com")
+AUDIO_EXT = (".mp3", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".wav", ".aac", ".wma", ".alac")
+SOUND = "/usr/share/sounds/freedesktop/stereo/complete.oga"
+FATIGUE_HALF_LIFE = 2 * 3600  # recent reps count half as much after this many seconds
+LOCK_CREDIT = 5 * 60  # the idle lock fires after ten minutes away, so a lock gives some of them back
+FATIGUE_START = 0.06  # share a set's worth of recent reps takes off, until it has learned yours
+SESSION_GAP = 3 * 3600  # sets closer together than this are one session
+PUSH_UPS = catalog.PUSH_UPS
+BSS = "bulgarian split squats"
+ROWS = "body rows"
+SIDES = ((BSS, "bss"), (ROWS, "rows"))  # the challenge's moves besides push-ups, each on its own turn, by key
+RAMP_DAYS = 14  # the target climbs from target_start to target over this many days, then holds
+DAY_ROLL = 7  # sets before this hour count for the evening before: the day is over when you sleep, not at midnight
+AWAY = 2 * 3600  # away this long means you slept, and the next day starts when you're back
+WAKE_FALLBACK = 10  # never slept but still here at 10:00: the day starts anyway
+FIRST_SET = 10 * 60  # the first set of a day comes this long after you're back
+GAP_MIN, GAP_MAX = 10 * 60, 25 * 60  # sets in the challenge come at least and at most this far apart
+BONUS_GAP = (40 * 60, 55 * 60)  # past the target a card is a bonus, this far apart
+BONUS_BACKOFF, BONUS_BACKOFF_MAX = 20 * 60, 2  # each bonus card passed in a row pushes the next one out this much, at most twice
+SLACK = 3600  # the pacing aims to be done this long before day_ends, so a skip or a short set has room
+DAY_END = DEFAULTS["day_ends"]  # set from the config in main()
+if os.environ.get("PUSHUP_TEST_GAP"):  # scripts/challenge-e2e.sh: seconds instead of minutes
+    FIRST_SET = GAP_MIN = GAP_MAX = float(os.environ["PUSHUP_TEST_GAP"])
+    BONUS_GAP, BONUS_BACKOFF = (GAP_MIN, GAP_MAX), GAP_MIN
+
+
+def load_config():
+    cfg = dict(DEFAULTS)
+    raw = {}
+    if CONFIG_FILE.exists():
+        try:
+            raw = tomllib.loads(CONFIG_FILE.read_text())
+            cfg.update(raw)
+        except tomllib.TOMLDecodeError as e:
+            print(f"pushup: ignoring broken {CONFIG_FILE}: {e}", file=sys.stderr)
+    if (cfg["interval_min"], cfg["interval_max"]) == (25, 35):
+        # The old defaults, written out by save_config before the interval grew. Not a choice.
+        cfg["interval_min"], cfg["interval_max"] = DEFAULTS["interval_min"], DEFAULTS["interval_max"]
+    cfg["interval_min"], cfg["interval_max"] = sorted((cfg["interval_min"], cfg["interval_max"]))
+    cfg["reps_min"], cfg["reps_max"] = sorted((cfg["reps_min"], cfg["reps_max"]))
+    # Names the catalog doesn't know (pull-ups, once there's a bar) stay: they get a plain figure
+    # and push-up sized goals.
+    cfg["exercises"] = [e for e in cfg["exercises"] if isinstance(e, str) and e] or ["push-ups"]
+    cfg["stretches"] = [e for e in cfg["stretches"] if e in STRETCHES] or list(catalog.MIXED_STRETCHES)
+    if "gear" not in raw:
+        # From before gear was asked: someone who switched on a move that needs some has the everyday
+        # tool for it, the last one listed: two chairs for dips, not dip bars.
+        cfg["gear"] = [t for t in catalog.TOOLS if any(catalog.GEAR[e][-1] == t for e in cfg["exercises"] if e in catalog.GEAR)]
+    cfg["gear"] = [t for t in catalog.TOOLS if t in cfg["gear"]]
+    cfg.pop("snooze_minutes", None)
+    return cfg
+
+
+def save_config(cfg):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    lines = ["# pushup settings. Minutes for intervals, reps per set.", ""]
+    for key, value in cfg.items():
+        if isinstance(value, bool):
+            lines.append(f"{key} = {'true' if value else 'false'}")
+        elif isinstance(value, list):
+            lines.append(f"{key} = [" + ", ".join(json.dumps(v) for v in value) + "]")
+        else:
+            lines.append(f"{key} = {json.dumps(value)}")
+    CONFIG_FILE.write_text("\n".join(lines) + "\n")
+
+
+def read_float(path):
+    try:
+        return float(path.read_text().strip())
+    except (OSError, ValueError):
+        return 0.0
+
+
+def write_text(path, text):
+    """Whole or not at all: a temp file per process, then one rename, so two writers never share a
+    half-written file and Syncthing never ships one."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def log_event(refresh=True, **fields):
+    """Append a line to the log. refresh=False leaves the overview for the last of a batch."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a") as f:
+        f.write(json.dumps({"ts": time.time(), **fields}) + "\n")
+    if refresh:
+        refresh_overview()
+
+
+def read_local():
+    """This box's own log, as written."""
+    out = []
+    if LOG.exists():
+        for line in LOG.read_text().splitlines():
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return out
+
+
+def read_log():
+    """This box's log, plus what other devices added through the inbox, in time order."""
+    out = read_local()
+    inbox = read_inbox(out)
+    return sorted(out + inbox, key=lambda e: e.get("ts", 0)) if inbox else out
+
+
+INBOX_SINCE = dt.datetime(2020, 1, 1).timestamp()  # older than this is a broken clock, not training
+INBOX_MAX = {"minutes": 24 * 60, "did": 1000}  # a day of training, a thousand reps or seconds
+
+
+def inbox_entry(e, now):
+    """One inbox line as a log entry, or None when it isn't one: a training session or a set done
+    away from the desk, at a real time that has already happened, with sane numbers. Names go
+    through the catalog's aliases ('rows' is body rows); an activity this box doesn't know counts
+    as other under its own name."""
+    if not isinstance(e, dict):
+        return None
+    ts = e.get("ts")
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)) or not math.isfinite(ts) or not INBOX_SINCE <= ts <= now:
+        return None
+    out = {k: v for k, v in e.items() if isinstance(v, (str, int, float)) and not isinstance(v, bool)}
+    out["ts"] = float(ts)
+    for key in ("id", "source", "label"):
+        if key in out and not isinstance(out[key], str):
+            del out[key]
+    if e.get("result") == "session":
+        minutes = e.get("minutes")
+        if isinstance(minutes, bool) or not isinstance(minutes, (int, float)) or not math.isfinite(minutes) \
+                or not 0 < minutes <= INBOX_MAX["minutes"] or not isinstance(e.get("activity"), str):
+            return None
+        out["minutes"] = max(1, int(round(minutes)))
+        out["effort"] = e.get("effort") if e.get("effort") in EFFORT else "normal"
+        if e["activity"] not in ACTIVITIES:
+            out["label"] = out.get("label") or e["activity"]
+            out["activity"] = "other"
+        return out
+    if e.get("result") == "manual":
+        n = e.get("did")
+        if isinstance(n, bool) or not isinstance(n, int) or not 0 < n <= INBOX_MAX["did"] or not isinstance(e.get("exercise"), str):
+            return None
+        out["exercise"] = catalog.find(e["exercise"]) or e["exercise"]
+        return out
+    return None
+
+
+def read_inbox(local=()):
+    """Training and sets other devices put in pushup-inbox/*.jsonl, one file per writer, as log
+    entries (inbox_entry). An id counts once across every file, and a session this box already has
+    (the same activity on the same day, logged with `pushup train`) counts once too. Every entry
+    says where it came from."""
+    if not INBOX.is_dir():
+        return []
+    have = {(e.get("activity"), day_of(e["ts"])) for e in local
+            if e.get("result") == "session" and isinstance(e.get("ts"), (int, float))}
+    out, seen, now = [], set(), time.time()
+    for path in sorted(INBOX.glob("*.jsonl")):
+        try:
+            lines = path.read_text().splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in lines:
+            try:
+                e = inbox_entry(json.loads(line), now)
+            except ValueError:
+                continue
+            if e is None:
+                continue
+            key = e.get("id") or (round(e["ts"]), e["result"], e.get("activity") or e.get("exercise"))
+            if key in seen or (e["result"] == "session" and (e["activity"], day_of(e["ts"])) in have):
+                continue
+            seen.add(key)
+            out.append({**e, "source": e.get("source") or path.stem})
+    return out
+
+
+def overview(entries=None, now=None):
+    """What nemurenai gets to show without knowing anything about pushup: today, the streak, the
+    week on the body, four weeks by muscle group, and the challenge. Pure JSON, schema in
+    docs/sync.md."""
+    now = time.time() if now is None else now
+    entries = read_log() if entries is None else entries
+    cfg = load_config()
+    day = day_of(now)
+    sets = done_on(day, entries)
+    last = last_set(entries)
+    out = {"schema": OVERVIEW_SCHEMA, "generated": now, "day": day.isoformat(), "mode": cfg["mode"],
+           "today": {"sets": len(sets), "line": day_line(sets),
+                     "trained": [catalog.describe(e) for e in catalog.sessions(entries) if day_of(e["ts"]) == day]},
+           "streak": day_streak(entries),
+           "last": {"ts": last["ts"], "exercise": exercise_of(last), "did": did(last)} if last else None,
+           "week": muscle_args(entries, now), "timeline": stats.timeline(entries, day_of, day), "challenge": None}
+    if challenge_on(cfg):
+        c = challenge(cfg, entries, now)
+        out["challenge"] = {k: c[k] for k in ("day", "days", "start", "done", "target", "left", "deadline", "bss", "rows",
+                                               "feet_up", "stretching", "history", "trained")}
+    return out
+
+
+def refresh_overview(entries=None):
+    """Write overview.json for nemurenai. Never in the way of logging: a failure only says so, and
+    returns False."""
+    try:
+        write_text(OVERVIEW, json.dumps(overview(entries)))
+        return True
+    except Exception as e:  # noqa: BLE001 - logging must not fail on the export
+        print(f"pushup: overview not written: {e}", file=sys.stderr)
+        return False
+
+
+def day_of(ts):
+    """The day a moment belongs to. It runs until DAY_ROLL, so a set at 01:00 or 04:00 counts for the evening before."""
+    return (dt.datetime.fromtimestamp(ts) - dt.timedelta(hours=DAY_ROLL)).date()
+
+
+def today():
+    return day_of(time.time())
+
+
+def day_end_ts(day):
+    """When a day's push-ups should be done by: day_ends that evening, or the night after when it's
+    an hour past midnight."""
+    after = day + dt.timedelta(days=1) if DAY_END < DAY_ROLL else day
+    return dt.datetime.combine(after, dt.time(DAY_END)).timestamp()
+
+
+did = catalog.did
+
+
+exercise_of = catalog.exercise_of
+
+
+def done_on(day, entries=None):
+    """The sets done on a day as (exercise, reps or seconds), oldest first, stretches included."""
+    entries = read_log() if entries is None else entries
+    return [(exercise_of(e), did(e)) for e in entries if did(e) > 0 and day_of(e["ts"]) == day]
+
+
+def history(days, entries=None):
+    """Sets per day, oldest first. Reps of different exercises don't add up to anything, sets do."""
+    entries = read_log() if entries is None else entries
+    totals = {}
+    for e in entries:
+        if did(e) > 0:
+            day = day_of(e["ts"])
+            totals[day] = totals.get(day, 0) + 1
+    now = today()
+    return [totals.get(now - dt.timedelta(days=i), 0) for i in range(days - 1, -1, -1)]
+
+
+def day_line(sets):
+    """'3 sets: 27 push-ups in 2 sets, 45 seconds of plank'."""
+    if not sets:
+        return "no sets yet"
+    return f"{catalog.plural(len(sets), 'set')}: {', '.join(catalog.day_lines(sets))}"
+
+
+def day_streak(entries):
+    """Days in a row with reps or training, back from today, or from yesterday while today is still empty."""
+    days = {day_of(e["ts"]) for e in entries if did(e) > 0 or e.get("result") == "session"}
+    day = today()
+    if day not in days:
+        day -= dt.timedelta(days=1)
+    n = 0
+    while day in days:
+        n += 1
+        day -= dt.timedelta(days=1)
+    return n
+
+
+def last_set(entries=None):
+    entries = read_log() if entries is None else entries
+    return next((e for e in reversed(entries) if did(e) > 0), None)
+
+
+def skip_streak(entries=None):
+    """Skips in a row since the last set that had any reps in it, or the last training session."""
+    entries = read_log() if entries is None else entries
+    n = 0
+    for e in reversed(entries):
+        if did(e) > 0 or e.get("result") == "session":
+            break
+        if e.get("result") in ("skip", "done"):
+            n += 1
+    return n
+
+
+def record_args(entries=None, days=14, week=None, with_stats=True):
+    entries = read_log() if entries is None else entries
+    last = last_set(entries)
+    return ["--skips", str(skip_streak(entries)), "--history", ",".join(map(str, history(days, entries))),
+            "--last", str(last["ts"] if last else 0), "--last-reps", str(did(last) if last else 0),
+            "--last-exercise", exercise_of(last) if last else "push-ups",
+            "--muscles", json.dumps(muscle_args(entries, week=week)),
+            "--done", json.dumps(done_on(today(), entries))] + (
+            # The receipts' days follow `pushup graph N`; the strength numbers need two weeks.
+            ["--stats", json.dumps(stats.build(entries, day_of, today(), max(14, days)))] if with_stats else [])
+
+
+def recent_sets(entries):
+    """What you logged last of each exercise, as {exercise: [reps, sets]}, so the logging card
+    starts there. Sets logged in one go share a moment, so only same-sized manual sets within a few
+    seconds of the last one count together. A set from a card is always one."""
+    out = {}
+    for e in reversed(entries):
+        if e.get("result") not in ("done", "manual") or did(e) <= 0:
+            continue
+        name = exercise_of(e)
+        if name not in out:
+            out[name] = [did(e), 1, e["ts"], e.get("result") == "manual"]
+        elif out[name][3] and e.get("result") == "manual" and did(e) == out[name][0] and out[name][2] - e["ts"] < 5:
+            out[name][1] += 1
+        else:
+            out[name][3] = False  # the run of sets is over; older ones don't join it
+    return {name: v[:2] for name, v in out.items()}
+
+
+def muscle_args(entries, now=None, week=None):
+    """The week on the body: what each muscle got, for the maps, and the raw totals."""
+    work, stretch, raw_w, raw_s = week or catalog.muscle_week(entries, time.time() if now is None else now)
+    return {"work": work, "stretch": stretch, "work_raw": raw_w, "stretch_raw": raw_s,
+            "neglected": catalog.neglected(raw_w)}
+
+
+def fmt_clock(ts):
+    return dt.datetime.fromtimestamp(ts).strftime("%H:%M")
+
+
+def fmt_left(seconds):
+    seconds = max(0, int(seconds))
+    d, rem = divmod(seconds, 86400)
+    h, rem = divmod(rem, 3600)
+    m, s = divmod(rem, 60)
+    if d:
+        return f"{d}d {h}h"
+    if h:
+        return f"{h}h {m:02d}m"
+    if m:
+        return f"{m}m {s:02d}s"
+    return f"{s}s"
+
+
+def hypr_env():
+    env = dict(os.environ)
+    try:
+        instances = json.loads(subprocess.run(["hyprctl", "instances", "-j"], capture_output=True, text=True, timeout=3).stdout)
+        if instances:
+            newest = max(instances, key=lambda i: i.get("time", 0))
+            env["HYPRLAND_INSTANCE_SIGNATURE"] = newest["instance"]
+            env["WAYLAND_DISPLAY"] = newest["wl_socket"]
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return env
+
+
+def run(cmd, env=None, timeout=5):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def discord_pids():
+    pids = set()
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            comm = (proc / "comm").read_text().strip().lower()
+        except OSError:
+            continue
+        if any(n in comm for n in DISCORD_NAMES):
+            pids.add(proc.name)
+    return pids
+
+
+def discord_call():
+    """A Discord client holding a microphone stream means it is in a voice call."""
+    try:
+        objects = json.loads(run(["pw-dump"], timeout=5) or "[]")
+    except ValueError:
+        return None
+    pids = discord_pids()
+    for obj in objects:
+        props = (obj.get("info") or {}).get("props") or {}
+        media_class = props.get("media.class", "")
+        if not media_class.startswith("Stream/Input/Audio") or "Internal" in media_class:
+            continue
+        hay = " ".join(str(props.get(k, "")) for k in (
+            "application.name", "application.process.binary", "application.id", "node.name", "client.name",
+        )).lower()
+        if any(n in hay for n in DISCORD_NAMES) or str(props.get("application.process.id", "")) in pids:
+            return props.get("application.name") or props.get("application.process.binary") or "Discord"
+    return None
+
+
+def session_locked():
+    # Hyprland started from a tty shows up in logind as Type=tty, so any active session counts.
+    fake = os.environ.get("PUSHUP_FAKE_LOCK")
+    if fake:
+        return Path(fake).exists()
+    user = os.environ.get("USER", "")
+    rows = (line.split() for line in run(["loginctl", "list-sessions", "--no-legend"]).splitlines())
+    ids = [row[0] for row in rows if len(row) >= 3 and row[2] == user]
+    if not ids:
+        return False
+    props = run(["loginctl", "show-session", *ids, "-p", "LockedHint", "-p", "Active"])
+    return any("Active=yes" in block and "LockedHint=yes" in block for block in props.split("\n\n"))
+
+
+def players():
+    out = []
+    for name in run(["playerctl", "-l"]).split():
+        status = run(["playerctl", "-p", name, "status"]).strip()
+        meta = run(["playerctl", "-p", name, "metadata", "--format", "{{xesam:url}}\t{{xesam:title}}"]).strip()
+        url, _, title = meta.partition("\t")
+        out.append({"name": name, "status": status, "url": url, "title": title, "music": is_music(name, url)})
+    return out
+
+
+def is_music(name, url):
+    base = name.split(".")[0].lower()
+    if any(base.startswith(p) for p in MUSIC_PLAYERS):
+        return True
+    low = url.lower()
+    if any(site in low for site in MUSIC_SITES):
+        return True
+    return low.startswith("file://") and low.endswith(AUDIO_EXT)
+
+
+def pretty_player(p):
+    base = p["name"].split(".")[0]
+    if "youtube.com" in p["url"] or "youtu.be" in p["url"]:
+        return "YouTube"
+    return {"firefox": "Firefox", "zen": "Zen", "chromium": "Chromium", "mpv": "mpv", "anibeam": "anibeam"}.get(base, base)
+
+
+HELD_PLAYERS = []  # paused by a card the lock closed, played again on unlock
+
+
+def pause_videos():
+    paused = []
+    for p in players():
+        if p["status"] == "Playing" and not p["music"]:
+            run(["playerctl", "-p", p["name"], "pause"])
+            paused.append(p)
+    return paused
+
+
+def resume(paused):
+    for p in paused:
+        run(["playerctl", "-p", p["name"], "play"])
+
+
+def play_sound(cfg):
+    if cfg.get("sound") and Path(SOUND).exists():
+        player = shutil.which("pw-play") or shutil.which("paplay")
+        if player:
+            subprocess.Popen([player, SOUND], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def overlay(args, env=None, stop=None):
+    """Run the card in its own process, so GTK never lives inside the daemon.
+    When stop() turns true the card is closed and the answer is "stopped"."""
+    env = env or hypr_env()
+    args = [*args, *shlex.split(os.environ.get("PUSHUP_OVERLAY_ARGS", ""))]
+    proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "overlay", *args],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    while True:
+        try:
+            out, err = proc.communicate(timeout=2 if stop else None)
+            break
+        except subprocess.TimeoutExpired:
+            if stop():
+                proc.terminate()
+                try:
+                    proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                return "stopped"
+    lines = out.strip().splitlines()
+    if proc.returncode != 0 and err:
+        print(err.strip(), file=sys.stderr)
+    return lines[-1] if lines else ""
+
+
+def run_intro(env=None, page=1):
+    cfg = load_config()
+    current = next((name for name, rng in LEVELS.items() if rng == (cfg["reps_min"], cfg["reps_max"])), "custom")
+    # Someone who never picked gets everything ticked that needs no gear. Someone who picked from the first batch keeps
+    # those picks, and the second batch comes ticked so it gets a look.
+    if SEEN_EXERCISES.exists():
+        picked = cfg["exercises"]
+    elif SEEN_FIRST_MOVES.exists():
+        picked = [e for e in EXERCISES if e in cfg["exercises"] or e in SECOND_BATCH]
+    else:
+        picked = list(catalog.DEFAULT_EXERCISES)
+    goals = sorted({STRETCHES[s]["goal"] for s in cfg["stretches"]})
+    choice = overlay(["--intro", "--spice", cfg["spice"], "--level", current, "--page", str(page),
+                      "--picked", ",".join(picked), "--goals", ",".join(goals), "--gear", ",".join(cfg["gear"])], env)
+    try:
+        answer = json.loads(choice)
+    except ValueError:
+        answer = {}
+    if answer.get("level") in LEVELS:
+        cfg["reps_min"], cfg["reps_max"] = LEVELS[answer["level"]]
+    if answer.get("spice") in SPICES:
+        cfg["spice"] = answer["spice"]
+    chosen = [e for e in answer.get("exercises", []) if e in EXERCISES]
+    if chosen:
+        cfg["exercises"] = chosen
+    if isinstance(answer.get("gear"), list):
+        cfg["gear"] = [t for t in catalog.TOOLS if t in answer["gear"]]
+    chosen_goals = [g for g in answer.get("goals", []) if g in catalog.GOALS]
+    if chosen_goals and set(chosen_goals) != set(goals):
+        # Only the goals that changed move: a stretch turned off by hand stays off.
+        cfg["stretches"] = [s for s, v in STRETCHES.items() if v["goal"] in chosen_goals and s in catalog.MIXED_STRETCHES
+                            and (s in cfg["stretches"] or v["goal"] not in goals)]
+    save_config(cfg)
+    stamp = dt.datetime.now().isoformat(timespec="seconds") + f" {choice or 'closed'}\n"
+    write_text(ONBOARDED, stamp)
+    if answer:
+        # A crashed intro shouldn't count as having seen the exercise pages.
+        write_text(SEEN_EXERCISES, stamp)
+    return f"{cfg['reps_min']} to {cfg['reps_max']} reps, {cfg['spice']}, {len(available(cfg))} exercises"
+
+
+def sets_of(entries, exercise):
+    return [e for e in entries if did(e) > 0 and exercise_of(e) == exercise]
+
+
+def load_at(t, sets):
+    """Recent reps, each one fading by half every FATIGUE_HALF_LIFE. A night's sleep clears it."""
+    return sum(did(e) * 0.5 ** ((t - e["ts"]) / FATIGUE_HALF_LIFE) for e in sets if t - 86400 < e["ts"] < t)
+
+
+def form(entries, exercise="push-ups", now=None):
+    """What you can do fresh, and how much of it is left right now.
+
+    Recent reps are fatigue, measured in sets' worth of your fresh number, and each set's worth
+    takes a share off: `rate`, which starts at FATIGUE_START and is learned from how far your
+    sets drop as a session goes on. Sets that don't drop teach it that you don't tire. `fresh`
+    is learned from every set with its fatigue taken back out, moving a third of the way each
+    time, so a tired 8 at 3 a.m. counts as the fresh 11 it stands for instead of as lost
+    strength. It never goes past your best recent set. None until there is something logged."""
+    sets = sets_of(entries, exercise)
+    if not sets:
+        return None
+    window = sets[-30:]
+    best = max(did(e) for e in window)
+    fresh, rate = best, FATIGUE_START
+    for i in range(len(sets) - len(window), len(sets)):
+        reps = did(sets[i])
+        load = load_at(sets[i]["ts"], sets[max(0, i - 50):i]) / fresh
+        if load >= 0.5:
+            seen = min(0.25, max(0.0, math.log(fresh / reps) / load))
+            rate += 0.2 * (seen - rate)
+        fresh = min(best, fresh + 0.35 * (reps / math.exp(-rate * load) - fresh))
+    now = time.time() if now is None else now
+    session = [sets[-1]]
+    for e in reversed(sets[:-1]):
+        if session[0]["ts"] - e["ts"] > SESSION_GAP:
+            break
+        session.insert(0, e)
+    return {"fresh": fresh, "left": math.exp(-rate * load_at(now, sets[-50:]) / fresh),
+            "last": sets[-1], "session": session, "now": now}
+
+
+def plan(cfg, entries, exercise="push-ups", now=None):
+    """The goals the next card can ask for, and a line on why when it asks for less than usual.
+
+    Before any logs, that's your level. Fresh, it's what you can do plus one or two. Tired, it's
+    what you can still do, or one more. Right after a set you came up short on, it's no more than
+    that set: you won't do more an hour later on the same arms."""
+    f = form(entries, exercise, now)
+    scale = catalog.info(exercise)["scale"]
+    if f is None:
+        return round(cfg["reps_min"] * scale), round(cfg["reps_max"] * scale), ""
+    expect = round(f["fresh"] * f["left"])
+    tired = f["left"] < 0.95
+    step = max(1, round(scale))  # one more push-up is three more seconds of plank
+    lo, hi = (max(3, min(round(80 * scale), n)) for n in ((expect, expect + step) if tired else (expect + step, expect + 2 * step)))
+    why = ""
+    if tired:
+        reps = sum(did(e) for e in f["session"])
+        why = f"Tired: {reps} reps since {fmt_clock(f['session'][0]['ts'])}, about {round((1 - f['left']) * 100)}% down"
+    last = f["last"]
+    if f["now"] - last["ts"] < SESSION_GAP and did(last) < last.get("reps", 0) and did(last) < hi:
+        hi = did(last)
+        lo = min(lo, hi)
+        why = why or f"You came up short with {hi} last set, so no more than that"
+    return lo, hi, why
+
+
+# Saying a part hurts. Goals for moves that lean on it come down, and so does the day's target in
+# the challenge, by how much that part has been worked lately: a sore chest after three days of
+# push-ups gets a big cut, one that has had an easy week only a small one. Each day in a row it gets
+# less: the third day it's only a little less, and from the fourth the card stops cutting further
+# and says it's time to rest it or have it looked at. A report counts for its day and, at half
+# strength, the day after.
+HURT_DAYS = 3  # the work that could explain it: the last three days in full, the two before at half
+HURT_KEEP = (0.4, 0.8)  # the share of the usual goal kept: worked hard, and hardly worked
+
+
+def part_work(entries, part, t):
+    """Reps that leaned on a part in the days before t, in push-ups' worth, and a normal day's."""
+    def worth(e):
+        x = catalog.info(exercise_of(e))
+        return did(e) / x["scale"] * x["parts"].get(part, 0) if not x.get("timed") else did(e) / 3 * x["parts"].get(part, 0)
+    recent, days = 0.0, {}
+    for e in entries:
+        age = t - e["ts"]
+        if e.get("result") == "session" or did(e) <= 0 or not 0 <= age < 14 * 86400:
+            continue
+        w = worth(e)
+        recent += w if age < HURT_DAYS * 86400 else w / 2 if age < (HURT_DAYS + 2) * 86400 else 0
+        days[day_of(e["ts"])] = days.get(day_of(e["ts"]), 0) + w
+    normal = max(30, sum(days.values()) / len(days) if days else 0)
+    # Training elsewhere counts too: a session's load is about a normal day of reps on what it works.
+    for e in catalog.sessions(entries):
+        age = t - e["ts"]
+        w = catalog.session_load(e) * catalog.ACTIVITIES[e["activity"]]["parts"].get(part, 0) * normal
+        recent += w if 0 <= age < HURT_DAYS * 86400 else w / 2 if 0 <= age < (HURT_DAYS + 2) * 86400 else 0
+    return recent, normal
+
+
+def hurt_on(entries, part, day):
+    """How a part that hurts stands on a day: None, or the share of the usual goal to keep, the days
+    in a row it has hurt, whether it was said that day or the one before, and the reps behind it."""
+    if part not in HURT_PARTS:
+        return None
+    said = [e for e in entries if e.get("part") == part and e.get("result") in ("hurt", "healed") and day_of(e["ts"]) <= day]
+    # What hurts now: the spots said on the last day a report came, added up, less any said to be
+    # better since. A report with no spots is the whole part; a healed one with none clears it.
+    whole, spots, on = False, [], None
+    for e in said:
+        mine = [list(s) for s in catalog.spots_by_part(e.get("spots") or []).get(part, [])]
+        if e["result"] == "hurt":
+            if on != day_of(e["ts"]):
+                whole, spots, on = False, [], day_of(e["ts"])
+            whole = whole or not mine
+            spots += [s for s in mine if s not in spots]
+        elif mine and not whole:
+            spots = [s for s in spots if s not in mine]
+            if not spots:
+                on = None
+        else:
+            whole, spots, on = False, [], None
+    if on is None:
+        return None
+    last = [e for e in said if e["result"] == "hurt"][-1]
+    age = (day - day_of(last["ts"])).days
+    if age > 1:
+        return None
+    hurt_days = {day_of(e["ts"]) for e in said if e["result"] == "hurt"}
+    streak, d = 0, day_of(last["ts"])
+    while d in hurt_days:
+        streak, d = streak + 1, d - dt.timedelta(days=1)
+    recent, normal = part_work(entries, part, last["ts"])
+    # Three normal days in the last few is plenty to explain it, half again more is a lot.
+    ratio = min(1.5, recent / (HURT_DAYS * normal)) / 1.5
+    hard, easy = HURT_KEEP
+    keep = easy - (easy - hard) * ratio
+    if streak >= 3:
+        keep = 1 - (1 - keep) / 2
+    if streak >= 4:
+        keep = max(keep, 0.8)
+    if age == 1:
+        keep = 1 - (1 - keep) / 2
+    spots = [] if whole else spots
+    return {"part": part, "keep": keep, "streak": streak, "yesterday": age == 1, "reps": round(recent),
+            "spots": spots, "name": catalog.spots_text(spots) or catalog.PART_NAMES[part],
+            "worked": ratio >= 0.5}
+
+
+HURT_PARTS = catalog.HURT_PARTS
+hurt_part = catalog.hurt_part
+_hurt_memo = {}
+
+
+def hurting(entries, now=None):
+    """Every part that hurts today, by part. One log read gives the same answer every time it's asked."""
+    day = day_of(time.time() if now is None else now)
+    key = (id(entries), len(entries), day)
+    if key not in _hurt_memo:
+        _hurt_memo.clear()
+        _hurt_memo[key] = {p: h for p in HURT_PARTS if (h := hurt_on(entries, p, day))}
+    return _hurt_memo[key]
+
+
+def eased(n, keep):
+    return n if keep >= 1 else max(2, round(n * keep))
+
+
+def hurt_weight(exercise, h):
+    """How hard a move leans on what hurts: on the muscles you picked, or on the whole part when
+    you only named the part. Sore triceps weigh on push-ups (0.8), not on squats."""
+    e = catalog.info(exercise)
+    if e.get("stretch"):
+        return 0  # a stretch's muscles are what it loosens, not what it loads
+    if h.get("spots"):
+        return max((e.get("muscles", {}).get(m, 0) for m, _ in h["spots"]), default=0)
+    return e["parts"].get(h["part"], 0)
+
+
+def hurt_trim(exercise, hurts):
+    """How much of the usual goal an exercise keeps for what hurts, and the worst of it. A move
+    that only brushes a sore muscle keeps more than one that leans on it."""
+    best = (1.0, None)
+    for p, h in hurts.items():
+        w = hurt_weight(exercise, h)
+        if w >= 0.3:
+            keep = 1 - (1 - h["keep"]) * w
+            best = min(best, (keep, h), key=lambda kv: kv[0])
+    return best
+
+
+def hurt_why(h, goal, usual):
+    name = h["name"]
+    if h["streak"] >= 4:
+        return (f"{h['streak']} days in a row your {name} hurt. That's not training soreness any more: "
+                f"rest them (pushup pause tomorrow) or get them looked at. {goal} instead of {usual}")
+    if h["yesterday"]:
+        return f"Your {name} hurt yesterday, so still a bit less: {goal} instead of {usual}"
+    if h["streak"] == 3:
+        return f"Third day your {name} hurt, so only a little less: {goal} instead of {usual}"
+    if h["worked"]:
+        return f"Your {name} hurt, and they earned it: {h['reps']} reps these last few days. {goal} instead of {usual}"
+    return f"Your {name} hurt, though they've had an easy few days. A bit less: {goal} instead of {usual}"
+
+
+def log_hurt(part, healed=False, spots=None):
+    """What hurts, kept: the part, and the muscles and sides when you picked them."""
+    log_event(result="healed" if healed else "hurt", part=part, **({"spots": spots} if spots else {}))
+
+
+def goal_range(cfg, entries, exercise, load, now=None):
+    """The goals a card for this exercise can ask, with the trim for a part still recovering: what
+    to show or log when nobody rolls the dice."""
+    lo, hi, _ = plan(cfg, entries, exercise, now)
+    factor = catalog.recovery_factor(exercise, load)
+    if factor < 0.9:
+        lo, hi = (max(3, round(n * factor)) for n in (lo, hi))
+    keep, _ = hurt_trim(exercise, hurting(entries, now))
+    return eased(lo, keep), eased(hi, keep)
+
+
+def option(cfg, entries, exercise, load, now=None):
+    """One exercise the card can offer: its goal, the slider's end, and why the goal is low."""
+    lo, hi, why = plan(cfg, entries, exercise, now)
+    factor = catalog.recovery_factor(exercise, load)
+    goal = usual = random.randint(lo, hi)
+    if factor < 0.9:
+        # A small dent isn't worth a sentence; a real one is.
+        goal = max(3, round(usual * factor))
+        parts = catalog.info(exercise)["parts"]
+        part = max(parts, key=lambda p: parts[p] * load[p])
+        if goal < usual:
+            why = why or f"Your {catalog.PART_NAMES[part]} {catalog.verb(part)} still recovering, so {goal} instead of {usual}"
+    keep, h = hurt_trim(exercise, hurting(entries, now))
+    if h:
+        less = eased(goal, keep)
+        why = hurt_why(h, less, goal) if less < goal else why
+        goal = less
+    top = max(slider_top(round(cfg["reps_max"] * catalog.info(exercise)["scale"])), slider_top(goal))
+    return {"exercise": exercise, "goal": goal, "top": top, "why": why, **({"easy": h["part"]} if h else {})}
+
+
+def available(cfg):
+    """The exercises switched on that the gear you have allows. Push-ups when none are."""
+    return [e for e in cfg["exercises"] if catalog.can_do(e, cfg["gear"])] or ["push-ups"]
+
+
+def options(cfg, entries, now=None, week=None):
+    """What the card offers, first pick first. Sore body parts are left out, the exercise you just did
+    goes to the back, and the rest is shuffled with a lean toward what you did least lately."""
+    now = time.time() if now is None else now
+    load = catalog.loads(entries, now)
+    usable = available(cfg)
+    hurts = hurting(entries, now)
+    pool = [e for e in usable if not catalog.sore(e, load)
+            and not any(hurt_weight(e, h) >= 0.7 for h in hurts.values())]
+    if not pool:
+        pool = [max(usable, key=lambda e: catalog.recovery_factor(e, load))]
+    return [option(cfg, entries, e, load, now) for e in shuffle(pool, entries, now, week=week)]
+
+
+def shuffle(pool, entries, now, stretch=False, week=None):
+    """A pool in the order to offer it: what you did lately goes back, the one you just did
+    furthest, and moves for muscles that got little this week come forward. Stretches and
+    exercises each only look at their own kind."""
+    recent = [exercise_of(e) for e in entries if did(e) > 0 and now - e["ts"] < (24 if stretch else 6) * 3600
+              and catalog.is_stretch(exercise_of(e)) == stretch]
+    last = recent[-1] if recent else None
+    work, stretched = (week or catalog.muscle_week(entries, now))[:2]
+    week = stretched if stretch else work
+    weights = {e: catalog.balance_weight(e, week) / (1 + recent.count(e)) * (0.15 if e == last and len(pool) > 1 else 1)
+               for e in pool}
+    order = []
+    while weights:
+        pick = random.choices(list(weights), weights=list(weights.values()))[0]
+        order.append(pick)
+        del weights[pick]
+    return order
+
+
+def stretch_options(cfg, entries, now=None, rest=None, week=None):
+    """The stretches a card can offer. A hold grows five seconds for every four you've done of it,
+    up to twice where it started."""
+    now = time.time() if now is None else now
+    out = []
+    for name in shuffle(cfg["stretches"], entries, now, stretch=True, week=week):
+        s = STRETCHES[name]
+        if s.get("hard"):
+            # David's sets don't grow longer: 30 s is the sweet spot, and the progress is depth.
+            sets = s.get("sets", 1)
+            out.append({"exercise": name, "goal": s["hold"], "top": slider_top(round(s["hold"] * 1.5)), "stretch": True,
+                        "why": f"David's {catalog.GOALS[s['goal']]} work. {s['cue']}",
+                        "progress": f"{sets} sets of {s['hold']} s. A little deeper than last time, never into pain."})
+            continue
+        done = sum(1 for e in sets_of(entries, name) if did(e) >= s["hold"] * 0.8)
+        goal = min(2 * s["hold"], s["hold"] + 5 * (done // 4))
+        why = f"Rest day after {rest}: stretches only" if rest else f"For the {catalog.GOALS[s['goal']]}"
+        if goal >= 2 * s["hold"]:
+            progress = f"{goal} s is as long as this hold gets. Keep it there."
+        else:
+            more = 4 - done % 4
+            progress = f"{more} more hold{'s' if more != 1 else ''} like this and it grows to {min(goal + 5, 2 * s['hold'])} s."
+        out.append({"exercise": name, "goal": goal, "top": slider_top(round(goal * 1.5)), "why": why, "stretch": True,
+                    "progress": progress})
+    return out
+
+
+def stretching_on(cfg):
+    return bool(cfg.get("stretching", True))
+
+
+def rest_card(cfg, entries, now, forced=False):
+    """What a rest day does to the next card: (why, no_card). With stretches on it's a calm stretch
+    card. With them off there's no card, unless you asked for one, which is then a plain card. The
+    challenge has no rest days."""
+    rest = None if challenge_on(cfg) else catalog.resting(entries, now)
+    if not rest:
+        return None, False
+    if stretching_on(cfg):
+        return rest[1], False
+    return None, not forced
+
+
+def stretch_due(cfg, entries):
+    """Every stretch_every-th card is a stretch: true once that many cards in a row weren't."""
+    every = int(cfg.get("stretch_every") or 0)
+    if every < 2 or not stretching_on(cfg):
+        return False
+    # Cards, plus stretches logged by hand: stretching on your own counts as the stretch.
+    cards = [e for e in entries if (e.get("result") in ("done", "skip", "pass") and e.get("reps"))
+             or (e.get("result") == "manual" and catalog.is_stretch(exercise_of(e)))]
+    run = 0
+    for e in reversed(cards):
+        if catalog.is_stretch(exercise_of(e)):
+            break
+        run += 1
+    return run >= every - 1
+
+
+def challenge_on(cfg):
+    return cfg.get("mode") == "challenge" and bool(cfg.get("challenge_start"))
+
+
+def trained_on(day, entries):
+    """The sessions that make a day a training day, described: 'bouldering 1h'."""
+    return [catalog.describe(e) for e in catalog.sessions(entries) if day_of(e["ts"]) == day and catalog.training_day(e)]
+
+
+def eased_target(target, h):
+    """The day's push-up target, cut for chest and arms that hurt that day (h, from hurt_on).
+    Nothing to cut: as is."""
+    keep = hurt_trim("push-ups", {"push": h})[0] if h else 1
+    return target if keep >= 1 else min(target, max(10, 5 * round(target * keep / 5)))
+
+
+def push_ups_on(day, entries):
+    return sum(did(e) for e in entries if exercise_of(e) in PUSH_UPS and did(e) > 0 and day_of(e["ts"]) == day)
+
+
+def target_for(cfg, n, best):
+    """Day n's push-ups: target_start on day one, climbing in steps of five to target by RAMP_DAYS,
+    and never more than 25 past your best day so far, so a bad day doesn't snowball."""
+    lo, hi = int(cfg["target_start"]), int(cfg["target"])
+    ramp = lo + (hi - lo) * min(1, max(0, n - 1) / (RAMP_DAYS - 1))
+    return int(min(5 * round(ramp / 5), max(lo, 5 * round((best + 25) / 5))))
+
+
+def bss_plan(cfg, entries, n, day):
+    """Bulgarians, taken easy: two sets a day the first week, three the second, four after. A set
+    starts at 5 each leg and grows by one each leg for every earlier day you hit the goal, up to 15."""
+    start = dt.date.fromisoformat(cfg["challenge_start"])
+    sets = [e for e in entries if exercise_of(e) == BSS and e.get("result") in ("done", "manual", "skip")]
+    # Only a card's set has a goal to hit; one logged by hand says nothing about it.
+    good = {day_of(e["ts"]) for e in sets if e.get("result") == "done" and e.get("reps")
+            and did(e) >= e["reps"] and start <= day_of(e["ts"]) < day}
+    today_sets = [e for e in sets if day_of(e["ts"]) == day and did(e) > 0]
+    cap = 2 if n <= 7 else 3 if n <= 14 else 4
+    return {"goal": min(15, 5 + len(good)), "sets": len(today_sets), "cap": cap,
+            "each_leg": sum(did(e) for e in today_sets)}
+
+
+def rows_plan(cfg, entries, n, day, now):
+    """Body rows at the table edge, the pull the push-ups were missing: three sets a day, four from
+    the third week. The goal is learned from your sets like any other move's; `goal` is the top of
+    what the next card can ask, recovery trim included, for logging one from the launcher."""
+    today_sets = [e for e in entries if exercise_of(e) == ROWS and did(e) > 0 and day_of(e["ts"]) == day]
+    cap = (3 if n <= 14 else 4) if cfg.get("rows", True) else 0
+    return {"goal": goal_range(cfg, entries, ROWS, catalog.loads(entries, now), now)[1], "sets": len(today_sets),
+            "cap": cap, "reps": sum(did(e) for e in today_sets)}
+
+
+def challenge(cfg, entries, now=None):
+    """Where the challenge stands: which day, the push-ups against the target, the days so far."""
+    now = time.time() if now is None else now
+    day = day_of(now)
+    start = dt.date.fromisoformat(cfg["challenge_start"])
+    n = (day - start).days + 1
+    past, best = [], 0
+    for i in range(max(0, n - 1)):
+        d = start + dt.timedelta(days=i)
+        got = push_ups_on(d, entries)
+        past.append({"day": i + 1, "done": got, "target": eased_target(target_for(cfg, i + 1, best), hurt_on(entries, "push", d)),
+                     "trained": bool(trained_on(d, entries))})
+        best = max(best, got)
+    usual = target_for(cfg, n, best)
+    sore = hurt_on(entries, "push", day)
+    target = eased_target(usual, sore)
+    done = push_ups_on(day, entries)
+    trained = trained_on(day, entries)
+    return {"day": n, "days": int(cfg["challenge_days"]), "start": cfg["challenge_start"], "done": done,
+            "target": target, "usual_target": usual,
+            "eased_by": sore["name"] if sore and target < usual else "", "left": max(0, target - done), "best": best, "deadline": day_end_ts(day),
+            "history": past + [{"day": n, "done": done, "target": target, "trained": bool(trained)}],
+            "trained": trained, "feet_up": bool(cfg["feet_up"]),
+            "bss": bss_plan(cfg, entries, n, day), "rows": rows_plan(cfg, entries, n, day, now),
+            "stretching": stretching_on(cfg), "started": day_of(read_float(DAY_START)) == day,
+            "ramp": [target_for(cfg, i, 10 ** 6) for i in range(1, int(cfg["challenge_days"]) + 1)]}
+
+
+def side_due(cfg, entries, now, moves):
+    """Which of the moves besides push-ups this card is for, if any. Each comes round every
+    <key>_every cards (bss_every, rows_every) until its sets for the day are in, never two of them
+    in a row, so push-ups sit between, and when two are due the one that has waited longest goes first."""
+    sides = [m for m, _ in SIDES]
+    # A passed bonus card counts as its turn too, or a passed Bulgarians card would lead every card after it.
+    cards = [e for e in entries if e.get("result") in ("done", "skip", "manual", "pass") and day_of(e["ts"]) == day_of(now)
+             and exercise_of(e) in (*PUSH_UPS, *sides)]
+    if not cards or exercise_of(cards[-1]) in sides:
+        return None  # the first card of the day is push-ups, and so is the one after any other move
+    every = {m: max(2, int(cfg.get(f"{k}_every") or 3)) for m, k in SIDES}
+    waits = {}
+    for move in moves:
+        since = next((i for i, e in enumerate(reversed(cards)) if exercise_of(e) == move), None)
+        waits[move] = len(cards) + every[move] if since is None else since  # none yet today: due now
+    due = [m for m in moves if waits[m] >= every[m] - 1]
+    return max(due, key=lambda m: waits[m]) if due else None
+
+
+def challenge_offer(cfg, entries, now=None):
+    """The card in the challenge: push-ups, feet up first once you've switched them on, and on their
+    turn a set of Bulgarians, each leg, or of rows at the table edge. Tab swaps between them."""
+    now = time.time() if now is None else now
+    c = challenge(cfg, entries, now)
+    load = catalog.loads(entries, now)
+    pushes = [option(cfg, entries, e, load, now) for e in (("decline push-ups", "push-ups") if c["feet_up"] else ("push-ups",))]
+    sides = []
+    b = c["bss"]
+    if b["sets"] < b["cap"] and not catalog.sore(BSS, load):
+        lo, hi, why = plan(cfg, entries, BSS, now)
+        goal = min(b["goal"], max(3, hi)) if form(entries, BSS, now) else b["goal"]
+        why = why if goal < b["goal"] else ""
+        keep, h = hurt_trim(BSS, hurting(entries, now))
+        if h and eased(goal, keep) < goal:
+            why, goal = hurt_why(h, eased(goal, keep), goal), eased(goal, keep)
+        sides.append({"exercise": BSS, "goal": goal, "top": slider_top(max(goal, 15)), "why": why,
+                      "progress": f"Set {b['sets'] + 1} of {b['cap']} today", **({"easy": h["part"]} if h else {})})
+    r = c["rows"]
+    if r["sets"] < r["cap"] and not catalog.sore(ROWS, load):
+        sides.append(option(cfg, entries, ROWS, load, now))  # the card writes its "set 1 of 3" line
+    due = side_due(cfg, entries, now, [o["exercise"] for o in sides])
+    return [*(o for o in sides if o["exercise"] == due), *pushes, *(o for o in sides if o["exercise"] != due)], c
+
+
+def challenge_stretches(cfg):
+    """The stretches the challenge asks for: the hard ones, never the easy warm-ups."""
+    return [n for n, v in STRETCHES.items() if v.get("hard")]
+
+
+def challenge_stretch_due(cfg, entries, c):
+    """Stretches wait until the day's push-ups are in: before that, every card is a push-up card."""
+    every = int(cfg.get("challenge_stretch_every") or 0)
+    return (c["left"] <= 0 and every >= 2 and stretching_on(cfg) and bool(challenge_stretches(cfg))
+            and stretch_due({**cfg, "stretch_every": every}, entries))
+
+
+def bonus_passes(entries, now):
+    """Bonus cards passed in a row today: past the target a pass is free, but each one says not now."""
+    n = 0
+    for e in reversed(entries):
+        if day_of(e["ts"]) != day_of(now):
+            break
+        if e.get("result") == "pass":
+            n += 1
+        elif e.get("result") in ("done", "skip", "manual"):
+            break
+    return n
+
+
+def challenge_args(c):
+    """What the card shows of the challenge."""
+    return ["--challenge", json.dumps({k: c[k] for k in ("day", "days", "done", "target", "deadline", "bss", "rows",
+                                                         "history", "ramp", "feet_up", "left", "stretching", "trained")})]
+
+
+def challenge_interval(cfg, entries=None, now=None):
+    """How long until the next set: what's left of the target, spread over what's left of the day
+    up to SLACK before day_ends, with a set at least every GAP_MAX and never closer than GAP_MIN.
+    A set is counted at the low end of its goal, so the plan doesn't lean on good sets. Past the
+    target every card is a bonus, every 40 to 55 minutes, and 20 more for each one passed in a row,
+    up to 40: it still asks, it just stops pressing. Inside the slack and still short, it's
+    GAP_MIN: you're still up, so it keeps pushing."""
+    entries = read_log() if entries is None else entries
+    now = time.time() if now is None else now
+    c = challenge(cfg, entries, now)
+    if c["left"] <= 0:
+        return random.uniform(*BONUS_GAP) + BONUS_BACKOFF * min(BONUS_BACKOFF_MAX, bonus_passes(entries, now))
+    first = "decline push-ups" if c["feet_up"] else "push-ups"
+    lo, hi, _ = plan(cfg, entries, first, now)
+    keep, _ = hurt_trim(first, hurting(entries, now))
+    per_set = eased(lo, keep) if keep < 1 else max(3, lo)
+    load = catalog.loads(entries, now)
+    # Only what a card will offer takes a slot: a move left out while its muscles recover doesn't.
+    slots = math.ceil(c["left"] / per_set) + sum(max(0, c[k]["cap"] - c[k]["sets"]) for m, k in SIDES
+                                                 if not catalog.sore(m, load))
+    gap = (c["deadline"] - SLACK - now) / (slots + 0.5)
+    return min(GAP_MAX, max(GAP_MIN, gap)) * random.uniform(0.9, 1.1)
+
+
+def day_begins(cfg, now, mark=True):
+    """Has today's challenge day started? Once DAY_ROLL has passed, it starts the first time you're
+    back after a night away: the screen locked or the computer off for AWAY, or at WAKE_FALLBACK if
+    you never left. A night that ended before DAY_ROLL counts too (WOKE). Marks the start unless
+    mark is False, and returns True."""
+    started = read_float(DAY_START)
+    if day_of(started) == day_of(now):
+        return True
+    slept = read_float(WOKE) > day_end_ts(day_of(started))
+    fresh = (not DAY_START.exists() or slept or now - read_float(LAST_ACTIVE) >= AWAY
+             or dt.datetime.fromtimestamp(now).hour >= WAKE_FALLBACK)
+    if fresh and mark:
+        write_text(DAY_START, str(now))
+    return fresh
+
+
+def challenge_quiet(cfg, now, entries=None, mark=False):
+    """No cards: the day hasn't started yet, you trained today (climbing, a run: the day's work is
+    done, so the push-ups take it off), or it's past day_ends with the target done."""
+    if not day_begins(cfg, now, mark):
+        return True
+    c = challenge(cfg, read_log() if entries is None else entries, now)
+    return bool(c["trained"]) or (now > day_end_ts(day_of(now)) and c["left"] <= 0)
+
+
+def parse_answer(text):
+    try:
+        answer = json.loads(text)
+        return answer if isinstance(answer, dict) else {}
+    except ValueError:
+        return {"result": text.strip()}
+
+
+def log_answer(answer, offered=None):
+    """Record what a card said happened. Returns a short line for the daemon log."""
+    result = answer.get("result")
+    if result == "done" and answer.get("did", 0) >= 0 and isinstance(answer.get("exercise"), str):
+        log_event(reps=answer.get("goal", 0), did=answer["did"], exercise=answer["exercise"], result="done")
+        return f"done {answer['did']} {answer['exercise']}"
+    if result == "manual" and answer.get("did", 0) > 0 and isinstance(answer.get("exercise"), str):
+        sets = max(1, min(10, int(answer.get("sets", 1))))
+        log_sets(answer["exercise"], answer["did"], sets, source="card")
+        return f"logged {sets}x{answer['did']} {answer['exercise']}"
+    if result == "session" and answer.get("activity") in ACTIVITIES and answer.get("minutes", 0) > 0:
+        log_session(answer["activity"], answer["minutes"], answer.get("effort", "normal"), answer.get("days_ago", 0))
+        return f"trained {answer['activity']} {answer['minutes']} min"
+    if result in ("skip", "pass") and offered:
+        # A pass is a skip on a rest day card or a bonus card past the target: written down, never held against you.
+        log_event(reps=offered["goal"], did=0, exercise=answer.get("exercise", offered["exercise"]), result=result)
+        return result
+    return ""
+
+
+def log_session(activity, minutes, effort="normal", days_ago=0, source="manual"):
+    ts = time.time()
+    if days_ago:
+        # Yesterday's session counts from the evening, which is when most of them happen.
+        day = today() - dt.timedelta(days=days_ago)
+        ts = dt.datetime.combine(day, dt.time(18)).timestamp()
+    log_event(ts=ts, result="session", activity=activity, minutes=int(minutes), effort=effort, source=source)
+
+
+def remind(cfg, env=None, rest=None, held=None):
+    """One card. rest is why it's a rest day, which makes it a calm stretch card. held is what an
+    earlier card for this same set already paused: "it hurts" brings the card straight back, eased."""
+    entries = read_log()
+    now = time.time()
+    week = catalog.muscle_week(entries, now)
+    extra, bonus = [], False
+    if challenge_on(cfg):
+        offer, c = challenge_offer(cfg, entries, now)
+        extra = challenge_args(c)
+        bonus = c["left"] <= 0  # the day's push-ups are in: this card is extra, the card says so too
+        if challenge_stretch_due(cfg, entries, c):
+            offer = stretch_options({**cfg, "stretches": challenge_stretches(cfg)}, entries, now, week=week)
+    else:
+        stretch = bool(rest) or stretch_due(cfg, entries)
+        offer = stretch_options(cfg, entries, now, rest, week) if stretch else options(cfg, entries, now, week)
+    first = offer[0]
+    paused = [*(held or []), *pause_videos()]
+    if held is None:
+        play_sound(cfg)
+    if extra and not SEEN_CHALLENGE.exists():
+        # The first card of the challenge comes after a page on what the challenge is.
+        if overlay(["--challenge-intro", "--spice", cfg["spice"], *extra], env, stop=session_locked) == "stopped":
+            HELD_PLAYERS.extend(paused)
+            return "locked"
+        write_text(SEEN_CHALLENGE, dt.datetime.now().isoformat(timespec="seconds") + "\n")
+    args = ["--options", json.dumps(offer), *extra,
+            "--spice", cfg["spice"], *record_args(entries, week=week)]
+    if rest:
+        args += ["--calm"]
+    if not cfg.get("sound"):
+        args += ["--quiet"]
+    if paused:
+        args += ["--paused", ", ".join(dict.fromkeys(pretty_player(p) for p in paused))]
+    text = overlay(args, env, stop=session_locked)
+    if text == "stopped":
+        # Locked while the card was up: nobody is there to do it or skip it, and nobody to watch the video.
+        HELD_PLAYERS.extend(paused)
+        return "locked"
+    answer = parse_answer(text)
+    if answer.get("result") == "trained":
+        # "Already trained": the logging card takes over, and whatever it logs ends this set.
+        text = overlay(["--add", "--from-card", "--recent", json.dumps(recent_sets(entries)),
+                        *record_args(entries, week=week, with_stats=False)], env, stop=session_locked)
+        if text == "stopped":
+            HELD_PLAYERS.extend(paused)
+            return "locked"
+        logged = log_answer(parse_answer(text))
+        resume(paused)
+        return logged or "lost"
+    if answer.get("result") == "hurt" and isinstance(answer.get("exercise"), str):
+        # The muscles picked on the map, each under its part; none picked, the move's main part.
+        # The card comes back with them eased.
+        spots = catalog.spots_by_part(answer.get("spots") or [])
+        for part, where in spots.items():
+            log_hurt(part, spots=where)
+        part = answer.get("part") if answer.get("part") in HURT_PARTS else hurt_part(answer["exercise"])
+        if not spots and part:
+            log_hurt(part)
+        return remind(cfg, env, rest, held=paused)
+    offered = next((o for o in offer if o["exercise"] == answer.get("exercise")), first)
+    if offered.get("easy") and (answer.get("result") == "skip" or (answer.get("result") == "done" and answer.get("did") == 0)):
+        answer["result"] = "pass"  # a move on a part that hurts: letting it go is fine
+    if (rest or bonus) and (answer.get("result") == "skip" or (answer.get("result") == "done" and answer.get("did") == 0)):
+        answer["result"] = "pass"  # a rest day card, or a bonus one past the target, never feeds the grudge
+    if answer.get("result") == "done":
+        answer["goal"] = offered["goal"]
+    logged = log_answer(answer, offered)
+    if logged and answer.get("receipts"):
+        # Asked for the full stats from the ending: they open once the set is in them.
+        if after_receipts(receipts(env, stop=session_locked), env, stop=session_locked) == "stopped":
+            HELD_PLAYERS.extend(paused)
+            return logged
+    resume(paused)
+    if logged:
+        return logged
+    # The card crashed, was killed or timed out: nothing was decided, so it doesn't feed the grudge.
+    log_event(reps=first["goal"], did=0, exercise=first["exercise"], result="lost")
+    return "lost"
+
+
+slider_top = catalog.slider_top
+
+
+def next_interval(cfg):
+    if challenge_on(cfg):
+        return challenge_interval(cfg)
+    return random.uniform(cfg["interval_min"], cfg["interval_max"]) * 60
+
+
+def cmd_daemon(_):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    cfg = load_config()
+    if not ONBOARDED.exists():
+        run_intro()
+        cfg = load_config()
+    elif not SEEN_EXERCISES.exists():
+        run_intro(page=5)
+        cfg = load_config()
+    due = read_float(NEXT_DUE)
+    if due < time.time() or due - time.time() > cfg["interval_max"] * 60:
+        due = time.time() + next_interval(cfg)
+        write_text(NEXT_DUE, str(due))
+    print(f"pushup: next set at {fmt_clock(due)}", flush=True)
+    last_tick = time.time()
+    was_locked = False
+    quiet, quiet_at = False, 0.0
+    exported = 0.0
+    while True:
+        time.sleep(5)
+        now = time.time()
+        if now - exported >= OVERVIEW_EVERY:
+            # Logging writes it too; this keeps "today" right across midnight and picks up the inbox.
+            refresh_overview()
+            exported = now
+        locked = session_locked()
+        if now - last_tick > 600:
+            due = now + next_interval(cfg)
+            write_text(NEXT_DUE, str(due))
+            print(f"pushup: woke from a {fmt_left(now - last_tick)} sleep, next set at {fmt_clock(due)}", flush=True)
+        elif locked:
+            # The countdown stands still behind the lock screen.
+            due += now - last_tick
+            if not was_locked:
+                due = min(max(due, now) + LOCK_CREDIT, now + cfg["interval_max"] * 60)
+                WAITING.unlink(missing_ok=True)
+                print(f"pushup: locked, holding {fmt_left(due - now)} until after the unlock", flush=True)
+            write_text(NEXT_DUE, str(due))
+        elif was_locked:
+            resume(HELD_PLAYERS)
+            HELD_PLAYERS.clear()
+            print(f"pushup: unlocked, next set at {fmt_clock(due)}", flush=True)
+        was_locked = locked
+        last_tick = now
+        cfg = load_config()  # `pushup challenge` changes it while this runs
+        written = read_float(NEXT_DUE)
+        if written and abs(written - due) > 1:
+            due = written  # moved from outside, by `pushup challenge start`
+        if challenge_on(cfg) and not locked:
+            # The day starts when you're back after a night; past day_ends it goes quiet once the target is done.
+            if now - read_float(LAST_ACTIVE) >= AWAY:
+                write_text(WOKE, str(now))
+            if day_of(read_float(DAY_START)) != day_of(now) and day_begins(cfg, now):
+                due = now + FIRST_SET
+                write_text(NEXT_DUE, str(due))
+                c = challenge(cfg, read_log(), now)
+                print(f"pushup: day {c['day']} begins, {c['target']} push-ups by {fmt_clock(c['deadline'])}, "
+                      f"first set at {fmt_clock(due)}", flush=True)
+            if now - quiet_at >= 60:
+                # Reading the whole log every 5 s for this is too much; once a minute is plenty.
+                quiet, quiet_at = challenge_quiet(cfg, now), now
+            if now - read_float(LAST_ACTIVE) >= 60:
+                write_text(LAST_ACTIVE, str(now))
+        else:
+            quiet, quiet_at = False, 0.0
+        forced = TRIGGER.exists()
+        if not forced and (now < due or read_float(PAUSED_UNTIL) > now or quiet):
+            continue
+        TRIGGER.unlink(missing_ok=True)
+        if not forced:
+            blocker = discord_call() and "a Discord call"
+            if blocker:
+                if not WAITING.exists():
+                    print(f"pushup: due, holding off for {blocker}", flush=True)
+                write_text(WAITING, blocker)
+                continue
+        WAITING.unlink(missing_ok=True)
+        rest, no_card = rest_card(cfg, read_log(), now, forced)
+        if no_card:
+            # A rest day's cards are stretches, and stretches are off: the rest is the whole card.
+            due = now + next_interval(cfg)
+            write_text(NEXT_DUE, str(due))
+            print(f"pushup: rest day, stretches off, no card until {fmt_clock(due)}", flush=True)
+            continue
+        if rest:
+            print(f"pushup: rest day after {rest}, a stretch instead", flush=True)
+        result = remind(cfg, rest=rest)
+        last_tick = time.time()
+        quiet_at = 0.0
+        if result == "locked":
+            # Still owed, a few minutes after the unlock.
+            due, was_locked = last_tick + min(LOCK_CREDIT, cfg["interval_max"] * 60), True
+            write_text(NEXT_DUE, str(due))
+            print("pushup: locked with the card up, closed it", flush=True)
+            continue
+        due = last_tick + next_interval(cfg)
+        write_text(NEXT_DUE, str(due))
+        print(f"pushup: {result}, next set at {fmt_clock(due)}", flush=True)
+
+
+def daemon_running():
+    return run(["systemctl", "--user", "is-active", "pushup.service"]).strip() == "active"
+
+
+def cmd_now(_):
+    if daemon_running():
+        write_text(TRIGGER, "1")
+        print("Coming up in a few seconds.")
+    else:
+        cfg = load_config()
+        print(remind(cfg, rest=rest_card(cfg, read_log(), time.time(), forced=True)[0]))
+
+
+def status_json():
+    """Everything the launcher plugin shows, in one read."""
+    now = time.time()
+    cfg = load_config()
+    entries = read_log()
+    running = daemon_running()
+    due = read_float(NEXT_DUE)
+    out = {"running": running, "locked": session_locked(), "paused_until": max(0.0, read_float(PAUSED_UNTIL)),
+           "next_due": due if running else 0, "waiting": WAITING.read_text().strip() if WAITING.exists() else "",
+           "mode": cfg["mode"], "spice": cfg["spice"], "today": done_on(today(), entries),
+           "streak": day_streak(entries), "skips": skip_streak(entries), "challenge": None,
+           "hurts": {p: {"keep": round(h["keep"], 2), "streak": h["streak"], "yesterday": h["yesterday"], "spots": h["spots"]}
+                     for p, h in hurting(entries, now).items()}}
+    last = last_set(entries)
+    out["last"] = {"ts": last["ts"], "did": did(last), "exercise": exercise_of(last)} if last else None
+    if challenge_on(cfg):
+        c = challenge(cfg, entries, now)
+        offer, _ = challenge_offer(cfg, entries, now)
+        if challenge_stretch_due(cfg, entries, c):
+            offer = stretch_options({**cfg, "stretches": challenge_stretches(cfg)}, entries, now)
+        first = offer[0]
+        # The card picks within a range; the launcher says the range rather than one roll of it.
+        fixed = first["exercise"] == BSS or first.get("stretch")
+        lo, hi = (first["goal"],) * 2 if fixed else goal_range(cfg, entries, first["exercise"], catalog.loads(entries, now), now)
+        out["challenge"] = {**c, "next": [{"exercise": first["exercise"], "goal": first["goal"],
+                                           "stretch": bool(first.get("stretch")),
+                                           "range": str(lo) if lo == hi else f"{lo} to {hi}"}],
+                            "quiet": challenge_quiet(cfg, now, entries)}
+    return out
+
+
+def cmd_status(args):
+    if getattr(args, "json", False):
+        print(json.dumps(status_json()))
+        return
+    now = time.time()
+    running = daemon_running()
+    print(f"daemon     {'running' if running else 'stopped (systemctl --user start pushup)'}")
+    paused = read_float(PAUSED_UNTIL)
+    if paused > now:
+        print(f"paused     until {fmt_clock(paused)} ({fmt_left(paused - now)})")
+    due = read_float(NEXT_DUE)
+    if running and due and session_locked():
+        print(f"next set   on hold while locked, {fmt_left(due - now)} left")
+    elif running and WAITING.exists():
+        print(f"next set   due now, waiting for {WAITING.read_text().strip()} to end")
+    elif running and due:
+        print(f"next set   {fmt_clock(due)} (in {fmt_left(due - now)})")
+    cfg = load_config()
+    print(f"level      {cfg['reps_min']} to {cfg['reps_max']} push-ups, the rest scaled to match")
+    entries = read_log()
+    for p, h in hurting(entries, now).items():
+        when = "yesterday" if h["yesterday"] else "today" if h["streak"] == 1 else f"{h['streak']} days in a row"
+        print(f"hurts      {h['name']}, {when}: goals at {round(h['keep'] * 100)}% (pushup hurt off {catalog.PART_WORD[p]})")
+    if challenge_on(cfg):
+        print(describe_challenge(challenge(cfg, entries, now)))
+        offer, _ = challenge_offer(cfg, entries, now)
+        print("next card  " + ", or ".join(f"{o['goal']} {catalog.unit(o['exercise'], o['goal'])}" for o in offer))
+        why = next((o["why"] for o in offer if o.get("why")), "")
+        if why:
+            print(f"why        {why}")
+        print(f"today      {day_line(done_on(today(), entries))}")
+        streak = skip_streak(entries)
+        if streak:
+            print(f"skipped    {streak} in a row. It's getting meaner.")
+        return
+    rest = catalog.resting(entries, now)
+    if rest:
+        print(f"rest day   after {rest[1]}, {'stretches only' if stretching_on(cfg) else 'no cards'} "
+              f"until {dt.datetime.fromtimestamp(rest[0]):%a %H:%M}")
+    load = catalog.loads(entries, now)
+    tired = [f"{catalog.PART_NAMES[p]} {load[p]:.1f}" for p in catalog.PARTS if load[p] >= 0.1]
+    if tired:
+        print(f"recovering {', '.join(tired)} (rest from {catalog.REST_LOAD}, left alone from {catalog.SORE_LOAD})")
+    for exercise in available(cfg):
+        lo, hi, why = plan(cfg, entries, exercise)
+        f = form(entries, exercise)
+        how = "random in your level until you log a set" if f is None else f"fresh you does {round(f['fresh'])}"
+        part = catalog.sore(exercise, load)
+        if part:
+            how = f"left out while your {catalog.PART_NAMES[part]} recover"
+        factor = catalog.recovery_factor(exercise, load)
+        if factor < 0.9 and not part:
+            lo, hi = (max(3, round(n * factor)) for n in (lo, hi))
+            why = why or f"trimmed to {round(factor * 100)}% while recovering"
+        keep, h = hurt_trim(exercise, hurting(entries, now))
+        hurt_out = next((q for q in hurting(entries, now).values() if hurt_weight(exercise, q) >= 0.7), None)
+        if hurt_out and not part:
+            part, how = hurt_out["part"], f"left out while your {hurt_out['name']} hurt"
+        elif h and not part:
+            lo, hi = eased(lo, keep), eased(hi, keep)
+            why = f"trimmed to {round(keep * 100)}%, your {h['name']} hurt"
+        print(f"next goal  {lo if lo == hi else f'{lo} to {hi}'} {exercise}, {how}")
+        if why and not part:
+            print(f"why        {why}")
+    week = muscle_args(entries, now)
+    print(f"least hit  {', '.join(week['neglected'])} this week")
+    if stretching_on(cfg):
+        print(f"stretch    every {cfg['stretch_every']} cards, {len(cfg['stretches'])} stretches in, next card is "
+              f"{'a stretch' if rest or stretch_due(cfg, entries) else 'an exercise'}")
+    else:
+        print("stretch    off (pushup stretches on)")
+    print(f"spice      {cfg['spice']}")
+    print(f"interval   every {cfg['interval_min']} to {cfg['interval_max']} min")
+    entries = read_log()
+    print(f"today      {day_line(done_on(today(), entries))}")
+    last = last_set(entries)
+    if last:
+        print(f"last set   {did(last)} {catalog.unit(exercise_of(last), did(last))}, "
+              f"{dt.datetime.fromtimestamp(last['ts']):%a %d %b %H:%M} ({fmt_left(now - last['ts'])} ago)")
+    else:
+        print("last set   none on record")
+    trained = catalog.sessions(entries)
+    if trained:
+        t = trained[-1]
+        print(f"trained    {catalog.describe(t)}, {dt.datetime.fromtimestamp(t['ts']):%a %d %b} ({fmt_left(now - t['ts'])} ago)")
+    streak = skip_streak(entries)
+    if streak:
+        print(f"skipped    {streak} in a row. It's getting meaner.")
+
+
+def describe_challenge(c):
+    late = time.time() > c["deadline"]
+    lines = [f"day        {c['day']} of {c['days']}, started {c['start']}",
+             f"push-ups   {c['done']} of {c['target']} today, {c['left']} to go"
+             + (f", past {fmt_clock(c['deadline'])}: sets keep coming while you're up" if late else f" by {fmt_clock(c['deadline'])}")
+             if c["left"] and not c["trained"] else f"push-ups   {c['done']} today, target {c['target']} done. Every set now is extra."
+             if not c["trained"] else f"push-ups   trained today ({', '.join(c['trained'])}): no cards until tomorrow, "
+                                      f"{c['done']} of {c['target']} if you want them anyway (pushup now)",
+             f"feet up    {'on: decline push-ups first, plain ones on Tab' if c['feet_up'] else 'off until you say so (pushup challenge feet-up on)'}",
+             f"bulgarians {c['bss']['sets']} of {c['bss']['cap']} sets today, {c['bss']['goal']} each leg a set",
+             (f"rows       {c['rows']['sets']} of {c['rows']['cap']} sets today at the table edge, up to {c['rows']['goal']} a set"
+              if c["rows"]["cap"] else "rows       off (pushup challenge rows on)"),
+             (f"stretches  every {load_config()['challenge_stretch_every']} cards once the target is in, David's: "
+              f"{', '.join(challenge_stretches(None))}" if c["stretching"] else "stretches  off (pushup stretches on)")]
+    if c["target"] < c.get("usual_target", c["target"]):
+        lines.insert(2, f"eased      {c['target']} instead of {c['usual_target']}, your {c.get('eased_by') or 'chest and arms'} hurt")
+    if not c["started"]:
+        lines.append("today      not started: it begins when you're back after a night away")
+    return "\n".join(lines)
+
+
+def cmd_challenge(args):
+    cfg = load_config()
+    if args.action == "start":
+        cfg["mode"] = "challenge"
+        if not cfg["challenge_start"] or args.over:
+            cfg["challenge_start"] = today().isoformat()
+        save_config(cfg)
+        # Starting it by hand means you're here now: today counts from this moment.
+        if day_of(read_float(DAY_START)) != today():
+            write_text(DAY_START, str(time.time()))
+        write_text(NEXT_DUE, str(time.time() + FIRST_SET))
+        print(f"Challenge on. Next set in {fmt_left(FIRST_SET)}.")
+    elif args.action == "off":
+        cfg["mode"] = "mixed"
+        save_config(cfg)
+        print("Challenge off: back to the mixed cards. `pushup challenge start` picks it up where it was.")
+        return
+    elif args.action == "feet-up":
+        if args.value:
+            cfg["feet_up"] = args.value == "on"
+            save_config(cfg)
+        print("Feet up: " + ("on. Decline push-ups come first, plain ones are a Tab away." if cfg["feet_up"]
+                             else "off. Switch it on when you're ready: pushup challenge feet-up on"))
+        return
+    elif args.action == "rows":
+        if args.value:
+            cfg["rows"] = args.value == "on"
+            save_config(cfg)
+        print("Rows: " + ("on. Body rows at the table edge get their own turn, a few sets a day." if cfg["rows"]
+                          else "off. Push-ups and Bulgarians only. pushup challenge rows on brings them back."))
+        return
+    if not challenge_on(cfg):
+        print("No challenge running. `pushup challenge start` starts day 1 today.")
+        return
+    print(describe_challenge(challenge(cfg, read_log())))
+
+
+def cmd_stats(args):
+    entries = read_log()
+    now = today()
+    total = 0
+    print("day         sets  skipped  done")
+    for i in range(args.days - 1, -1, -1):
+        day = now - dt.timedelta(days=i)
+        sets = done_on(day, entries)
+        skipped = sum(1 for e in entries if e.get("result") in ("skip", "done") and did(e) == 0
+                      and day_of(e["ts"]) == day)
+        total += len(sets)
+        print(f"{day:%a %d %b}  {len(sets):4d}  {skipped:7d}  {', '.join(catalog.day_lines(sets))}")
+    print(f"total       {total:4d}")
+
+
+def parse_duration(text):
+    if text in ("tomorrow", "today"):
+        tomorrow = dt.datetime.combine(dt.date.today() + dt.timedelta(days=1), dt.time(6))
+        return tomorrow.timestamp() - time.time()
+    m = re.fullmatch(r"(\d+)\s*([mh]?)", text)
+    if not m:
+        raise SystemExit(f"pushup: can't read '{text}', try 30m, 2h or tomorrow")
+    return int(m[1]) * (3600 if m[2] == "h" else 60)
+
+
+def parse_hurt(words):
+    """'left triceps right chest' or 'arms': {part: spots}. A side word goes with the muscle after
+    it; a muscle with no side is both. A part word ('arms', 'back') names the part alone."""
+    out, whole, side, i = {}, set(), None, 0
+    while i < len(words):
+        w = words[i]
+        two = f"{w} {words[i + 1]}" if i + 1 < len(words) else ""
+        if w in ("left", "right", "both"):
+            side, i = w, i + 1
+            continue
+        muscle = two if two in catalog.PART_OF else w if w in catalog.PART_OF else None
+        if muscle is None and w + "s" in catalog.PART_OF:
+            muscle = w + "s"  # 'tricep', 'bicep', 'quad'
+        if muscle is None and w == "calf":
+            muscle = "calves"
+        if muscle:
+            sides = ("left", "right") if side in (None, "both") else (side,)
+            out.setdefault(catalog.PART_OF[muscle], []).extend([muscle, s] for s in sides)
+            side, i = None, i + (2 if muscle == two else 1)
+            continue
+        part = catalog.part_named(w)
+        if part is None:
+            raise SystemExit(f"pushup: '{w}' isn't a body part I know. Try arms, left triceps, chest, back, legs or core.")
+        whole.add(part)
+        side, i = None, i + 1
+    if side:
+        raise SystemExit(f"pushup: {side} what? Name the muscle after it: pushup hurt {side} triceps")
+    for part in whole:
+        out[part] = []  # 'arms left triceps' is all of the arms
+    return out
+
+
+def cmd_hurt(args):
+    """pushup hurt arms: that part hurts, ease off it. pushup hurt off arms, or off alone for all."""
+    words = [w.lower().replace("_", " ") for w in args.where]
+    healed = bool(words) and words[0] in ("off", "better", "fine")
+    words = words[1:] if healed else words
+    entries = read_log()
+    if not words and not healed:
+        hurts = hurting(entries)
+        if not hurts:
+            print("Nothing hurts on record. Say where: pushup hurt arms (or chest, back, legs, core).")
+        for p, h in hurts.items():
+            print(f"{h['name']}: goals at {round(h['keep'] * 100)}%, "
+                  + ("said yesterday" if h["yesterday"] else "since today" if h["streak"] == 1 else f"{h['streak']} days in a row"))
+        return
+    said = parse_hurt(words) if words else {p: [] for p in hurting(entries)}
+    parts = list(said)
+    for p in parts:
+        log_hurt(p, healed, said[p])
+    entries = read_log()
+    for p in parts:
+        name = catalog.spots_text(said[p]) or catalog.PART_NAMES[p]
+        if healed:
+            print(f"Good to hear. Your {name} get the usual goals again.")
+            continue
+        h = hurt_on(entries, p, today())
+        if h["streak"] >= 4:
+            print(f"{h['streak']} days in a row now. That's not soreness from training any more. Rest them "
+                  f"(pushup pause tomorrow) or have them looked at. Goals stay at {round(h['keep'] * 100)}%.")
+        elif h["streak"] == 3:
+            print(f"Third day. Only a little less this time: goals at {round(h['keep'] * 100)}%.")
+        elif h["worked"]:
+            print(f"Fair, they earned it: {h['reps']} reps on your {name} these last few days. "
+                  f"Goals at {round(h['keep'] * 100)}% today, and a bit less tomorrow too.")
+        else:
+            print(f"Noted. Your {name} have had an easy few days, so goals at {round(h['keep'] * 100)}% today.")
+    cfg = load_config()
+    if challenge_on(cfg) and "push" in parts and not healed:
+        c = challenge(cfg, entries)
+        print(f"Today's push-ups: {c['target']} instead of {c['usual_target']}, {c['done']} done.")
+
+
+def cmd_pause(args):
+    until = time.time() + parse_duration(args.duration)
+    write_text(PAUSED_UNTIL, str(until))
+    print(f"Paused until {dt.datetime.fromtimestamp(until):%a %H:%M}.")
+
+
+def cmd_resume(_):
+    PAUSED_UNTIL.unlink(missing_ok=True)
+    print("Back on.")
+
+
+def cmd_level(args):
+    cfg = load_config()
+    if args.level:
+        if args.level in LEVELS:
+            cfg["reps_min"], cfg["reps_max"] = LEVELS[args.level]
+        elif args.level.isdigit() and args.max and args.max.isdigit():
+            cfg["reps_min"], cfg["reps_max"] = sorted((int(args.level), int(args.max)))
+        else:
+            raise SystemExit("pushup: use easy, normal, hard, or two numbers like 'pushup level 8 15'")
+        save_config(cfg)
+    print(f"{cfg['reps_min']} to {cfg['reps_max']} reps per set")
+
+
+def parse_sets(text):
+    """'10' is one set of 10, '3x10' (or 3*10, 3×10) three of them: (sets, reps), or None."""
+    m = re.fullmatch(r"(?:(\d{1,2})\s*[x*×]\s*)?(\d{1,4})", text.strip().lower())
+    return (int(m[1] or 1), int(m[2])) if m else None
+
+
+def log_sets(exercise, reps, sets=1, source=None):
+    """Sets done on your own, each its own entry, so a day still counts sets."""
+    extra = {"source": source} if source else {}
+    for i in range(sets):
+        log_event(refresh=i == sets - 1, did=reps, exercise=exercise, result="manual", **extra)
+
+
+def cmd_log(args):
+    amount = parse_sets(args.reps)
+    if not amount or amount[1] < 1 or amount[0] < 1:
+        raise SystemExit("pushup: log how many you did, like 'pushup log 15', 'pushup log 20 squats' or 'pushup log 3x10 rows'")
+    sets, reps = amount
+    sets = args.sets or sets
+    if not 1 <= sets <= 10:
+        raise SystemExit("pushup: 1 to 10 sets at a time")
+    known = list(dict.fromkeys([*EXERCISES, *STRETCHES, *load_config()["exercises"]]))
+    exercise = catalog.find(" ".join(args.exercise), known) if args.exercise else "push-ups"
+    if not exercise:
+        typed = " ".join(args.exercise)
+        close = catalog.candidates(typed, known)
+        raise SystemExit(f"pushup: '{typed}' could be {', '.join(close)}" if close else
+                         f"pushup: no exercise called '{typed}'. These exist: {', '.join(known)}")
+    log_sets(exercise, reps, sets)
+    what = (f"{sets} sets of " if sets > 1 else "") + catalog.describe_set(exercise, reps)
+    print(f"Logged {what}. Today: {day_line(done_on(today()))}.")
+
+
+def cmd_train(args):
+    if args.activity not in ACTIVITIES:
+        raise SystemExit(f"pushup: no activity called '{args.activity}'. These exist: {', '.join(ACTIVITIES)}")
+    if not re.fullmatch(r"\d+\s*[mh]?", args.duration):
+        raise SystemExit(f"pushup: can't read '{args.duration}', try 45m, 90m or 2h")
+    minutes = parse_duration(args.duration) // 60
+    if minutes < 1:
+        raise SystemExit("pushup: how long, like 'pushup train climbing 90m' or '2h'")
+    log_session(args.activity, minutes, args.effort, 1 if args.yesterday else 0)
+    print(f"Logged {catalog.describe({'activity': args.activity, 'minutes': minutes, 'effort': args.effort})}"
+          f"{' yesterday' if args.yesterday else ''}.")
+    if challenge_on(load_config()):
+        if not args.yesterday and trained_on(today(), read_log()):
+            print("That's today's training. No more cards until tomorrow.")
+        return
+    rest = catalog.resting(read_log(), time.time())
+    if rest:
+        what = "Stretches only" if stretching_on(load_config()) else "No cards"
+        print(f"{what} until {dt.datetime.fromtimestamp(rest[0]):%a %H:%M}. Rest up.")
+
+
+def cmd_add(_, env=None, stop=None):
+    entries = read_log()
+    text = overlay(["--add", "--recent", json.dumps(recent_sets(entries)), *record_args(entries, with_stats=False)], env, stop=stop)
+    print(log_answer(parse_answer(text)) or "Nothing logged.")
+    return text
+
+
+def cmd_exercises(args):
+    cfg = load_config()
+    if args.action:
+        # Names with a space may come split in two ("glute bridges"), so join words until one matches.
+        names, word = [], ""
+        known = {n.lower(): n for n in (*EXERCISES, *STRETCHES)}  # 'l-sit' means L-sit
+        for token in args.names:
+            word = f"{word} {token}".strip()
+            if word.lower() in known:
+                names.append(known[word.lower()])
+                word = ""
+        if word or not names:
+            raise SystemExit(f"pushup: pick from {', '.join([*EXERCISES, *STRETCHES])}")
+        for key, catalog_names in (("exercises", EXERCISES), ("stretches", STRETCHES)):
+            mine = [n for n in names if n in catalog_names]
+            if not mine:
+                continue
+            if args.action == "on":
+                cfg[key] = [e for e in catalog_names if e in cfg[key] or e in mine]
+                for e in mine:
+                    if not catalog.can_do(e, cfg["gear"]):
+                        print(f"{e} is on, but needs {catalog.needs(e)} first: pushup gear on {catalog.GEAR[e][0]}")
+            else:
+                cfg[key] = [e for e in cfg[key] if e not in mine] or [next(iter(catalog_names))]
+        save_config(cfg)
+    load = catalog.loads(read_log(), time.time())
+    for name, e in EXERCISES.items():
+        mark = "on " if name in cfg["exercises"] else "off"
+        part = catalog.sore(name, load)
+        note = f"  resting your {catalog.PART_NAMES[part]}" if part else ""
+        if not catalog.can_do(name, cfg["gear"]):
+            mark, note = "off", f"  needs {catalog.needs(name)}: pushup gear on {catalog.GEAR[name][0]}"
+        print(f"{mark}  {name:<23} {', '.join(e['muscles'])}{note}")
+    print()
+    for name, e in STRETCHES.items():
+        mark = "on " if name in cfg["stretches"] else "off"
+        print(f"{mark}  {name:<23} {catalog.GOALS[e['goal']]}: {', '.join(e['muscles'])}")
+
+
+def cmd_sync(_):
+    """Write the overview now and say what is shared and what came in."""
+    wrote = refresh_overview()
+    local = read_local()
+    print(f"overview   {OVERVIEW}, " + ("written now" if wrote else "NOT written, see the error above"))
+    print(f"log        {LOG}, {len(local)} entries")
+    inbox = read_inbox(local)
+    if inbox:
+        by = {}
+        for e in inbox:
+            by.setdefault(e["source"], []).append(e)
+        for source, got in sorted(by.items()):
+            newest = max(got, key=lambda e: e["ts"])
+            print(f"inbox      {source}: {len(got)} {'entry' if len(got) == 1 else 'entries'}, newest "
+                  f"{dt.datetime.fromtimestamp(newest['ts']):%a %d %b %H:%M}")
+    else:
+        print(f"inbox      {INBOX}: nothing in yet")
+    print("syncthing  folder pushup goes out to nemurenai, folder pushup-inbox comes back (docs/sync.md)")
+
+
+def cmd_gear(args):
+    """What you have beyond a floor, a wall and a chair. Moves that need a tool you lack never come up."""
+    cfg = load_config()
+    if args.action:
+        bad = [t for t in args.tools if t not in catalog.TOOLS]
+        if bad or not args.tools:
+            raise SystemExit(f"pushup: pick from {', '.join(catalog.TOOLS)}")
+        if args.action == "on":
+            cfg["gear"] = [t for t in catalog.TOOLS if t in cfg["gear"] or t in args.tools]
+        else:
+            cfg["gear"] = [t for t in cfg["gear"] if t not in args.tools]
+        save_config(cfg)
+    for tool, what in catalog.TOOLS.items():
+        moves = [e for e, tools in catalog.GEAR.items() if tool in tools]
+        print(f"{'have' if tool in cfg['gear'] else 'no  '}  {tool:<12} {what:<24} for {', '.join(moves)}")
+
+
+def cmd_stretches(args):
+    cfg = load_config()
+    if args.value:
+        cfg["stretching"] = args.value == "on"
+        save_config(cfg)
+    if stretching_on(cfg):
+        print("Stretches: on. Every few cards is a stretch, and in the challenge David's come once the push-ups are in.")
+    else:
+        print("Stretches: off. No stretch cards in either mode, and a rest day sends no cards. pushup stretches on "
+              "brings them back.")
+
+
+def receipts(env=None, days=14, stop=None, tab="overview"):
+    entries = read_log()
+    cfg = load_config()
+    extra = challenge_args(challenge(cfg, entries)) if challenge_on(cfg) else []
+    return overlay(["--graph", "--page", str(RECEIPT_TABS.index(tab) + 1), "--streak", str(day_streak(entries)), *extra,
+                    *record_args(entries, max(7, min(60, days)))], env, stop=stop)
+
+
+def after_receipts(answer, env=None, stop=None):
+    """The receipts' buttons: a set now, or logging training. Returns "stopped" when the screen
+    locked while one of them was up."""
+    if answer == "now":
+        cmd_now(None)
+    elif answer == "add":
+        return cmd_add(None, env, stop)
+    return answer
+
+
+def cmd_graph(args):
+    after_receipts(receipts(days=args.days, tab=args.tab))
+
+
+def cmd_spice(args):
+    cfg = load_config()
+    if args.spice:
+        cfg["spice"] = args.spice
+        save_config(cfg)
+    print(f"Spice: {cfg['spice']}")
+
+
+def cmd_intro(_):
+    print(f"Set to {run_intro()}.")
+
+
+def cmd_check(_):
+    call = discord_call()
+    print(f"discord call   {'yes (' + call + ')' if call else 'no'}")
+    print(f"screen locked  {'yes' if session_locked() else 'no'}")
+    for p in players():
+        action = "left alone" if p["music"] or p["status"] != "Playing" else "paused during a set"
+        print(f"player         {p['name']}: {p['status'] or '?'}, {'music' if p['music'] else 'video'}, {action}")
+
+
+def cmd_overlay(args):
+    lib = "/usr/lib/libgtk4-layer-shell.so"
+    if os.environ.get("WAYLAND_DISPLAY") and Path(lib).exists() and lib not in os.environ.get("LD_PRELOAD", ""):
+        os.environ["LD_PRELOAD"] = (lib + " " + os.environ.get("LD_PRELOAD", "")).strip()
+        os.execv(sys.executable, [sys.executable, *sys.argv])
+    if not args.top:
+        args.top = slider_top(args.reps)
+    if not args.options and not (args.intro or args.graph or args.add or args.challenge_intro):
+        # A bare card for screenshots and tests: one exercise, the goal given.
+        args.options = json.dumps([{"exercise": args.exercise, "goal": args.reps, "top": args.top, "why": args.why}])
+    from pushup_ui import show
+    print(show(args), flush=True)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="pushup", description="Random push-up breaks about once an hour.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("daemon", help="run the timer (systemd starts this)").set_defaults(fn=cmd_daemon)
+    sub.add_parser("now", help="show a set right now").set_defaults(fn=cmd_now)
+    p = sub.add_parser("status", help="when the next set is, and today's count")
+    p.add_argument("--json", action="store_true", help="for the launcher plugin")
+    p.set_defaults(fn=cmd_status)
+    p = sub.add_parser("challenge", help="the push-up challenge: start, off, feet-up on|off, rows on|off")
+    p.add_argument("action", nargs="?", choices=("start", "off", "feet-up", "rows"))
+    p.add_argument("value", nargs="?", choices=("on", "off"))
+    p.add_argument("--over", action="store_true", help="with start: begin again from day 1")
+    p.set_defaults(fn=cmd_challenge)
+    p = sub.add_parser("stats", help="reps per day")
+    p.add_argument("days", nargs="?", type=int, default=7)
+    p.set_defaults(fn=cmd_stats)
+    p = sub.add_parser("hurt", help="a body part hurts, ease off it: arms, chest, back, legs, core; off to undo")
+    p.add_argument("where", nargs="*")
+    p.set_defaults(fn=cmd_hurt)
+    p = sub.add_parser("pause", help="no sets for a while: 30m, 2h, tomorrow")
+    p.add_argument("duration", nargs="?", default="1h")
+    p.set_defaults(fn=cmd_pause)
+    sub.add_parser("resume", help="end a pause").set_defaults(fn=cmd_resume)
+    p = sub.add_parser("level", help="reps per set: easy, normal, hard, or MIN MAX")
+    p.add_argument("level", nargs="?")
+    p.add_argument("max", nargs="?")
+    p.set_defaults(fn=cmd_level)
+    p = sub.add_parser("log", help="record sets you did on your own: 15, 20 squats, 3x10 rows")
+    p.add_argument("reps", help="reps in a set, or SETSxREPS like 3x10")
+    p.add_argument("exercise", nargs="*")
+    p.add_argument("-s", "--sets", type=int, default=0, help="how many sets of that")
+    p.set_defaults(fn=cmd_log)
+    p = sub.add_parser("train", help="record training: climbing 90m hard")
+    p.add_argument("activity")
+    p.add_argument("duration", help="30m, 2h")
+    p.add_argument("effort", nargs="?", default="normal", choices=list(EFFORT))
+    p.add_argument("--yesterday", action="store_true")
+    p.set_defaults(fn=cmd_train)
+    sub.add_parser("add", help="the logging card: pick what you did").set_defaults(fn=cmd_add)
+    p = sub.add_parser("exercises", help="which exercises the card asks for: on/off NAME")
+    p.add_argument("action", nargs="?", choices=("on", "off"))
+    p.add_argument("names", nargs="*")
+    p.set_defaults(fn=cmd_exercises)
+    p = sub.add_parser("gear", help="what you have: on/off bar, table, chairs, parallettes")
+    p.add_argument("action", nargs="?", choices=("on", "off"))
+    p.add_argument("tools", nargs="*")
+    p.set_defaults(fn=cmd_gear)
+    sub.add_parser("sync", help="write the overview for nemurenai now, and show what came in").set_defaults(fn=cmd_sync)
+    p = sub.add_parser("stretches", help="stretch cards on or off, in both modes")
+    p.add_argument("value", nargs="?", choices=("on", "off"))
+    p.set_defaults(fn=cmd_stretches)
+    p = sub.add_parser("graph", help="the receipts: today, the body, every move, muscle groups over time")
+    p.add_argument("days", nargs="?", type=int, default=30)
+    p.add_argument("--tab", choices=RECEIPT_TABS, default="overview", help="which tab it opens on")
+    p.set_defaults(fn=cmd_graph)
+    p = sub.add_parser("spice", help="how mean it talks: mild or spicy")
+    p.add_argument("spice", nargs="?", choices=SPICES)
+    p.set_defaults(fn=cmd_spice)
+    sub.add_parser("intro", help="show the first-run walkthrough again").set_defaults(fn=cmd_intro)
+    sub.add_parser("check", help="what it sees right now: calls, lock, players").set_defaults(fn=cmd_check)
+    p = sub.add_parser("names")  # for the shell completions, so they never drift from the catalog
+    p.add_argument("kind", choices=("exercises", "activities", "muscles"))
+    p.set_defaults(fn=lambda a: print("\n".join([*EXERCISES, *STRETCHES] if a.kind == "exercises" else catalog.MUSCLES
+                                                if a.kind == "muscles" else ACTIVITIES)))
+    p = sub.add_parser("overlay")
+    p.add_argument("--intro", action="store_true")
+    p.add_argument("--reps", type=int, default=15)
+    p.add_argument("--exercise", default="push-ups")
+    p.add_argument("--done", default="[]")
+    p.add_argument("--skips", type=int, default=0)
+    p.add_argument("--history", default="")
+    p.add_argument("--last", type=float, default=0)
+    p.add_argument("--last-reps", type=int, default=0)
+    p.add_argument("--graph", action="store_true")
+    p.add_argument("--react", default="")
+    p.add_argument("--spice", default="spicy")
+    p.add_argument("--holding", type=float, default=0)
+    p.add_argument("--top", type=int, default=0)
+    p.add_argument("--level", default="normal")
+    p.add_argument("--streak", type=int, default=-1)
+    p.add_argument("--opaque", action="store_true")
+    p.add_argument("--value", type=int, default=None)
+    p.add_argument("--paused", default="")
+    p.add_argument("--why", default="")
+    p.add_argument("--close-after", type=float, default=0)
+    p.add_argument("--no-grab", action="store_true")
+    p.add_argument("--arm-delay", type=float, default=1.5)
+    p.add_argument("--page", type=int, default=1)
+    p.add_argument("--options", default="")
+    p.add_argument("--picked", default="")
+    p.add_argument("--add", action="store_true")
+    p.add_argument("--from-card", action="store_true")
+    p.add_argument("--recent", default="{}")
+    p.add_argument("--sets", type=int, default=0)  # for screenshots: the logging card's sets
+    p.add_argument("--last-exercise", default="push-ups")
+    p.add_argument("--swap", type=int, default=0)
+    p.add_argument("--pick", default="")
+    p.add_argument("--muscles", default="")
+    p.add_argument("--calm", action="store_true")
+    p.add_argument("--goals", default="")
+    p.add_argument("--gear", default="")
+    p.add_argument("--quiet", action="store_true")
+    p.add_argument("--start-timer", action="store_true")  # for tests and screenshots
+    p.add_argument("--timer-at", type=float, default=-1)  # start the timer this many seconds in
+    p.add_argument("--switch", type=int, default=5)  # seconds to change sides
+    p.add_argument("--challenge", default="")
+    p.add_argument("--challenge-intro", action="store_true")
+    p.add_argument("--stats", default="")
+    p.set_defaults(fn=cmd_overlay)
+    args = ap.parse_args()
+    global DAY_END
+    DAY_END = int(load_config()["day_ends"]) % 24
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()

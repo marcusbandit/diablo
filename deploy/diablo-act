@@ -1,0 +1,6 @@
+#!/bin/sh
+# diablo-act: Diablo acts out a recording of your voice, as a video. See voice/act.py.
+# Runs in a capped scope: the aligner and Whisper load onto the GPU and into memory.
+repo="$(dirname "$(readlink -f "$0")")/.."
+cd "$repo" && exec systemd-run --user --scope -q -p MemoryMax=6000M -p MemorySwapMax=0 \
+    "$repo/.venv-voice/bin/python" -m voice.act "$@"

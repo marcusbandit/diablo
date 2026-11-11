@@ -1,0 +1,4 @@
+[workspace]
+members = ["core", "tui", "phone/core"]
+default-members = ["core", "tui", "phone/core"]
+resolver = "2"

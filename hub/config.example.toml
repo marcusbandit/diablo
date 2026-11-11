@@ -1,0 +1,11 @@
+hub_token = "CHANGE_ME"
+telegram_bot_token = ""
+
+# The tailnet door: a browser reaching the hub through Diablo's own tailnet name
+# (http://diablo, Tailscale Serve on a separate `diablo` node) is paired with no code
+# when its Tailscale login is an owner. proxies are the addresses the door's requests
+# arrive from, the only callers whose Tailscale-User-Login header the hub believes. With
+# the door on the hub's own machine that is the machine's own tailnet address.
+[door]
+proxies = []
+owners = []

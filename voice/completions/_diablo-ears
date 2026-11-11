@@ -1,0 +1,28 @@
+#compdef diablo-ears
+
+_diablo-ears() {
+  local -a commands
+  commands=(
+    'train:the setup from a terminal; the desktop app has it under Settings, Voice'
+    'retrain:train again from the recordings already saved'
+    'status:model, threshold, measured false wakes, service state'
+    'chimes:play every sound he makes, one after another'
+    'timings:where the time of each recent turn went'
+    'recordings:the last turns recordings and what was heard'
+    'recheck:run a recording through gvoice again'
+    'run:the service itself'
+  )
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'diablo-ears command' commands
+  elif [[ $words[2] == train ]]; then
+    _values -w 'option' '--fresh[drop the saved recordings of the name first]'
+  elif [[ $words[2] == recheck ]]; then
+    local -a ids
+    ids=(last ${(f)"$(ls ~/.local/share/diablo/turns/*.wav(N:t:r) 2>/dev/null | tail -20)"})
+    _describe -t ids 'recording' ids
+  elif [[ $words[2] == timings ]]; then
+    _arguments '--last[how many turns]:number' '--html[write the waterfall as a page]:file:_files'
+  fi
+}
+
+_diablo-ears "$@"

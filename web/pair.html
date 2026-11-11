@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pair with Diablo</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#1e2024">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  @font-face { font-family: "Libron"; src: url("fonts/libron.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+  @font-face { font-family: "Source Sans 3"; src: url("fonts/sourcesans3.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+  * { box-sizing: border-box; margin: 0; border-radius: 0 !important; }
+  body { min-height: 100vh; display: flex; justify-content: center; background: var(--bg); color: var(--ink); font-family: var(--reading); font-size: var(--fs-normal); line-height: 1.55; }
+  main { max-width: 560px; width: 100%; padding: calc(var(--sp) * 10) calc(var(--sp) * 6); display: flex; flex-direction: column; gap: calc(var(--sp) * 5); }
+  .mark { font-family: var(--titles); font-size: var(--fs-large); font-weight: 700; letter-spacing: -0.02em; }
+  .mark span { color: var(--accent-ink); }
+  h1 { font-family: var(--titles); font-size: var(--fs-large); font-weight: 700; }
+  p { color: var(--muted); }
+  .note { color: var(--faint); font-size: var(--fs-small); }
+  .hud { font-family: var(--titles); font-size: var(--fs-small); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+  .letters { font-family: var(--mono); font-size: var(--fs-large); letter-spacing: 0.14em; background: var(--raised); border: 1px solid var(--line); padding: calc(var(--sp) * 4) calc(var(--sp) * 5); }
+  .row { display: flex; gap: calc(var(--sp) * 3); flex-wrap: wrap; }
+  a.go, button { display: inline-block; border: 1px solid var(--line-strong); background: none; color: var(--ink); padding: calc(var(--sp) * 3) calc(var(--sp) * 5); cursor: pointer; text-decoration: none; font: inherit; }
+  a.go { color: var(--accent-ink); border-color: var(--accent); }
+  a.go:hover, button:hover { background: var(--invert-bg); color: var(--invert-fg); }
+  .qr { align-self: flex-start; background: #fff; padding: 6px; line-height: 0; }
+  .qr svg { width: 184px; height: 184px; }
+  .status { display: flex; gap: calc(var(--sp) * 2.5); align-items: baseline; }
+  .status::before { content: ""; width: 8px; height: 8px; flex: none; background: var(--faint); }
+  .status.ok::before { background: var(--ok); }
+  .status.bad::before { background: var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <div class="mark">Diablo<span>.</span></div>
+  <h1 id="title">Pair with Diablo</h1>
+  <p id="lead">This code lets one phone or browser reach the hub. It lasts ten minutes and works once.</p>
+  <div class="letters" id="letters"></div>
+  <div class="row">
+    <a class="go hud" id="open">open in the Diablo app</a>
+    <button class="hud" id="here">pair this browser instead</button>
+  </div>
+  <div id="out"></div>
+  <p class="note">On another screen? Scan this with the Diablo app's Scan QR code button.</p>
+  <div class="qr" id="qr"></div>
+</main>
+<script src="qrcode.js"></script>
+<script src="devicename.js"></script>
+<script>
+  const code = (new URLSearchParams(location.search).get('code') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const $ = id => document.getElementById(id);
+  const status = (text, kind) => { const d = document.createElement('div'); d.className = 'status' + (kind ? ' ' + kind : ''); d.textContent = text; $('out').replaceChildren(d); };
+  if (code.length !== 8) {
+    $('title').textContent = 'No code here';
+    $('lead').textContent = 'Ask Diablo for one: send him /pair on Telegram, then open the link he sends.';
+    ['letters', 'open', 'here', 'qr'].forEach(id => $(id).remove());
+    document.querySelector('.note').remove();
+  } else {
+    $('letters').textContent = code.slice(0, 4) + '-' + code.slice(4);
+    $('open').href = 'diablo://pair?host=' + encodeURIComponent(location.origin) + '&code=' + code;
+    const q = qrcode(0, 'M');
+    q.addData(location.origin + '/app/pair.html?code=' + code);
+    q.make();
+    $('qr').innerHTML = q.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+    $('here').addEventListener('click', async () => {
+      status('pairing...');
+      const name = deviceLabel();
+      try {
+        const r = await fetch('/v1/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name }) });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) { status(body.detail || ('the hub answered ' + r.status), 'bad'); return; }
+        localStorage.setItem('diablo-token', body.token);
+        status('Paired as ' + body.device.name + ' on ' + body.hub + '. Opening Diablo...', 'ok');
+        setTimeout(() => location.replace('/app/'), 900);
+      } catch (e) { status('the hub is out of reach: is Tailscale on?', 'bad'); }
+    });
+  }
+</script>
+</body>
+</html>

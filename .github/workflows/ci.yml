@@ -1,0 +1,72 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  hub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: hub tests
+        run: >
+          mkdir -p /tmp/opencode &&
+          uv run -q --python 3.12 --no-project --with-requirements requirements.txt --with pytest --with httpx --with numpy
+          python -m pytest -q tests -p no:cacheprovider
+          --ignore tests/test_pipeline.py --ignore tests/test_tester.py
+          --ignore tests/test_trainer.py --ignore tests/test_voice.py --ignore tests/test_ears.py --ignore tests/test_ears_setup.py --ignore tests/test_dictation.py --ignore tests/test_surroundings.py --ignore tests/test_speech_hold.py --ignore tests/test_wake_playback.py
+
+  phone-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: phone core tests
+        run: cargo test -p diablo-phone
+
+  room:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: room
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: python -m pytest -q
+      - run: python -m py_compile bin/room room/*.py banditshell-plugin/plugin.py scripts/e2e.py
+
+  reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: reminders
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -q -r ../requirements.txt
+      - run: python -m unittest discover -s tests -t . -v
+      - run: bash -n deploy/install.sh && bash -n completions/remind.bash
+
+  pushup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: pushup
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile pushup catalog.py figure.py musclemap.py stats.py pushup_ui.py banditshell-plugin/plugin.py
+      - run: sudo apt-get update -q && sudo apt-get install -y -q python3-cairo && /usr/bin/python3 figure.py check

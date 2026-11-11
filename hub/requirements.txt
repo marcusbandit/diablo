@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+httpx
+python-telegram-bot>=21
+aiosqlite
+uvloop

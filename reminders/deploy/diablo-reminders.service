@@ -1,0 +1,21 @@
+[Unit]
+Description=Diablo reminders, fires durable reminders on Telegram
+Documentation=https://github.com/marcusbandit/diablo-reminders
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=%h/.local/lib/diablo-reminders
+Environment=PYTHONUNBUFFERED=1
+Environment=REMIND_HUB_URL=http://diablo-pi:8755
+EnvironmentFile=-%h/.config/diablo/local.env
+ExecStart=/usr/bin/python3 -m diablo_reminders run
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+Nice=5
+MemoryMax=120M
+
+[Install]
+WantedBy=default.target

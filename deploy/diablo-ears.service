@@ -1,0 +1,16 @@
+[Unit]
+Description=Diablo ears: say his name, he listens, he answers
+After=pipewire.service gvoice.service
+Wants=pipewire.service
+
+[Service]
+WorkingDirectory=%h/Projects/diablo
+Environment=ORT_LOGGING_LEVEL=3
+ExecStart=%h/Projects/diablo/.venv-voice/bin/python -m voice.ears run
+Restart=always
+RestartSec=3
+MemoryMax=1500M
+MemorySwapMax=0
+
+[Install]
+WantedBy=default.target

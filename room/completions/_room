@@ -1,0 +1,39 @@
+#compdef room
+
+_room() {
+    local -a cmds scenes
+    cmds=(
+        'status:what the lights are doing and why'
+        'why:every signal room reads right now, and what it makes of them'
+        'pause:leave the lamps alone for a while'
+        'resume:take the lamps back, including ones changed by hand'
+        'try:show a scene on the lamps for a few seconds'
+        'scenes:the scenes and what each one is for'
+        'lamps:every lamp on the bridge and which ones room uses'
+        'log:recent changes'
+        'setup:the first-run walkthrough: bridge, lamps, scenes, night'
+        'check:the raw signals as JSON'
+        'daemon:run the service (systemd starts this)'
+    )
+    if (( CURRENT == 2 )); then
+        _describe 'command' cmds
+        _values 'option' '--version[print the version]' '--help[show help]'
+        return
+    fi
+    case $words[2] in
+        status) _values 'option' '--json[everything as JSON, for the launcher plugin]' ;;
+        pause) (( CURRENT == 3 )) && _values 'duration' \
+            '15m[a quarter of an hour]' '30m[half an hour]' '1h[an hour, the default]' '2h[two hours]' \
+            '3h[three hours]' 'morning[until the night ends]' ;;
+        try)
+            if (( CURRENT == 3 )); then
+                scenes=(${(f)"$(room names scenes 2>/dev/null)"})
+                _describe 'scene' scenes
+            elif (( CURRENT == 4 )); then
+                _values 'seconds' 5 8 15 30
+            fi ;;
+        log) (( CURRENT == 3 )) && _values 'lines' 10 20 50 100 ;;
+    esac
+}
+
+_room "$@"

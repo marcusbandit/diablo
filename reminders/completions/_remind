@@ -1,0 +1,32 @@
+#compdef remind
+
+_remind_ids() {
+  local -a ids
+  ids=(${(f)"$(remind list 2>/dev/null | sed -n 's/^#\([0-9]*\) \(.*\)$/\1:\2/p')"})
+  _describe -t reminders 'reminder' ids
+}
+
+_remind() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+  _arguments -C \
+    '--db[reminders database]:database:_files' \
+    '--json[print JSON instead of text]' \
+    '(-h --help)'{-h,--help}'[show help]' \
+    '1:command:((add\:"set a reminder" list\:"show reminders" cancel\:"cancel a reminder by id" run\:"run the scheduler loop"))' \
+    '*::arg:->args' && return
+  case $line[1] in
+    add)
+      _arguments \
+        '(-r --repeat)'{-r,--repeat}'[recurrence]:recurrence:(none daily weekly weekdays)' \
+        '(-t --task)'{-t,--task}'[Diablo does it himself instead of reminding]' \
+        '1:due (2026-11-08T13\:00, 13\:00 or +20m):(+10m +20m +30m +1h +2h +1d)' \
+        '*:text:' ;;
+    list)
+      _arguments '(-a --all)'{-a,--all}'[include done and cancelled ones]' ;;
+    cancel)
+      _arguments '1:reminder:_remind_ids' ;;
+  esac
+}
+
+_remind "$@"

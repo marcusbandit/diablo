@@ -1,0 +1,34 @@
+name: phone
+
+on:
+  pull_request:
+    paths: ["phone/**", ".github/workflows/phone.yml"]
+  push:
+    branches: [main]
+    paths: ["phone/**", ".github/workflows/phone.yml"]
+
+jobs:
+  debug-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: rust for android
+        run: |
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install cargo-ndk --locked
+      - name: build and unit test
+        working-directory: phone
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon --console=plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diablo-phone-debug
+          path: phone/app/build/outputs/apk/debug/*.apk

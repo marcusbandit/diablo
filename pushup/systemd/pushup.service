@@ -1,0 +1,12 @@
+[Unit]
+Description=pushup: a random set of push-ups about once an hour
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/pushup daemon
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

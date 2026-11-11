@@ -1,0 +1,14 @@
+# Diablo's tailnet door: a second Tailscale node named `diablo`, run in userspace by the
+# hub's user, whose Tailscale Serve puts the hub at http://diablo and
+# https://diablo.<tailnet>.ts.net. Serve tells the hub who is calling, so the web app
+# pairs an owner's browser with no code. Set up once with deploy/door-up.sh.
+[Unit]
+Description=Diablo's tailnet door, http://diablo in front of the hub
+
+[Service]
+ExecStart=/usr/sbin/tailscaled --tun=userspace-networking --statedir=%h/.local/state/diablo-door --socket=%h/.local/state/diablo-door/tailscaled.sock --port=0
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
