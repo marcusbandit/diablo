@@ -14,6 +14,7 @@ Item {
     property bool thinkingBehind: false // an answer still thinking in the background
     property string moment: ""          // a short feeling after something: delighted, sorry, relieved
     property bool presenting: false     // only showing a card: he holds it out, pleased with it
+    property string cardSide: ""        // where the card he holds is: "left" or "right", he looks at it
     property bool hovered: false
     property var mouthTrack: ({ start: 0, duration: 0, cues: [] })
     // Where his drawings are: shell.qml and the offscreen preview (presence/preview) set it.
@@ -27,6 +28,41 @@ Item {
     property string eyeLook: "neutral"
     onLipSyncChanged: eyeLook = "neutral"
     property bool blinking: false
+    onFaceChanged: orb.glance = ""
+
+    // He acts in every awake state, not only while a measured line plays: the face is drawn from
+    // the horns, his eyes and his mouth, with blinks and small glances. Each state picks the eyes
+    // and the mouth it rests on; a state left out here keeps its whole hand-drawn mood (asleep,
+    // resting, the wink).
+    readonly property var acts: ({
+        "listening": { eyes: "wide", mouth: "rest", glances: ["expectant", "glance-left", "glance-right"] },
+        "expectant": { eyes: "expectant", mouth: "rest", glances: ["wide"] },
+        "thinking": { eyes: "thinking", mouth: "rest", glances: ["glance-left", "glance-right", "judging"] },
+        "working": { eyes: "thinking", mouth: "rest", glances: ["glance-left", "glance-right"] },
+        "talking": { eyes: "neutral", mouth: "rest", glances: ["happy", "relaxed"] },
+        "proud": { eyes: "proud", mouth: "rest", glances: ["happy"] },
+        "delighted": { eyes: "happy", mouth: "open", glances: [] },
+        "relieved": { eyes: "relieved", mouth: "rest", glances: [] },
+        "sorry": { eyes: "sorry", mouth: "rest", glances: [] },
+        "surprised": { eyes: "surprised", mouth: "oo", glances: [] },
+        "confused": { eyes: "confused", mouth: "mid", glances: ["glance-left", "glance-right"] },
+        "annoyed": { eyes: "annoyed", mouth: "rest", glances: ["judging"] },
+        "smug": { eyes: "judging", mouth: "rest", glances: [] },
+        "sly": { eyes: "judging", mouth: "rest", glances: ["glance-left"] },
+        "worried": { eyes: "worried", mouth: "rest", glances: ["glance-left", "glance-right"] },
+    })
+    readonly property var act: orb.acts[orb.face] ?? null
+    readonly property bool assembled: orb.lipSync || orb.act !== null
+    // A glance away from the resting look, for a moment; holding a card he mostly looks at it.
+    property string glance: ""
+    // Speech with no measured track (a canned line, the aligner still loading) still moves the
+    // mouth: a shape every tenth of a second from the open ones.
+    readonly property bool babbling: orb.face === "talking" && !orb.lipSync
+    readonly property string shownEyes: orb.blinking ? "closed"
+        : orb.lipSync ? orb.eyeLook
+        : orb.glance !== "" ? orb.glance
+        : (orb.act?.eyes ?? "neutral")
+    readonly property string shownMouth: orb.lipSync || orb.babbling ? orb.mouthShape : (orb.act?.mouth ?? "rest")
 
     readonly property bool awake: mood !== "asleep" || control || dictating || thinkingBehind || moment !== "" || presenting
 
@@ -125,7 +161,7 @@ Item {
             height: width
             // The repo's own faces, next to presence/: the drawings the apps use.
             // horns alone; the eyes and the mouth are drawn on top as their own layers
-            source: orb.lipSync
+            source: orb.assembled
                 ? `file://${orb.facesDir}/horns/${face.frame}.png`
                 : `file://${orb.facesDir}/${orb.face}/${face.frame}.png`
             sourceSize: Qt.size(160, 160)
@@ -149,9 +185,9 @@ Item {
 
             Image {
                 anchors.fill: parent
-                visible: orb.lipSync
+                visible: orb.assembled
                 // the eyes boil with the horns: same frame number, four takes each
-                source: orb.lipSync ? `file://${orb.facesDir}/eyes/${orb.blinking ? "closed" : orb.eyeLook}/${face.frame}.png` : ""
+                source: orb.assembled ? `file://${orb.facesDir}/eyes/${orb.shownEyes}/${face.frame}.png` : ""
                 sourceSize: Qt.size(160, 160)
                 fillMode: Image.PreserveAspectFit
                 smooth: true
@@ -161,8 +197,8 @@ Item {
 
             Image {
                 anchors.fill: parent
-                visible: orb.lipSync
-                source: orb.lipSync ? `file://${orb.facesDir}/mouths/${orb.mouthShape}/${orb.mouthTake}.png` : ""
+                visible: orb.assembled
+                source: orb.assembled ? `file://${orb.facesDir}/mouths/${orb.shownMouth}/${orb.mouthTake}.png` : ""
                 sourceSize: Qt.size(160, 160)
                 fillMode: Image.PreserveAspectFit
                 smooth: true
@@ -218,7 +254,7 @@ Item {
 
                 interval: 2000 + Math.random() * 4000
                 repeat: true
-                running: orb.lipSync && orb.visible
+                running: orb.assembled && orb.visible
                 onTriggered: {
                     blinkClock.interval = 2000 + Math.random() * 4000;
                     blink.start();
@@ -230,6 +266,46 @@ Item {
 
                 interval: 130
                 onRunningChanged: orb.blinking = blink.running
+            }
+
+            // Glances: every few seconds the eyes leave the resting look for a moment. Holding
+            // out a card he looks at it most of the time, then back at Marcus.
+            Timer {
+                id: glanceClock
+
+                interval: 1800 + Math.random() * 3200
+                repeat: true
+                running: orb.assembled && !orb.lipSync && orb.visible
+                onTriggered: {
+                    glanceClock.interval = 1800 + Math.random() * 3200;
+                    const toCard = orb.cardSide !== "" && orb.face === "proud";
+                    const options = toCard ? [`glance-${orb.cardSide}`] : (orb.act?.glances ?? []);
+                    if (options.length === 0 || (!toCard && Math.random() < 0.35))
+                        return;
+                    orb.glance = options[Math.floor(Math.random() * options.length)];
+                    glanceBack.interval = toCard ? 1400 + Math.random() * 1600 : 500 + Math.random() * 600;
+                    glanceBack.restart();
+                }
+            }
+
+            Timer {
+                id: glanceBack
+
+                onTriggered: orb.glance = ""
+            }
+
+            Timer {
+                interval: 95 + Math.random() * 50
+                repeat: true
+                running: orb.babbling && orb.visible
+                onTriggered: {
+                    const shapes = ["open", "mid", "ee", "oo", "l", "rest", "mid", "open"];
+                    let next = shapes[Math.floor(Math.random() * shapes.length)];
+                    if (next === orb.mouthShape)
+                        next = "mid";
+                    orb.mouthTake = 1 + Math.floor(Math.random() * 3);
+                    orb.mouthShape = next;
+                }
             }
 
             // The boil: a new frame every 250 ms while he is awake, slower while he sleeps.

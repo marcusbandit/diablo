@@ -520,6 +520,8 @@ ShellRoot {
                     dictating: !!root.ears.dictation
                     thinkingBehind: root.busy
                     presenting: (root.cardsUp || root.panelOpen) && !root.awake && !root.busy
+                    // He looks at the card he holds out: which side of him its middle is on.
+                    cardSide: !cards.showing ? "" : (cards.x + cards.width / 2 < group.x + orbBox.width / 2 ? "left" : "right")
                     moment: root.moment
                     mouthTrack: root.mouthTrack
                     facesDir: `${Quickshell.shellDir}/../assets/faces`
