@@ -68,6 +68,14 @@ line boils, every 700 ms while he sleeps) on a small dark disc, tinted by what h
 | delighted / sorry / relieved, for under two seconds | it worked / it failed / he went back |
 | worried or resting, pink | the ears are untrained or off |
 
+He acts in every awake state, not only while a measured line plays: the face is drawn from
+the horns, his eyes (`assets/faces/eyes/<look>`) and his mouth, with blinks every few seconds and
+small glances (`Orb.acts`, one entry per face: the eyes and mouth it rests on, the glances it
+makes). Listening has wide eyes, thinking a thinking look that glances side to side, holding out
+a card he looks at it, and the moments (delighted, sorry, relieved, surprised, confused) get
+their own eyes and mouth. Speech with no measured track still moves the mouth, a shape every
+tenth of a second. Asleep, resting and the wink keep their whole hand-drawn mood.
+
 While he speaks, the talking face is assembled from three of Marcus's drawings: the horns
 (`assets/faces/horns`), the eyes and brows for the clause he is saying (`assets/faces/eyes/<look>`)
 and the mouth for the sound he is saying that instant (`assets/faces/mouths/<shape>/1-3.png`).

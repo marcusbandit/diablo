@@ -30,6 +30,10 @@ Window {
         "orb-listening": { mood: "listening", at: [240, 180], cards: [] },
         "orb-thinking": { mood: "thinking", at: [240, 180], cards: [] },
         "orb-speaking": { mood: "speaking", at: [240, 180], cards: [] },
+        "act-speaking": { mood: "speaking", at: [240, 180], cards: [], track: true },
+        "act-surprised": { mood: "asleep", moment: "surprised", at: [240, 180], cards: [] },
+        "act-sorry": { mood: "asleep", moment: "sorry", at: [240, 180], cards: [] },
+        "act-delighted": { mood: "asleep", moment: "delighted", at: [240, 180], cards: [] },
         "card-below": { mood: "asleep", at: [240, 120], cards: [{ id: "a", title: "Weather", big: "7°", lines: ["cloudy, feels like 4°"] }] },
         "card-above": { mood: "asleep", at: [240, 420], cards: [{ id: "a", title: "Weather", big: "7°", lines: ["cloudy, feels like 4°"] }] },
         "card-right-edge": { mood: "asleep", at: [700, 160], cards: [{ id: "a", title: "Next bus", big: "5 min", lines: ["then 20 min"] }] },
@@ -60,7 +64,11 @@ Window {
             style: theme
             facesDir: win.faces
             mood: win.s.mood
+            moment: win.s.moment ?? ""
             presenting: (win.cardsUp || win.panelScene) && !win.awake
+            // A measured line in progress: one mouth shape and a look, the way voice/mouth.py writes them.
+            mouthTrack: win.s.track ? { start: Date.now() / 1000 - 0.5, duration: 30, cues: [[0, "open"], [0.4, "ee"], [60, "rest"]],
+                eyes: [[0, "happy"], [60, "neutral"]] } : { start: 0, duration: 0, cues: [] }
         }
 
         Item {
