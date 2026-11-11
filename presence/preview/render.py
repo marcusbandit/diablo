@@ -35,8 +35,10 @@ def render(scene, out):
         "sys.exit(3 if bad else code)\n"
     )
     argv = [sys.executable, "-c", code, "--", scene, str(out), str(ROOT / "assets/faces"), f"http://127.0.0.1:{PORT}"]
-    # The rhi backend, or the MultiEffect that tints his face draws nothing offscreen.
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="rhi")
+    # The rhi backend, or the MultiEffect that tints his face draws nothing offscreen. A machine
+    # with no GPU (CI) sets PRESENCE_SOFTWARE=1: everything draws, the face just goes untinted.
+    backend = "software" if os.environ.get("PRESENCE_SOFTWARE") else "rhi"
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND=backend)
     return subprocess.run(argv, env=env, timeout=40).returncode
 
 
@@ -61,7 +63,7 @@ def main():
                 ears.wait()
         ok = code == 0 and path.exists()
         failed += not ok
-        print(("ok   " if ok else "FAIL ") + str(path))
+        print(("ok   " if ok else f"FAIL (exit {code}) ") + str(path), flush=True)
     sys.exit(1 if failed else 0)
 
 
