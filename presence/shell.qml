@@ -341,6 +341,12 @@ ShellRoot {
         Connections {
             target: root
 
+            // The last card gone: back beside the cursor, even if it has not moved since.
+            function onCardsUpChanged() {
+                if (!root.cardsUp)
+                    follow.anchor = root.cursor;
+            }
+
             function onCursorChanged() {
                 if (!root.cardsUp) {
                     follow.anchor = root.cursor;
@@ -512,7 +518,7 @@ ShellRoot {
             y: cards.spot.y
             width: 300
             height: cardColumn.implicitHeight
-            visible: root.cardsUp || grow.scale > 0.05
+            visible: root.cardsUp || grow.xScale > 0.05
             opacity: root.cardsUp ? 1 : 0
 
             Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
