@@ -148,6 +148,15 @@ class RestartIn(BaseModel):
     dry_run: bool = False
 
 
+class ScreenIn(BaseModel):
+    title: str = ""
+    big: str = ""
+    lines: list[str] = []
+    html: str = ""
+    size: str = "small"
+    ttl: float = 0
+
+
 class EarsReportIn(BaseModel):
     state: str
     detail: str = ""
@@ -1346,6 +1355,36 @@ async def t3_refresh(_: None = Depends(require_token)):
     report = await asyncio.to_thread(t3link.refresh, True)
     await brains.restart_all()
     return {"report": report}
+
+
+@app.post("/v1/screen")
+async def screen(body: ScreenIn, caller: dict = Depends(require_token)):
+    """Shows something on Marcus's desktop, beside Diablo's orb: a small card, or the central
+    card for size "large". It goes out as a `screen` event; presence/busy.py on the desktop
+    writes it where the orb reads it. No desktop listening means nobody sees it."""
+    if not caller.get("master"):
+        raise HTTPException(status_code=403, detail="only the hub token may show things on screen")
+    card = screen_card(body)
+    if isinstance(card, str):
+        raise HTTPException(status_code=400, detail=card)
+    publish({"kind": "screen", "card": card, "size": card.pop("size")})
+    return {"ok": True, "id": card["id"]}
+
+
+def screen_card(body):
+    """The card as the desktop gets it, or the reason it cannot be shown."""
+    import uuid
+
+    size = body.size if body.size in ("small", "large") else "small"
+    lines = [str(line)[:600] for line in body.lines if str(line).strip()][:12]
+    html = body.html or ""
+    if html and len(html.encode("utf-8")) > agent.HTML_LIMIT:
+        return f"the page is over {agent.HTML_LIMIT // 1024} KB"
+    if not (body.title.strip() or body.big.strip() or lines or html.strip()):
+        return "nothing to show: give a title, a big figure, lines or html"
+    ttl = body.ttl if body.ttl > 0 else (60.0 if html else max(10.0, min(60.0, 6 + sum(len(x) for x in lines) / 14)))
+    return {"id": uuid.uuid4().hex[:10], "kind": "shown", "title": body.title.strip()[:60], "big": body.big.strip()[:24],
+            "lines": lines, "html": html, "ttl": min(ttl, 3600.0), "size": size}
 
 
 @app.post("/v1/restart")

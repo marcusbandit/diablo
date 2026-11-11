@@ -7,6 +7,10 @@ so the orb can tell a quiet hub from a lost one. When the hub cannot be reached 
 {"turns": [], "lost": true} and tries again, so a dropped link never leaves the orb busy.
 
 Standard library only: the system python runs it, no venv.
+
+It also carries what the brain shows on screen (`screen` events from POST /v1/screen): a small
+card goes into presence.json beside the ears' own cards, a large one opens the central card
+through panel.json, and an HTML page is saved under pages/ for the web view to load.
 """
 
 import json
@@ -19,6 +23,9 @@ import urllib.request
 from pathlib import Path
 
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")) / "diablo" / "config.toml"
+STATE = Path(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")) / "diablo"
+KEEP_CARDS = 3
+KEEP_PAGES = 20
 PING_S = 10
 RETRY_S = 3
 RECHECK_S = 30
@@ -47,6 +54,53 @@ def say(body):
 def shown(event):
     return {"turns": [{"words": turn.get("words") or "thinking", "origin": turn.get("origin", ""), "since": turn.get("since", 0)}
                       for turn in event.get("turns") or [] if isinstance(turn, dict)]}
+
+
+def write_json(path, body):
+    STATE.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(body))
+    tmp.replace(path)
+
+
+def read_json(path, fallback):
+    try:
+        body = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return fallback
+    return body if isinstance(body, dict) else fallback
+
+
+def save_page(card_id, html):
+    """The page as a file the web view loads; only the newest KEEP_PAGES stay."""
+    pages = STATE / "pages"
+    pages.mkdir(parents=True, exist_ok=True)
+    path = pages / f"{card_id}.html"
+    path.write_text(html)
+    old = sorted(pages.glob("*.html"), key=lambda p: p.stat().st_mtime)[:-KEEP_PAGES]
+    for stale in old:
+        stale.unlink(missing_ok=True)
+    return str(path)
+
+
+def show(event, now=None):
+    """A `screen` event onto the desktop: small into presence.json, large into panel.json."""
+    card = dict(event.get("card") or {})
+    if not card.get("id"):
+        return None
+    now = time.time() if now is None else now
+    html = card.pop("html", "") or ""
+    if html:
+        card["page"] = save_page(str(card["id"]), html)
+    card["at"] = now
+    if event.get("size") == "large":
+        panel = read_json(STATE / "panel.json", {})
+        write_json(STATE / "panel.json", {**panel, "open": True, "view": "now", "card": card, "at": now})
+        return "large"
+    cards = [c for c in read_json(STATE / "presence.json", {"cards": []}).get("cards") or []
+             if isinstance(c, dict) and now < float(c.get("at") or 0) + float(c.get("ttl") or 10)]
+    write_json(STATE / "presence.json", {"cards": (cards + [card])[-KEEP_CARDS:]})
+    return "small"
 
 
 def ask(base, headers):
@@ -82,6 +136,11 @@ def follow(cfg):
                         continue
                     if isinstance(event, dict) and event.get("kind") == "busy":
                         say(shown(event))
+                    elif isinstance(event, dict) and event.get("kind") == "screen":
+                        try:
+                            show(event)
+                        except OSError as error:
+                            sys.stderr.write(f"screen: {error}\n")
     finally:
         done.set()
 
