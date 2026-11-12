@@ -87,10 +87,21 @@ KINDS = {
 SPOKEN_ON = "spoken aloud on {host}, transcribed by Whisper, the reply is spoken aloud"
 
 
+def clean_host(host):
+    """A box name as the tailnet knows it: lower case, short name, nothing but name characters."""
+    return re.sub(r"[^\w-]", "", str(host or "").strip().lower().split(".")[0])[:40]
+
+
+def desk_host():
+    from . import lockguard
+
+    return clean_host(lockguard.host()) or "banditbox"
+
+
 def voice_kind(host=""):
-    """The spoken kind for the box whose ears heard it; banditbox, or no box named, is his desk."""
-    host = re.sub(r"[^\w.-]", "", str(host or "").strip().lower())[:40]
-    return KINDS["voice"] if not host or host == "banditbox" else SPOKEN_ON.format(host=host)
+    """The spoken kind for the box whose ears heard it; the desk box, or no box named, is his desk."""
+    host = clean_host(host)
+    return KINDS["voice"] if not host or host == desk_host() else SPOKEN_ON.format(host=host)
 
 
 def origin_for(caller, source, host=""):

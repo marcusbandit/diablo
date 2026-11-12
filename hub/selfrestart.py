@@ -5,7 +5,7 @@ import os
 import signal
 import time
 
-from . import brains, db, settings, t3link
+from . import brains, db, devices, settings, t3link
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,7 @@ LAST_KEY = "restart.last_at"
 ANNOUNCE_KEY = "restart.announce"
 DEFAULT_INTERVAL_S = 300
 EARS_FRESH_S = 60
+KNOWN_EARS_S = 600
 SAFE_EARS = {"asleep", "untrained", "off"}
 SETTLE_S = 5.0
 WAIT_S = 180.0
@@ -32,18 +33,30 @@ def report_ears(state, detail="", host=""):
     """banditbox's ears fill the one slot the safety check has always read; ears on any other box
     get their own, which only counts while it is fresh, so a laptop that went to sleep never blocks."""
     entry = dict(state=str(state or "").strip().lower() or None, detail=str(detail or "")[:120], at=time.time())
-    host = str(host or "").strip().lower()
-    if host and host != "banditbox":
-        _elsewhere[host[:40]] = entry
+    host = devices.clean_host(host)
+    if host and host != devices.desk_host():
+        if host not in _elsewhere and len(_elsewhere) >= 16:
+            oldest = min(_elsewhere, key=lambda name: _elsewhere[name]["at"])
+            _elsewhere.pop(oldest, None)
+        _elsewhere[host] = entry
     else:
         _ears.update(entry)
 
 
-def ears_elsewhere(now=None):
-    """{host: state} for ears on other boxes that reported lately and are not quiet."""
+def ears_elsewhere(now=None, busy=None):
+    """{host: state} for ears on other boxes that reported lately and are not quiet. With busy, only
+    those states count, the way the desk ears' own check reads them."""
     now = time.time() if now is None else now
     return {host: e["state"] for host, e in list(_elsewhere.items())
-            if e["state"] and e["state"] not in SAFE_EARS and now - e["at"] <= EARS_FRESH_S}
+            if e["state"] and now - e["at"] <= EARS_FRESH_S
+            and (e["state"] in busy if busy is not None else e["state"] not in SAFE_EARS)}
+
+
+def ears_known(host, now=None):
+    """Whether ears on that box have reported in the last ten minutes, so a turn may say it came from there."""
+    entry = _elsewhere.get(devices.clean_host(host))
+    now = time.time() if now is None else now
+    return bool(entry) and entry["state"] != "off" and now - entry["at"] <= KNOWN_EARS_S
 
 
 def ears_view():

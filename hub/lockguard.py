@@ -131,8 +131,10 @@ def probe(run=subprocess.run, target=None):
 
 def screen(now=None, run=subprocess.run, target=None):
     now = time.monotonic() if now is None else now
-    target = str(target or "").strip()
+    target = str(target or "").strip().lower().split(".")[0]
     with _cache_lock:
+        if target and target != host() and target not in _elsewhere and len(_elsewhere) >= 16:
+            _elsewhere.clear()
         cache = _cache if not target or target == host() else _elsewhere.setdefault(target, {"at": 0.0, "screen": ""})
         if cache["screen"] and now - cache["at"] <= CACHE_SECONDS:
             return cache["screen"]
@@ -142,7 +144,14 @@ def screen(now=None, run=subprocess.run, target=None):
     return found
 
 
-SPOKEN_ON = re.compile(r"spoken aloud on ([\w.-]+), ")
+def _spoken_on():
+    from .devices import SPOKEN_ON
+
+    head, _, tail = SPOKEN_ON.partition("{host}")
+    return re.compile(re.escape(head) + r"([\w-]+)" + re.escape(tail))
+
+
+SPOKEN_ON = _spoken_on()
 
 
 def host_of(origin):

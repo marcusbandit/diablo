@@ -270,6 +270,11 @@ def _view(wait):
     return rows, first, order(values)
 
 
+def last_backend():
+    with _lock:
+        return _last["backend"]
+
+
 def active():
     try:
         return _view(False)[1]

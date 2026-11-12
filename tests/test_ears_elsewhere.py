@@ -93,6 +93,30 @@ class EarsTest(unittest.TestCase):
         self.assertEqual(selfrestart.ears_reasons(), [])
 
 
+class VoiceHostTest(unittest.TestCase):
+    def setUp(self):
+        from hub import server
+
+        self.server = server
+        selfrestart._elsewhere.clear()
+        self.addCleanup(selfrestart._elsewhere.clear)
+
+    def test_a_box_whose_ears_report_is_believed(self):
+        selfrestart.report_ears("asleep", host="Laptop-One.example.com")
+        self.assertEqual(self.server.voice_host({"master": True}, "laptop-one"), "laptop-one")
+
+    def test_a_box_with_no_ears_is_ignored(self):
+        self.assertEqual(self.server.voice_host({"master": True}, "laptop-one"), "")
+
+    def test_a_device_token_cannot_name_a_box(self):
+        selfrestart.report_ears("asleep", host="laptop-one")
+        self.assertEqual(self.server.voice_host({"master": False, "device": {"id": 1}}, "laptop-one"), "")
+
+    def test_ears_that_said_off_are_not_believed(self):
+        selfrestart.report_ears("off", host="laptop-one")
+        self.assertEqual(self.server.voice_host({"master": True}, "laptop-one"), "")
+
+
 class HubSttTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -143,7 +167,7 @@ class HubEndpointTest(unittest.TestCase):
 
     def test_transcribes_the_body(self):
         with mock.patch.object(self.server.stt, "transcribe", return_value=("hello", "en")) as done, \
-                mock.patch.object(self.server.stt, "active", return_value="local"):
+                mock.patch.object(self.server.stt, "last_backend", return_value="local"):
             answer = self.client.post("/v1/stt", content=b"RIFFdata", headers={"Content-Type": "audio/wav"})
         self.assertEqual(answer.status_code, 200)
         self.assertEqual(answer.json(), {"text": "hello", "language": "en", "backend": "local"})
@@ -153,6 +177,10 @@ class HubEndpointTest(unittest.TestCase):
         with mock.patch.object(self.server.stt, "transcribe", side_effect=self.server.stt.TranscriptionError("all down")):
             answer = self.client.post("/v1/stt", content=b"RIFFdata")
         self.assertEqual(answer.status_code, 503)
+
+    def test_a_huge_declared_body_is_refused_before_reading(self):
+        with mock.patch.object(self.server, "STT_MAX_BYTES", 4):
+            self.assertEqual(self.client.post("/v1/stt", content=b"RIFFdata").status_code, 413)
 
     def test_empty_body_is_refused(self):
         self.assertEqual(self.client.post("/v1/stt", content=b"").status_code, 400)

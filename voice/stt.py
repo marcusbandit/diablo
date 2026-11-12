@@ -58,7 +58,6 @@ def transcribe_file(path, cfg):
 
 def transcribe_via_hub(path, cfg):
     data = Path(path).read_bytes()
-    last_error = None
     for attempt in range(2):
         try:
             response = httpx.post(
@@ -66,17 +65,15 @@ def transcribe_via_hub(path, cfg):
                 headers={"X-Diablo-Token": cfg.get("hub_token", ""), "Content-Type": "audio/wav",
                          "X-Filename": Path(path).name},
                 content=data,
-                timeout=httpx.Timeout(60, connect=4),
+                timeout=httpx.Timeout(45, connect=4),
             )
-            response.raise_for_status()
-            return str(response.json().get("text", "")).strip()
-        except (httpx.TransportError, httpx.HTTPStatusError) as error:
-            last_error = error
-            if isinstance(error, httpx.HTTPStatusError) and error.response.status_code < 500:
-                break
-            if attempt == 0:
-                time.sleep(0.5)
-    raise last_error
+        except httpx.ConnectError:
+            if attempt:
+                raise
+            time.sleep(0.5)
+            continue
+        response.raise_for_status()
+        return str(response.json().get("text", "")).strip()
 
 
 def dictation_status(cfg, timeout=1.0):
