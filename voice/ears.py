@@ -1205,7 +1205,7 @@ def speaker_ok(audio, cfg, slack=0.0):
     return score >= minimum - slack, score
 
 
-def talk_ok(audio, cfg):
+def talk_ok(audio, cfg, slack=0.0):
     """(passed, score) for the request, against the print from his dictations."""
     if str(cfg.get("ears_speaker_check", "1")).lower() in ("0", "false", "no", "off"):
         return True, None
@@ -1215,7 +1215,24 @@ def talk_ok(audio, cfg):
     score = wake.talk_score(audio)
     if score is None:
         return True, None
-    return score >= minimum, score
+    return score >= minimum - slack, score
+
+
+# Music in the mic drags his voiceprint down: wakes with Spotify on scored 0.753 and 0.738
+# against a 0.754 minimum (2026-11-11). While the speakers carry sound, both voice checks get
+# the barge-in slack, since the clip is him mixed with that sound; the speaker tap still
+# refuses a name that came out of the speakers. MUSIC_RMS is well under music at any
+# listening level (0.16 with Spotify on) and over a silent sink.
+MUSIC_RMS = 0.01
+
+
+def sound_slack(tap, since=None, until=None, seconds=2.0):
+    """BARGE_SLACK when the speakers played sound in the window, else 0."""
+    try:
+        loud = tap is not None and tap.level(seconds=seconds, since=since, until=until) >= MUSIC_RMS
+    except Exception:
+        loud = False
+    return BARGE_SLACK if loud else 0.0
 
 
 def notify_untrained():
@@ -1276,7 +1293,7 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
         chime.play("never")
         return False
     checked = time.monotonic()
-    ok, voice = talk_ok(audio, cfg)
+    ok, voice = talk_ok(audio, cfg, slack=sound_slack(tap, seconds=len(audio) / wake.RATE + 0.5))
     tl.mark("voice_ok")
     tl.note(voice_check_ms=round((time.monotonic() - checked) * 1000))
     if not ok:
@@ -1376,7 +1393,7 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
         tl.note(outcome="ignored, dictating")
         return None
     checked = time.monotonic()
-    ok, voice = talk_ok(audio, cfg)
+    ok, voice = talk_ok(audio, cfg, slack=sound_slack(tap, seconds=len(audio) / wake.RATE + 0.5))
     tl.mark("voice_ok")
     tl.note(voice_check_ms=round((time.monotonic() - checked) * 1000))
     if not ok:
@@ -1757,7 +1774,8 @@ def loop(mic, settings, speaker, vad, controller, ears, reload, live, cfg, dicta
             detector.reset()
             continue
         checks["echo"] = time.monotonic()
-        ok, voice = speaker_ok(np.concatenate(history[-20:]), settings.get())
+        ok, voice = speaker_ok(np.concatenate(history[-20:]), settings.get(),
+                               slack=sound_slack(tap, since=stamp - 2.0, until=stamp + 0.5))
         checks["voiceprint"] = time.monotonic()
         if not ok:
             log.info("wake %.3f refused, voice %.3f", score, voice)

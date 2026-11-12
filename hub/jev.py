@@ -276,6 +276,21 @@ def desktop_questions(desktop):
     }
 
 
+# Whisper over music writes "play Spotify" as "Chase, Spotify." (2026-11-13). Told how the
+# line was heard and whether each player plays, Jev reads that as play: 0.45 to 0.71 in a probe.
+HEARD = ("He said it out loud and Whisper wrote it down, often over music, so a word can come out wrong:"
+         " a short line naming a player or the music with one odd word in front (Chase, Pulse, Pace, Lay,"
+         " Place, Paws) is almost always play or pause.")
+
+
+def desktop_note(desktop):
+    """How the line was heard and what each player is doing, for Jev's state."""
+    status = (desktop or {}).get("status") or {}
+    playing = [f"{str(name).split('.')[0]} is {state}" for name, state in status.items()
+               if isinstance(state, str) and state][:PLAYERS_MAX]
+    return HEARD + (" Players now: " + ", ".join(playing) + "." if playing else "")
+
+
 def refers_criteria(labels):
     criteria = {"none": "a fresh line, not about anything on the card"}
     for label in labels:
@@ -315,7 +330,7 @@ def control(text, desktop, timeout=None):
         return None
     questions = desktop_questions(desktop)
     recent = [" ".join(str(r).split())[:90] for r in (desktop or {}).get("recent") or [] if str(r).strip()][-4:]
-    state = "Marcus is driving his computer by voice."
+    state = "Marcus is driving his computer by voice. " + desktop_note(desktop)
     if recent:
         state += " Just before this, Diablo did, oldest first: " + "; ".join(recent) + "."
     state += " New line he said: " + str(text)[:600]

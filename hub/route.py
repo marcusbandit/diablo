@@ -623,7 +623,7 @@ def desktop_action(answer, text, desktop):
     """The desktop command for the ears to run, or None when the line is not plainly one.
 
     Jev must be sure enough of the command (route.desktop_threshold 0.8 to close a window, a tab or press enter,
-    route.desktop_light_threshold 0.6 for the rest), the line short, and the
+    route.desktop_light_threshold 0.6 for the rest), the line short unless it is music or sound, and the
     target clear: a named window jev is unsure of, or a workspace with no number, goes
     to Claude instead of a guess.
     """
@@ -639,7 +639,9 @@ def desktop_action(answer, text, desktop):
             else _threshold("route.desktop_light_threshold", 0.6))
     if answer.get("desktop_confidence", 0) < sure:
         return None
-    if len(str(text or "").split()) > DESKTOP_WORDS:
+    # A long line is usually more than one command, but music and sound are not: "play anything
+    # on Spotify, just press play" is still only play, and Jev sure of it is enough.
+    if len(str(text or "").split()) > DESKTOP_WORDS and action not in DESKTOP_MEDIA + DESKTOP_SOUND:
         return None
     act = {"kind": "desktop", "action": action}
     if action in DESKTOP_WINDOW:

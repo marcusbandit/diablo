@@ -354,10 +354,35 @@ def desktop_state():
             "focused": c["address"] == focus,
         })
     windows.sort(key=lambda w: not w["focused"])
-    ok, out = _run(["playerctl", "-l"], timeout=2.0)
-    if ok:
-        players = [line.strip() for line in out.splitlines() if PLAYER.match(line.strip())]
-    return {"windows": windows[:WINDOWS_MAX], "players": players[:8]}
+    status = player_status()
+    players = list(status)
+    if not players:
+        ok, out = _run(["playerctl", "-l"], timeout=2.0)
+        if ok:
+            players = [line.strip() for line in out.splitlines() if PLAYER.match(line.strip())]
+    return {"windows": windows[:WINDOWS_MAX], "players": players[:8], "status": status}
+
+
+def player_status():
+    """{player: "playing" | "paused" | "stopped"}, one playerctl call for all of them. A player
+    Diablo's own hold paused while he listens counts as playing: that is what Marcus hears
+    as he speaks, and "Chase, Spotify" over a playing song is pause, over a paused one play."""
+    ok, out = _run(["playerctl", "-a", "-f", "{{playerInstance}}\t{{status}}", "status"], timeout=2.0)
+    status = {}
+    for line in out.splitlines() if ok else []:
+        name, _, state = line.strip().partition("\t")
+        if PLAYER.match(name) and state:
+            status[name] = state.strip().lower()
+    try:
+        from . import speakers
+
+        held = {str(name).lower() for name in speakers._shared.paused}
+    except Exception:
+        held = set()
+    for name in status:
+        if name.split(".")[0].lower() in held:
+            status[name] = "playing"
+    return dict(list(status.items())[:8])
 
 
 def _focus(address):
