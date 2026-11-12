@@ -30,6 +30,10 @@ def is_noise(text):
 
 
 def transcribe_file(path, cfg):
+    """The words in a wav. stt_via gvoice asks the dictation daemon on this box; hub sends the clip
+    to the hub, which hands it to diablo-stt on banditbox, or Groq when banditbox is asleep."""
+    if str(cfg.get("stt_via") or "gvoice").strip().lower() == "hub":
+        return transcribe_via_hub(path, cfg)
     token = Path(cfg["gvoice_token_path"]).read_text().strip()
     base = cfg["gvoice_base"].rstrip("/")
     last_error = None
@@ -50,6 +54,26 @@ def transcribe_file(path, cfg):
             if attempt < 2:
                 time.sleep(1.2)
     raise last_error
+
+
+def transcribe_via_hub(path, cfg):
+    data = Path(path).read_bytes()
+    for attempt in range(2):
+        try:
+            response = httpx.post(
+                f"{cfg['hub_url'].rstrip('/')}/v1/stt",
+                headers={"X-Diablo-Token": cfg.get("hub_token", ""), "Content-Type": "audio/wav",
+                         "X-Filename": Path(path).name},
+                content=data,
+                timeout=httpx.Timeout(45, connect=4),
+            )
+        except httpx.ConnectError:
+            if attempt:
+                raise
+            time.sleep(0.5)
+            continue
+        response.raise_for_status()
+        return str(response.json().get("text", "")).strip()
 
 
 def dictation_status(cfg, timeout=1.0):

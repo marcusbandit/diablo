@@ -7,6 +7,7 @@ DEFAULTS = {
     "hub_token": "",
     "gvoice_base": "http://127.0.0.1:8756",
     "gvoice_token_path": "~/.local/share/gvoice/token",
+    "stt_via": "gvoice",
     "mic_device": "",
     "sample_rate": 16000,
     "silero_path": "~/.local/share/diablo/silero_vad.onnx",

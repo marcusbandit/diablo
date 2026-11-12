@@ -57,6 +57,7 @@ SAFE_T3 = {
 }
 
 _cache = {"at": 0.0, "screen": ""}
+_elsewhere = {}
 _cache_lock = threading.Lock()
 
 
@@ -66,14 +67,16 @@ class Guard:
     screen: str = ""
     restricted: bool = False
     origin: str = ""
+    host: str = ""
 
     @property
     def line(self):
         if not self.kind:
             return ""
+        where = self.host or "banditbox"
         if self.screen == "unknown" and self.restricted:
-            return "[banditbox screen: unknown, treated as locked]"
-        return f"[banditbox screen: {self.screen}]"
+            return f"[{where} screen: unknown, treated as locked]"
+        return f"[{where} screen: {self.screen}]"
 
 
 def parse(output):
@@ -108,11 +111,11 @@ def host():
         return "banditbox"
 
 
-def probe(run=subprocess.run):
-    """Ask banditbox now. Never raises; a failure is unknown."""
+def probe(run=subprocess.run, target=None):
+    """Ask the box now, banditbox unless another is named. Never raises; a failure is unknown."""
     import socket
 
-    target = host()
+    target = target or host()
     if socket.gethostname() == target:
         argv = ["bash", "-c", PROBE]
     else:
@@ -126,15 +129,35 @@ def probe(run=subprocess.run):
     return parse(done.stdout)
 
 
-def screen(now=None, run=subprocess.run):
+def screen(now=None, run=subprocess.run, target=None):
     now = time.monotonic() if now is None else now
+    target = str(target or "").strip().lower().split(".")[0]
     with _cache_lock:
-        if _cache["screen"] and now - _cache["at"] <= CACHE_SECONDS:
-            return _cache["screen"]
-    found = probe(run)
+        if target and target != host() and target not in _elsewhere and len(_elsewhere) >= 16:
+            _elsewhere.clear()
+        cache = _cache if not target or target == host() else _elsewhere.setdefault(target, {"at": 0.0, "screen": ""})
+        if cache["screen"] and now - cache["at"] <= CACHE_SECONDS:
+            return cache["screen"]
+    found = probe(run, target or None)
     with _cache_lock:
-        _cache.update(at=now, screen=found)
+        cache.update(at=now, screen=found)
     return found
+
+
+def _spoken_on():
+    from .devices import SPOKEN_ON
+
+    head, _, tail = SPOKEN_ON.partition("{host}")
+    return re.compile(re.escape(head) + r"([\w-]+)" + re.escape(tail))
+
+
+SPOKEN_ON = _spoken_on()
+
+
+def host_of(origin):
+    """The box a spoken turn came from, read off its origin; the lock host when it names none."""
+    found = SPOKEN_ON.match(" ".join(str(origin or "").split()))
+    return found.group(1) if found else host()
 
 
 def kind_of(origin):
@@ -146,7 +169,7 @@ def kind_of(origin):
     from .devices import KINDS
 
     text = " ".join(str(origin or "").split())
-    if text.startswith(KINDS["voice"]):
+    if text.startswith(KINDS["voice"]) or SPOKEN_ON.match(text):
         return "voice"
     desktop = KINDS["desktop"]
     if text.startswith(desktop):
@@ -167,11 +190,12 @@ def for_turn(origin, look=None):
         kind = kind_of(origin)
         if not kind:
             return Guard(origin=origin)
+        where = host_of(origin) if kind == "voice" else host()
         try:
-            found = (look or screen)()
+            found = look() if look else screen(target=where)
         except Exception:
             found = "unknown"
-        return Guard(kind=kind, screen=found, restricted=decide(kind, found), origin=origin)
+        return Guard(kind=kind, screen=found, restricted=decide(kind, found), origin=origin, host=where)
     except Exception:
         kind = ""
         try:
@@ -191,7 +215,7 @@ def arm(conv, guard):
     """Leave this turn's guard where the tool layers can read it. A restricted turn that cannot be armed fails."""
     path = state_path(conv)
     body = json.dumps({"restricted": guard.restricted, "screen": guard.screen, "kind": guard.kind,
-                       "origin": guard.origin[:160], "ts": time.time()})
+                       "origin": guard.origin[:160], "host": guard.host, "ts": time.time()})
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
@@ -248,9 +272,9 @@ def allowed(name, arguments=None):
     return True
 
 
-def reason(name, screen="locked"):
+def reason(name, screen="locked", where="banditbox"):
     shown = "locked" if screen != "unknown" else "of unknown state, so it counts as locked"
-    return (f"refused: banditbox's screen is {shown}, and turns from it may not use {name} until Marcus unlocks it. "
+    return (f"refused: {where or 'banditbox'}'s screen is {shown}, and turns from it may not use {name} until Marcus unlocks it. "
             "Tell him in a line that he needs to unlock first, or to ask from his phone or Telegram.")
 
 
@@ -272,7 +296,7 @@ def refusal(name, conv, where="hub", arguments=None):
     if not state.get("restricted") or allowed(name, arguments):
         return None
     log(name, state, where)
-    return reason(name, state.get("screen") or "locked")
+    return reason(name, state.get("screen") or "locked", state.get("host") or "banditbox")
 
 
 def hook_command(conv, root=None, python=None):

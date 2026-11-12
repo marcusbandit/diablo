@@ -1,4 +1,5 @@
 import logging
+import socket
 import threading
 
 import httpx
@@ -30,7 +31,7 @@ def report_ears(cfg, state, detail=""):
         response = httpx.post(
             f"{cfg['hub_url'].rstrip('/')}/v1/ears/report",
             headers=_headers(cfg),
-            json={"state": state, "detail": detail},
+            json={"state": state, "detail": detail, "host": socket.gethostname()},
             timeout=5,
         )
         response.raise_for_status()

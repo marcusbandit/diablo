@@ -471,7 +471,7 @@ class TestEarsClient(unittest.TestCase):
             self.assertTrue(hubclient.report_ears({"hub_url": "http://hub/", "hub_token": "tok"}, "speaking"))
         args, kwargs = post.call_args
         self.assertEqual(args[0], "http://hub/v1/ears/report")
-        self.assertEqual(kwargs["json"], {"state": "speaking", "detail": ""})
+        self.assertEqual(kwargs["json"], {"state": "speaking", "detail": "", "host": hubclient.socket.gethostname()})
         self.assertEqual(kwargs["headers"], {"X-Diablo-Token": "tok"})
 
     def test_a_down_hub_is_not_an_error(self):
