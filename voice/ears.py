@@ -20,6 +20,7 @@ import os
 import queue
 import re
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -560,7 +561,8 @@ def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None):
     players) lets Jev pick a plain desktop command, which comes back as "act"."""
     import base64
 
-    body = {"text": text, "section": "", "source": "voice", "client_id": f"ears-{uuid.uuid4()}"}
+    body = {"text": text, "section": "", "source": "voice", "client_id": f"ears-{uuid.uuid4()}",
+            "host": socket.gethostname()}
     recent = commands.recent_lines()
     if recent:
         # What he just had Diablo do by voice: "down to 40" after three quieters is the volume.
@@ -762,7 +764,7 @@ def control(cfg, text, desktop):
     response = httpx.post(
         f"{cfg['hub_url'].rstrip('/')}/v1/voice/control",
         headers={"X-Diablo-Token": cfg.get("hub_token", "")},
-        json={"text": text, "desktop": desktop},
+        json={"text": text, "desktop": desktop, "host": socket.gethostname()},
         timeout=10,
     )
     response.raise_for_status()
@@ -792,12 +794,12 @@ def note_control(tl, found):
 
 
 def locked():
-    """Whether banditbox's screen is locked, by the hub's own probe (it runs here, locally).
+    """Whether this box's screen is locked, by the hub's own probe run here, locally.
     A voice in the room must not drive a locked desktop; unknown counts as locked, as the hub does."""
     try:
         from hub import lockguard
 
-        return lockguard.enabled() and lockguard.decide("voice", lockguard.screen())
+        return lockguard.enabled() and lockguard.decide("voice", lockguard.screen(target=socket.gethostname()))
     except Exception:
         return False
 

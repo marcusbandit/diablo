@@ -25,6 +25,16 @@ text backend that takes the next voice note (`local`, `cloud`, or empty when non
 `{"order", "active", "backends": [{"name", "model", "healthy", "checked"}], "last": {"backend", "at"}}`.
 Both read cached health; `wait=true` checks first. docs/stt.md.
 
+`POST /v1/stt` with a token takes a clip as the raw body (a wav, or name it in `X-Filename`) and
+answers `{"text", "language", "backend"}`, transcribed the way voice notes are. Every backend down
+is a 503. Ears on a box without a GPU use it (`stt_via = "hub"`).
+
+Spoken turns carry `host` in `POST /v1/chat` and `POST /v1/voice/control`, the box whose ears heard
+them. Left out or `banditbox`, the origin stays his desk; any other box is named in the origin, and the
+lock guard asks that box whether its screen is locked. `POST /v1/ears/report` carries `host` too:
+banditbox's ears fill the slot the restart check always read, ears elsewhere count only while their
+last report is under a minute old.
+
 ## One memory, many sections
 
 Sections are places to talk, each with a focus: Diablo, Workout, Projects, Home. They share one

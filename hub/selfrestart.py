@@ -24,11 +24,26 @@ ANNOUNCE_MAX_AGE_S = 600
 OPEN_APPROVALS = ("pending", "held", "running")
 
 _ears = {"state": None, "detail": "", "at": 0.0}
+_elsewhere = {}
 _scheduled = {"conv": None, "task": None}
 
 
-def report_ears(state, detail=""):
-    _ears.update(state=str(state or "").strip().lower() or None, detail=str(detail or "")[:120], at=time.time())
+def report_ears(state, detail="", host=""):
+    """banditbox's ears fill the one slot the safety check has always read; ears on any other box
+    get their own, which only counts while it is fresh, so a laptop that went to sleep never blocks."""
+    entry = dict(state=str(state or "").strip().lower() or None, detail=str(detail or "")[:120], at=time.time())
+    host = str(host or "").strip().lower()
+    if host and host != "banditbox":
+        _elsewhere[host[:40]] = entry
+    else:
+        _ears.update(entry)
+
+
+def ears_elsewhere(now=None):
+    """{host: state} for ears on other boxes that reported lately and are not quiet."""
+    now = time.time() if now is None else now
+    return {host: e["state"] for host, e in list(_elsewhere.items())
+            if e["state"] and e["state"] not in SAFE_EARS and now - e["at"] <= EARS_FRESH_S}
 
 
 def ears_view():
@@ -71,6 +86,11 @@ def desktop_down():
 
 
 def ears_reasons():
+    return _desk_reasons() + [f"the ears on {host} are {state}, so he is speaking, being listened to or waiting for a reply"
+                              for host, state in sorted(ears_elsewhere().items())]
+
+
+def _desk_reasons():
     view = ears_view()
     state, age = view["state"], view["age"]
     if state is None or (state != "off" and age > EARS_FRESH_S):

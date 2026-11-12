@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from typing import Optional, Union
@@ -79,6 +80,8 @@ class ChatIn(BaseModel):
     # The ears ask for the answer as ndjson lines: {"say": ...} the moment his first line is
     # written on a spoken turn, then {"done": <the usual reply>} or {"error": ...} at the end.
     stream: bool = False
+    # The box whose ears heard a spoken turn; banditbox when left out.
+    host: str = ""
 
 
 CONTEXT_LINES, CONTEXT_CHARS = 12, 400
@@ -160,6 +163,7 @@ class ScreenIn(BaseModel):
 class EarsReportIn(BaseModel):
     state: str
     detail: str = ""
+    host: str = ""
 
 
 class ProfileIn(BaseModel):
@@ -284,6 +288,26 @@ async def busy_now(_: dict = Depends(require_token)):
 @app.get("/v1/stt")
 def stt_status(wait: bool = False, _: None = Depends(require_token)):
     return stt.status(wait=wait)
+
+
+STT_MAX_BYTES = 25 * 1024 * 1024
+
+
+@app.post("/v1/stt")
+async def stt_transcribe(request: Request, _: dict = Depends(require_token)):
+    """A clip from ears on another box, transcribed the way voice notes are: diablo-stt on banditbox
+    first, Groq when it is not up. The body is the audio itself, a wav unless X-Filename says otherwise."""
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty audio")
+    if len(data) > STT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="audio too long")
+    name = re.sub(r"[^\w.-]", "", request.headers.get("x-filename") or "") or "clip.wav"
+    try:
+        text, language = await asyncio.to_thread(stt.transcribe, data, name)
+    except stt.TranscriptionError as error:
+        raise HTTPException(status_code=503, detail=str(error))
+    return {"text": text, "language": language, "backend": stt.active()}
 
 
 @app.get("/v1/desktop/release")
@@ -513,7 +537,7 @@ async def run_chat(body, caller, picking=None, on_text=None):
             raise HTTPException(status_code=problem.status, detail=problem.detail)
     elif question is None and edited is None and not attached:
         found, choices = questions.match_reply(conv, text)
-        if found is not None and await may_answer(found, devices.origin_for(caller, source)):
+        if found is not None and await may_answer(found, devices.origin_for(caller, source, body.host)):
             try:
                 answering = questions.choose(found, choices, source=source)
             except questions.Problem:
@@ -535,7 +559,7 @@ async def run_chat(body, caller, picking=None, on_text=None):
     running = (section["id"], str(body.client_id)) if question is not None and body.client_id is not None else None
     if running:
         AGAIN_RUNNING.add(running)
-    origin, notes = devices.origin_for(caller, source), None
+    origin, notes = devices.origin_for(caller, source, body.host), None
     if section["id"] != sections.MAIN_ID:
         origin, notes = f"{origin}, section {section['name']}", [sections.note_for(section)]
     if edited is not None:
@@ -1412,6 +1436,7 @@ async def voice_threads(caller: dict = Depends(require_token)):
 class ControlIn(BaseModel):
     text: str
     desktop: Optional[dict] = None
+    host: str = ""
 
 
 @app.post("/v1/voice/control")
@@ -1428,7 +1453,7 @@ async def voice_control(body: ControlIn, caller: dict = Depends(require_token)):
     desktop = await with_threads(text, body.desktop)
     answer = await asyncio.to_thread(jev.control, text, desktop)
     act = route.desktop_action(answer, text, desktop) if answer else None
-    if act is not None and (await asyncio.to_thread(lockguard.for_turn, devices.origin_for(caller, "voice"))).restricted:
+    if act is not None and (await asyncio.to_thread(lockguard.for_turn, devices.origin_for(caller, "voice", body.host))).restricted:
         act = None
     return {"act": act, "jev_ms": (answer or {}).get("ms"), "hub_ms": round((time.time() - started) * 1000),
             "choice": (answer or {}).get("desktop"), "confidence": (answer or {}).get("desktop_confidence")}
@@ -1441,7 +1466,7 @@ def ears_report(body: EarsReportIn, caller: dict = Depends(require_token)):
     if body.state in ("waking", "listening"):
         # He is about to say something: have the thread list warm for "go to the ... thread".
         t3threads.voice_threads()
-    selfrestart.report_ears(body.state, body.detail)
+    selfrestart.report_ears(body.state, body.detail, body.host)
     return {"ok": True}
 
 
@@ -1540,7 +1565,7 @@ async def on_startup():
         asyncio.create_task(standby.run(MAIN_SOURCES))
         logger.warning("standby hub for %s: no Telegram bot, no T3 watchers", standby.primary_url())
         return
-    threads.busy = lambda: brains.any_busy() or selfrestart.ears_view()["state"] in ("waking", "listening", "thinking", "speaking")
+    threads.busy = lambda: brains.any_busy() or selfrestart.ears_view()["state"] in ("waking", "listening", "thinking", "speaking") or bool(selfrestart.ears_elsewhere())
     asyncio.create_task(threads.migrate())
     asyncio.create_task(watch.keep_links())
     asyncio.create_task(watch.run(deliver))

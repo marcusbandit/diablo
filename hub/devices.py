@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import re
 import secrets
 import socket
 import time
@@ -83,10 +84,20 @@ KINDS = {
 }
 
 
-def origin_for(caller, source):
-    """Which client and which device a message came from, for the per-turn bracket."""
+SPOKEN_ON = "spoken aloud on {host}, transcribed by Whisper, the reply is spoken aloud"
+
+
+def voice_kind(host=""):
+    """The spoken kind for the box whose ears heard it; banditbox, or no box named, is his desk."""
+    host = re.sub(r"[^\w.-]", "", str(host or "").strip().lower())[:40]
+    return KINDS["voice"] if not host or host == "banditbox" else SPOKEN_ON.format(host=host)
+
+
+def origin_for(caller, source, host=""):
+    """Which client and which device a message came from, for the per-turn bracket.
+    A spoken turn names the box whose ears heard it when that is not banditbox."""
     source = str(source or "").strip() or "fleet"
-    kind = KINDS.get(source, f"{source} app")
+    kind = voice_kind(host) if source == "voice" else KINDS.get(source, f"{source} app")
     device = (caller or {}).get("device") or {}
     name = str(device.get("name") or "").strip()
     return f"{kind} on {name}" if name else kind

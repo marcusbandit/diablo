@@ -8,6 +8,7 @@ Every path that turns Diablo's audio into words, and where its model runs.
 | Ears, wake then request (voice/ears.py) | the same gvoice daemon | the same |
 | Dictation checks (voice/dictation.py) | the same gvoice daemon | the same |
 | gvoice dictation itself | in process on banditbox | the same, two copies |
+| Ears on a box without a GPU, `stt_via = "hub"` in its config.toml | the hub, `POST /v1/stt`, which uses hub/stt.py below | diablo-stt on banditbox, or Groq when it is not up |
 | Wake word (voice/wake.py) | in process on banditbox | openWakeWord features and diablo.onnx, no transcript |
 | Telegram voice notes (hub/bot.py, hub/stt.py) | diablo-stt on banditbox, Groq when it is not up | large-v3-turbo int8_float16, or Groq whisper-large-v3-turbo |
 | Phone and desktop apps | they send text; neither records audio for transcription | none |
@@ -53,3 +54,11 @@ no swap and four cores. `DIABLO_STT_MODEL`, `_COMPUTE`, `_IDLE` and `_MIN_FREE_M
 ~/.config/diablo-stt/env change those.
 
 Install or update: `deploy/stt-install.sh`.
+
+## Ears on another box
+
+A laptop runs the same diablo-ears as banditbox, with `stt_via = "hub"` and the hub's machine token in
+~/.config/diablo/config.toml. The wake word, the recording, the reply and any desktop act stay on that
+box; only the clip goes to the hub, which hands it to diablo-stt on banditbox the way it does a voice
+note, so a sleeping banditbox costs a Groq call, not a failed turn. The turn names the box (`host`),
+so the brain knows where he was heard and the lock guard checks that box's screen.
