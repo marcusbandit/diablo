@@ -639,10 +639,14 @@ def desktop_action(answer, text, desktop):
             else _threshold("route.desktop_light_threshold", 0.6))
     if answer.get("desktop_confidence", 0) < sure:
         return None
-    # A long line is usually more than one command, but music and sound are not: "play anything
-    # on Spotify, just press play" is still only play, and Jev sure of it is enough.
-    if len(str(text or "").split()) > DESKTOP_WORDS and action not in DESKTOP_MEDIA + DESKTOP_SOUND:
-        return None
+    # A long line is usually more than one command, but a long music or sound line can be just
+    # one: "play anything on Spotify, just press play" is play. It needs Jev at the sure bar,
+    # since "pause Spotify and switch to Discord" must still go to Claude whole.
+    if len(str(text or "").split()) > DESKTOP_WORDS:
+        if action not in DESKTOP_MEDIA + DESKTOP_SOUND:
+            return None
+        if answer.get("desktop_confidence", 0) < _threshold("route.desktop_threshold", 0.8):
+            return None
     act = {"kind": "desktop", "action": action}
     if action in DESKTOP_WINDOW:
         windows = [w for w in desktop.get("windows") or [] if isinstance(w, dict)]

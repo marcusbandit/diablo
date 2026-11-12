@@ -285,9 +285,12 @@ HEARD = ("He said it out loud and Whisper wrote it down, often over music, so a 
 
 def desktop_note(desktop):
     """How the line was heard and what each player is doing, for Jev's state."""
-    status = (desktop or {}).get("status") or {}
-    playing = [f"{str(name).split('.')[0]} is {state}" for name, state in status.items()
-               if isinstance(state, str) and state][:PLAYERS_MAX]
+    status = {str(name): state for name, state in ((desktop or {}).get("status") or {}).items()
+              if isinstance(state, str) and state}
+    apps = [name.split(".")[0] for name in status]
+    # Short names read best; two instances of one app keep their full names to stay apart.
+    playing = [f"{name if apps.count(name.split('.')[0]) > 1 else name.split('.')[0]} is {state}"
+               for name, state in status.items()][:PLAYERS_MAX]
     return HEARD + (" Players now: " + ", ".join(playing) + "." if playing else "")
 
 

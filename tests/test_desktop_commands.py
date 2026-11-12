@@ -100,6 +100,8 @@ class TestDesktopAction(unittest.TestCase):
         self.assertEqual((act["action"], act["player"]), ("play", "spotify"))
         long = "could you please maybe turn the sound down a little bit because it is way too loud"
         self.assertEqual(route.desktop_action(answer("volume_down"), long, DESKTOP)["action"], "volume_down")
+        mixed = "could you pause spotify and then switch me over to the discord window please"
+        self.assertIsNone(route.desktop_action(answer("pause", conf=0.7), mixed, DESKTOP))
 
     def test_threshold_is_a_setting(self):
         with mock.patch.object(route.settings, "get", side_effect=lambda key: "0.5" if key == "route.desktop_threshold" else ""):
@@ -850,6 +852,8 @@ class TestHeardOverMusic(unittest.TestCase):
         self.assertIn("spotify is paused", note)
         self.assertIn("firefox is playing", note)
         self.assertNotIn("Players now", jev.desktop_note(DESKTOP))
+        two = jev.desktop_note({"status": {"firefox.instance_1": "playing", "firefox.instance_2": "paused"}})
+        self.assertIn("firefox.instance_1 is playing", two)
 
     def test_control_sends_the_note_in_its_state(self):
         desktop = {**DESKTOP, "status": {"spotify": "paused"}}
@@ -887,7 +891,8 @@ class TestHeardOverMusic(unittest.TestCase):
     def test_voice_checks_get_slack_while_the_speakers_play(self):
         loud, quiet = mock.Mock(), mock.Mock()
         loud.level.return_value, quiet.level.return_value = 0.16, 0.0
-        self.assertEqual(ears.sound_slack(loud), ears.BARGE_SLACK)
+        self.assertEqual(ears.sound_slack(loud, since=8.0, until=10.0), ears.BARGE_SLACK)
+        self.assertEqual(loud.level.call_args.kwargs["until"], 10.0)
         self.assertEqual(ears.sound_slack(quiet), 0.0)
         self.assertEqual(ears.sound_slack(None), 0.0)
         with mock.patch.object(ears.wake, "meta", return_value={"talk_min": 0.62}), \

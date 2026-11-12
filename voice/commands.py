@@ -356,10 +356,6 @@ def desktop_state():
     windows.sort(key=lambda w: not w["focused"])
     status = player_status()
     players = list(status)
-    if not players:
-        ok, out = _run(["playerctl", "-l"], timeout=2.0)
-        if ok:
-            players = [line.strip() for line in out.splitlines() if PLAYER.match(line.strip())]
     return {"windows": windows[:WINDOWS_MAX], "players": players[:8], "status": status}
 
 
