@@ -36,6 +36,12 @@ already played. One that failed says why. A direct light change is quiet too. `e
 set to 1 makes both speak again. Measured on 24 lines against the live Jev: about 0.25 to 0.3 s a
 decision, with no wrong action. Unsure lines ("show me T3 Code", "close it") went to Claude.
 
+A line over 12 words goes to Claude, since it is usually more than one thing, except music and
+sound with Jev at 0.8 or more: "play anything on Spotify, just press play" is still play. Jev is told the line came from
+Whisper, often over music, and whether each player is playing or paused (a player Diablo's own
+hold paused counts as playing). Whisper over a song wrote "play Spotify" as "Chase, Spotify.";
+with that note Jev reads it as play at 0.71 instead of a window switch at 0.45.
+
 ## Speech control
 
 "Diablo, speech control" (also "accessibility mode", "voice control", "command mode", "voice loop")
@@ -186,6 +192,10 @@ to the default sink's monitor, the exact audio going out, through `parec`.
 - A second wake detector runs on that audio. A mic wake within 1.5 s of the speakers
   scoring half the threshold or more is refused: a video, a voice note, or his own voice
   from another app saying "Diablo".
+- Music in the mic drags his voiceprint down: wakes with Spotify on scored 0.753 and 0.738
+  against a 0.754 minimum. When the speaker tap carried sound (`MUSIC_RMS`, 0.01) in the 2 s
+  before the name, the wake check and that turn's request check get the barge-in slack of 0.1.
+  The window ends at the name, so his own chimes never count; the voice loop gets none.
 - He can be cut off: the wake detector keeps listening while he speaks. Marcus saying
   "Diablo" over him stops the reply at once and starts a new turn with the listening chime.
   His own reply saying "Diablo" never counts, because the speaker tap heard it first. The

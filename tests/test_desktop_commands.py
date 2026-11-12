@@ -88,10 +88,20 @@ class TestDesktopAction(unittest.TestCase):
         self.assertIsNone(route.desktop_action(answer("close_window", conf=0.7, window="focused"), "close this", DESKTOP))
         self.assertIsNotNone(route.desktop_action(answer("pause", conf=0.6), "music off", DESKTOP))
         self.assertIsNone(route.desktop_action(answer("none"), "what time is it", DESKTOP))
-        long = "could you please maybe turn the sound down a little bit because it is way too loud"
-        self.assertIsNone(route.desktop_action(answer("volume_down"), long, DESKTOP))
+        long = "could you please maybe switch over to the Discord window because I need to read it"
+        self.assertIsNone(route.desktop_action(answer("focus_window", window="w1"), long, DESKTOP))
         self.assertIsNone(route.desktop_action(None, "mute", DESKTOP))
         self.assertIsNone(route.desktop_action(answer("mute"), "mute", None))
+
+    def test_music_and_sound_run_at_any_length(self):
+        # Jev said play at 0.85 on this one and it still went to Claude, which searched (2026-11-13).
+        said = "Play literally anything on Spotify. Just play what I'm currently waiting to play. Just press play."
+        act = route.desktop_action(answer("play", conf=0.85, player="spotify"), said, DESKTOP)
+        self.assertEqual((act["action"], act["player"]), ("play", "spotify"))
+        long = "could you please maybe turn the sound down a little bit because it is way too loud"
+        self.assertEqual(route.desktop_action(answer("volume_down"), long, DESKTOP)["action"], "volume_down")
+        mixed = "could you pause spotify and then switch me over to the discord window please"
+        self.assertIsNone(route.desktop_action(answer("pause", conf=0.7), mixed, DESKTOP))
 
     def test_threshold_is_a_setting(self):
         with mock.patch.object(route.settings, "get", side_effect=lambda key: "0.5" if key == "route.desktop_threshold" else ""):
@@ -831,3 +841,61 @@ class TestReviewFindings(unittest.TestCase):
             words = ears.run_act({"action": "enter"}, timeline.Timeline(), {})
         run.assert_not_called()
         self.assertIn("locked", words)
+
+
+class TestHeardOverMusic(unittest.TestCase):
+    """Whisper over music wrote "play Spotify" as "Chase, Spotify." (#18)."""
+
+    def test_jev_is_told_how_the_line_was_heard_and_what_plays(self):
+        note = jev.desktop_note({**DESKTOP, "status": {"spotify": "paused", "firefox.instance_1_253": "playing"}})
+        self.assertIn("Whisper", note)
+        self.assertIn("spotify is paused", note)
+        self.assertIn("firefox is playing", note)
+        self.assertNotIn("Players now", jev.desktop_note(DESKTOP))
+        two = jev.desktop_note({"status": {"firefox.instance_1": "playing", "firefox.instance_2": "paused"}})
+        self.assertIn("firefox.instance_1 is playing", two)
+
+    def test_control_sends_the_note_in_its_state(self):
+        desktop = {**DESKTOP, "status": {"spotify": "paused"}}
+        with mock.patch.object(jev, "_key", return_value="k"), mock.patch.object(jev, "ask", return_value={}) as ask:
+            jev.control("Chase, Spotify.", desktop)
+        state = ask.call_args.args[0]
+        self.assertIn("Whisper", state)
+        self.assertIn("spotify is paused", state)
+        self.assertTrue(state.endswith("Chase, Spotify."))
+
+    def test_a_spoken_turn_gives_jev_the_note(self):
+        desktop = {**DESKTOP, "status": {"spotify": "paused"}}
+        origin = "spoken aloud at his desk on banditbox, transcribed by Whisper, the reply is spoken aloud"
+        with mock.patch.object(brains, "backend", return_value="claude"), \
+                mock.patch.object(brains.lockguard, "for_turn", return_value=mock.Mock(line="", restricted=False)), \
+                mock.patch.object(brains.context, "recent", return_value=[]), \
+                mock.patch.object(brains.context, "card", return_value=("", [])), \
+                mock.patch.object(brains.context, "record"), mock.patch.object(brains.context, "answered"), \
+                mock.patch.object(brains, "jev_answer", return_value=answer("play", player="spotify")) as ask_jev, \
+                mock.patch.object(brains, "pick_tier", return_value=None), \
+                mock.patch.object(brains, "usage_log"), \
+                mock.patch.object(route.settings, "get", return_value=""):
+            turn = asyncio.run(brains._ask(brains.MAIN, "Chase, Spotify.", origin=origin, desktop=desktop))
+        self.assertIn("spotify is paused", ask_jev.call_args.args[2])
+        self.assertEqual(turn.act["action"], "play")
+
+    def test_a_player_the_hold_paused_counts_as_playing(self):
+        out = "spotify\tPaused\nfirefox.instance_1_253\tPaused\nanibeam\tStopped\n"
+        with mock.patch.object(commands, "_run", return_value=(True, out)), \
+                mock.patch.object(type(ears.speakers._shared), "paused", new_callable=mock.PropertyMock,
+                                  return_value=["Spotify"]):
+            status = commands.player_status()
+        self.assertEqual(status, {"spotify": "playing", "firefox.instance_1_253": "paused", "anibeam": "stopped"})
+
+    def test_voice_checks_get_slack_while_the_speakers_play(self):
+        loud, quiet = mock.Mock(), mock.Mock()
+        loud.level.return_value, quiet.level.return_value = 0.16, 0.0
+        self.assertEqual(ears.sound_slack(loud, since=8.0, until=10.0), ears.BARGE_SLACK)
+        self.assertEqual(loud.level.call_args.kwargs["until"], 10.0)
+        self.assertEqual(ears.sound_slack(quiet), 0.0)
+        self.assertEqual(ears.sound_slack(None), 0.0)
+        with mock.patch.object(ears.wake, "meta", return_value={"talk_min": 0.62}), \
+                mock.patch.object(ears.wake, "talk_score", return_value=0.55):
+            self.assertFalse(ears.talk_ok(np.zeros(16000), {})[0])
+            self.assertTrue(ears.talk_ok(np.zeros(16000), {}, slack=ears.sound_slack(loud))[0])

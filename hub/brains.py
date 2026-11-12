@@ -1214,6 +1214,8 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
         lamps = await asyncio.to_thread(lamps_now) if roomish else None
         card, labels = context.card(events, lamps)
         asked = jev.desktop_questions(desktop) if desktop and not images and not machine else None
+        if asked and spoken(origin):
+            card = (card + "\n\n" if card else "") + jev.desktop_note(desktop)
         queue_check = jev.after_question(running_said[conv]) if busy(conv) and spoken(origin) and parallel_ok() else None
         if queue_check:
             asked = {**(asked or {}), **queue_check}
