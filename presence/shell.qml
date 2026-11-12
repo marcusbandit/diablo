@@ -268,11 +268,16 @@ ShellRoot {
     FileView {
         id: earsFile
 
+        property bool seen: false
+
         path: root.stateDir + "/ears.json"
         watchChanges: true
         printErrors: false
         onFileChanged: earsFile.reload()
-        onLoaded: root.ears = root.parse(earsFile.text(), root.ears)
+        onLoaded: {
+            earsFile.seen = true;
+            root.ears = root.parse(earsFile.text(), root.ears);
+        }
     }
 
     // The mouth while he speaks: voice/mouth.py writes when the sound starts and which shape
@@ -280,42 +285,74 @@ ShellRoot {
     FileView {
         id: mouthFile
 
+        property bool seen: false
+
         path: root.stateDir + "/mouth.json"
         watchChanges: true
         printErrors: false
         onFileChanged: mouthFile.reload()
-        onLoaded: root.mouthTrack = root.parse(mouthFile.text(), root.mouthTrack)
+        onLoaded: {
+            mouthFile.seen = true;
+            root.mouthTrack = root.parse(mouthFile.text(), root.mouthTrack);
+        }
     }
 
     FileView {
         id: panelFile
 
+        property bool seen: false
+
         path: root.stateDir + "/panel.json"
         watchChanges: true
         printErrors: false
         onFileChanged: panelFile.reload()
-        onLoaded: root.panelState = root.parse(panelFile.text(), root.panelState)
+        onLoaded: {
+            panelFile.seen = true;
+            root.panelState = root.parse(panelFile.text(), root.panelState);
+        }
     }
 
     FileView {
         id: settingsFile
 
+        property bool seen: false
+
         path: root.stateDir + "/presence-settings.json"
         printErrors: false
-        onLoaded: root.followCursor = root.parse(settingsFile.text(), { follow: true }).follow !== false
+        onLoaded: {
+            settingsFile.seen = true;
+            root.followCursor = root.parse(settingsFile.text(), { follow: true }).follow !== false;
+        }
     }
 
     FileView {
         id: presenceFile
+
+        property bool seen: false
 
         path: root.stateDir + "/presence.json"
         watchChanges: true
         printErrors: false
         onFileChanged: presenceFile.reload()
         onLoaded: {
+            presenceFile.seen = true;
             root.now = Date.now() / 1000;
             root.cards = root.parse(presenceFile.text(), { cards: [] }).cards ?? [];
         }
+    }
+
+    // A state file that is not there when the shell starts gets no watch, so on a fresh box the
+    // ears' first state, a card or the central card would never be read. Ask again until each loads.
+    readonly property var stateFiles: [earsFile, mouthFile, panelFile, settingsFile, presenceFile]
+
+    Timer {
+        interval: 2000
+        repeat: true
+        running: root.stateFiles.some(f => !f.seen)
+        onTriggered: root.stateFiles.forEach(f => {
+            if (!f.seen)
+                f.reload();
+        })
     }
 
     // Cards fade on their own; the clock only ticks while one is up.
