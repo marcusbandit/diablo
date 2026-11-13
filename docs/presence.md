@@ -82,11 +82,22 @@ and the mouth for the sound he is saying that instant (`assets/faces/mouths/<sha
 The voice measures where every sound and word starts in the clip itself (`voice/mouth.py`, a
 phoneme aligner on the GPU, about 30 ms a sentence, run while the previous sentence plays).
 Jev picks a look for every clause of the sentence in one call, beside the speech fetch
-(`voice/eyes.py`), and each look starts on its clause's first word. The track is written when
-the player starts and the orb plays it against the wall clock, blinking every 2 to 6 seconds
-and half the time when the look changes. Clips with no text, or no aligner, move the mouth
-with the loudness instead. `mouth_latency_ms` (default 60) is the player's start
-delay, taken off so the mouth opens with the sound.
+(`voice/eyes.py`), and each look starts on its clause's first word. The orb plays the track
+against the wall clock, blinking every 2 to 6 seconds and half the time when the look changes.
+Clips with no text, or no aligner, move the mouth with the loudness instead.
+
+The clock is the playback's own. His voice plays in the ears' process on one PipeWire stream
+(`voice/playback.py`), whose callback knows when each buffer's first sample reaches the
+speakers, device latency included. The track's `start` is the moment the first sample is heard,
+the talking face comes on at that moment and goes off when the last sample (or a cut) has been
+heard, so it rests in the gap between his first line and the answer that follows the work.
+The stream opens when a reply starts fetching, so a sleeping sink wakes during the fetch, and
+closes a few seconds after the last clip. If it cannot open, the clip plays through pw-play and
+`mouth_latency_ms` (default 60) stands in for the start delay.
+
+`.venv-voice/bin/python tests/live_tts_sync.py` checks it live: it speaks four short replies
+(one line, a first line and an answer 2.5 s later, one cut off) while recording the default
+sink's monitor, and fails when the face or the mouth is more than 50 ms off the sound.
 
 The moments come from `voice/feedback.py`, the same calls that play the ok, low and back
 sounds. Hovering the face says the state in words.

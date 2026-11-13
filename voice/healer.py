@@ -105,7 +105,7 @@ def _heal(error_text, cfg, signature):
         [
             str(PROJECT / ".venv-voice/bin/python"), "-c",
             "import voice.capture, voice.gate, voice.tts, voice.agent, voice.commands, voice.jevfast, "
-            "voice.quick, voice.presence, voice.recordings, voice.feedback, voice.timeline",
+            "voice.quick, voice.presence, voice.recordings, voice.feedback, voice.timeline, voice.playback",
         ],
         capture_output=True, cwd=PROJECT,
     )

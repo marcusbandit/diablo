@@ -328,11 +328,13 @@ def _write(payload):
         pass
 
 
-def playing(track, duration, latency=0.0):
-    """Called the moment the player starts: the faces play `track` from now plus the player's
-    start delay. `track` is a face track from face_for, or a bare list of mouth cues."""
+def playing(track, duration, latency=0.0, at=None):
+    """The faces play `track` from `at`, the wall clock time its first sample is heard, or from
+    now plus the player's start delay when that is not known. `track` is a face track from
+    face_for, or a bare list of mouth cues."""
     face = track if isinstance(track, dict) else {"mouth": track or [], "eyes": []}
-    _write({"start": round(time.time() + latency, 3), "duration": round(duration, 3),
+    start = at if at is not None else time.time() + latency
+    _write({"start": round(start, 3), "duration": round(duration, 3),
             "cues": face.get("mouth") or [], "eyes": face.get("eyes") or []})
 
 

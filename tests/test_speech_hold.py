@@ -537,7 +537,7 @@ class TestSpeakerHolds(unittest.TestCase):
         speaker = self.speaker()
         original = speaker._play
 
-        def cut(wav, interruptible, duration, track=None):
+        def cut(wav, interruptible, duration, track=None, on_heard=None):
             speaker._killed.set()
             return original(wav, interruptible, duration)
 
