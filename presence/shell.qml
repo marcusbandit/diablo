@@ -66,7 +66,7 @@ ShellRoot {
 
     // Awake is only what Marcus started by talking to him: a turn he is listening to, thinking
     // on or answering, a voice loop, dictation. It picks the big orb and the words beside it;
-    // everything else is the small grey one (hidden only with following off): "waking" comes
+    // everything else is the small grey one, while he is up at all: "waking" comes
     // before the wake is checked, so a refused one would flash him up, and answers still
     // thinking in the background or a passing moment are not Marcus talking to him.
     readonly property bool awake: ["listening", "thinking", "speaking"].includes(root.ears.state ?? "asleep")
@@ -86,24 +86,22 @@ ShellRoot {
     readonly property bool busy: root.hubBusy || root.earsBehind
     // Marcus talking to him or a turn of his running.
     readonly property bool active: root.awake || root.busy
-    // After the last of those he stays beside the cursor this long, sleepy, then fades out.
+    // After the last of those, or a moment, he stays beside the cursor this long, sleepy, then
+    // fades out. The clock keeps running for as long as he is active, so the instant he stops
+    // it is already running and `up` never blinks.
     readonly property int lingerMs: 25000
-    property bool lingering: false
-    onActiveChanged: {
-        root.lingering = !root.active;
-        if (root.lingering)
-            lingerClock.restart();
-        else
-            lingerClock.stop();
-    }
+    onActiveChanged: lingerClock.restart()
+    onMomentChanged: if (root.moment !== "") lingerClock.restart()
     Timer {
         id: lingerClock
 
         interval: root.lingerMs
-        onTriggered: root.lingering = false
+        onTriggered: if (root.active) lingerClock.restart()
     }
-    // Up only while he has a reason: talked to, working, lingering after either, or showing a card.
-    readonly property bool up: root.active || root.lingering || root.cardsUp || root.panelOpen
+    // Up only while he has a reason: talked to, working, a moment, lingering after those (with
+    // following on; the corner goes at once), or showing a card.
+    readonly property bool up: root.active || root.moment !== "" || (root.followCursor && lingerClock.running)
+        || root.cardsUp || root.panelOpen
     // Where the orb is placed: the corner of the monitor, or beside the cursor.
     readonly property bool cornered: !root.followCursor
     readonly property string busyWords: {
@@ -164,7 +162,7 @@ ShellRoot {
     // The cursor in Hyprland's global layout coordinates, the same space the screens' x and y use.
     property point cursor: Qt.point(-1, -1)
     // Set on waking: the cursor kept above is from the last wake until Hyprland answers again.
-    // True until the first answer, so the orb starts at the cursor, not in the corner.
+    // True until the first answer, so the orb starts where the cursor is now.
     property bool freshWake: true
     readonly property var cursorScreen: root.screenAt(root.cursor)
 
@@ -413,8 +411,8 @@ ShellRoot {
 
     // Where the cursor is, asked over Hyprland's own socket: one short request per tick, no
     // process spawned. Hyprland answers "x, y" and hangs up, so each tick connects again. The
-    // ticks only run while the orb is up; the rate is below. A request Hyprland never answers is dropped after 250 ms
-    // (askTimeout) so the next tick asks again, instead of waiting on it for good.
+    // ticks only run while the orb is up; the rate is below. A request Hyprland never answers is
+    // dropped after 250 ms (askTimeout) so the next tick asks again, instead of waiting on it.
     Socket {
         id: hypr
 
@@ -534,14 +532,15 @@ ShellRoot {
             target: root
 
             // The last card gone: back beside the cursor, even if it has not moved since.
+            // Not while he fades out: he goes where the card was.
             function onCardsUpChanged() {
-                if (!root.cardsUp)
+                if (!root.cardsUp && root.up)
                     follow.anchor = root.cursor;
             }
 
             // The central card closed: back beside the cursor as well.
             function onPanelOpenChanged() {
-                if (!root.panelOpen)
+                if (!root.panelOpen && root.up)
                     follow.anchor = root.cursor;
             }
 
