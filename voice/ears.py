@@ -55,6 +55,11 @@ LOOP, STOP = "loop", "stop"
 # An answer not back within this long is left thinking in the background, and the ears go
 # back to listening for his name: he can ask the next thing while Diablo still works.
 INLINE_WAIT_S = 1.5
+# Speech control waits up to LOOP_LISTEN_S for his next line. An answer that lands meanwhile
+# used to wait for that line and then come out as if it answered it: the centering replies
+# kept playing after each new order (2026-11-13). The wait now ends once he has been quiet
+# this long and an answer is ready.
+INTERRUPT_QUIET_S = 0.5
 # A streamed answer can be quiet between its first line and its end for as long as a hub turn
 # may run (hub/brains.py TURN_SECONDS), plus a margin.
 TURN_READ_S = 960
@@ -401,7 +406,7 @@ def early_sure(found):
 
 
 def record(mic, cfg, after, vad, start_audio=None, probe=None, hold=None, no_speech_s=NO_SPEECH_S, tl=None,
-           early=None):
+           early=None, interrupt=None):
     """Audio from `after` (a monotonic time) until he has finished.
 
     A quiet of ears.silence_s ends the turn when the words so far read as finished, and
@@ -414,6 +419,8 @@ def record(mic, cfg, after, vad, start_audio=None, probe=None, hold=None, no_spe
     gets speech_start, speech_end, turn_end and the time spent in end-of-turn checks.
     early(text), when given with probe, is Jev on the words so far: it runs on a thread at
     EARLY_S of quiet on a short line, and an answer early_sure() of ends the turn at once.
+    interrupt(), when given, ends the wait with nothing heard while he is quiet: speech control
+    passes "an answer is ready", so a finished answer is said now, not after his next line.
     """
     policy = endturn.Policy.from_cfg(cfg)
     vad.reset()
@@ -474,6 +481,9 @@ def record(mic, cfg, after, vad, start_audio=None, probe=None, hold=None, no_spe
                     spoke = True
             else:
                 quiet_s += step
+        if (interrupt is not None and not spoke and (last_speech is None or stamp - last_speech >= INTERRUPT_QUIET_S)
+                and interrupt()):
+            break
         if (early is not None and probe is not None and spoke and job is None and not checked
                 and quiet_s >= EARLY_S and heard_s <= EARLY_TALK_S):
             job = _start_early(np.concatenate(pieces), probe, early)
@@ -1376,7 +1386,8 @@ def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=No
     tl = timeline.Timeline("loop")
     heard = record(mic, cfg, time.monotonic(), vad, probe=lambda clip: transcribe(clip, cfg),
                    no_speech_s=LOOP_LISTEN_S, tl=tl,
-                   early=lambda words: early_read(cfg, words, commands.desktop_state()))
+                   early=lambda words: early_read(cfg, words, commands.desktop_state()),
+                   interrupt=PENDING.has_speech)
     audio, spoke = heard
     if not spoke:
         return None
