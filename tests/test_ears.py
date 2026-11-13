@@ -216,6 +216,102 @@ class TestReadyAnswerEndsTheWait(unittest.TestCase):
         self.assertEqual(ears.PENDING.thinking(), 0)
 
 
+class TestCutInLineComesFirst(unittest.TestCase):
+    """He cuts an answer off with the name in speech control: say_ready puts the rest back, so
+    an answer is ready again, and it must not be spoken over the line he cut in to say."""
+
+    def tearDown(self):
+        ears.PENDING.jobs.clear()
+
+    def ready_answer(self):
+        import threading
+
+        done = threading.Event()
+        done.set()
+        ears.PENDING.jobs.append({"done": done, "words": "The rest.", "tl": None, "said": "x",
+                                  "dropped": False, "early": []})
+
+    def test_after_a_cut_a_ready_answer_waits_for_the_line_he_cut_in_to_say(self):
+        self.ready_answer()
+        level = lambda at: 0.9 if 1.2 <= at < 2.0 else 0.0
+        audio, spoke = ears.record(TimedMic(level), QUIET_CFG, 0.0, LevelVAD(), no_speech_s=30,
+                                   interrupt=ears.PENDING.has_speech, interrupt_quiet_s=ears.CUT_QUIET_S)
+        self.assertTrue(spoke)
+        self.assertGreater(len(audio) / wake.RATE, 2.0)
+
+    def test_without_the_cut_the_same_answer_would_have_talked_over_him(self):
+        self.ready_answer()
+        level = lambda at: 0.9 if 1.2 <= at < 2.0 else 0.0
+        _, spoke = ears.record(TimedMic(level), QUIET_CFG, 0.0, LevelVAD(), no_speech_s=30,
+                               interrupt=ears.PENDING.has_speech)
+        self.assertFalse(spoke)
+
+    def test_a_bare_name_lets_the_rest_out_after_the_cut_quiet(self):
+        import time
+
+        self.ready_answer()
+        started = time.monotonic()
+        _, spoke = ears.record(TimedMic(lambda at: 0.0), QUIET_CFG, 0.0, LevelVAD(), no_speech_s=30,
+                               interrupt=ears.PENDING.has_speech, interrupt_quiet_s=ears.CUT_QUIET_S)
+        self.assertFalse(spoke)
+        self.assertLess(time.monotonic() - started, ears.CUT_QUIET_S + 2.0)
+
+    def test_voice_loop_carries_a_cut_from_either_side_into_the_next_line(self):
+        from unittest import mock
+
+        cuts = iter([True, False])
+        results = iter([ears.CUT, None, ears.STOP])
+        turns, readies = [], []
+
+        def fake_ready(*args):
+            readies.append(len(turns))
+            return next(cuts)
+
+        def fake_turn(*args, **kwargs):
+            turns.append(kwargs["after_cut"])
+            return next(results)
+
+        settings = mock.Mock(get=lambda: {})
+        with mock.patch.object(ears, "say_ready", side_effect=fake_ready), \
+                mock.patch.object(ears, "loop_turn", side_effect=fake_turn), \
+                mock.patch.object(ears, "listening", return_value=True), \
+                mock.patch.object(ears, "set_state"), mock.patch.object(ears.feedback, "mode"), \
+                mock.patch.object(ears.speakers, "Hold"):
+            ears.voice_loop(mock.Mock(), settings, None, LevelVAD())
+        self.assertEqual(turns, [True, True, False])
+        self.assertEqual(readies, [0, 2])
+
+    def test_a_cut_inline_reply_reports_the_cut(self):
+        from unittest import mock
+
+        from voice import timeline
+
+        heard = ears.Heard(np.zeros(1600, dtype=np.float32), True, "what is the time")
+        patches = [
+            mock.patch.object(ears, "talk_ok", return_value=(True, None)),
+            mock.patch.object(ears, "set_state"),
+            mock.patch.object(ears.chime, "play"),
+            mock.patch.object(ears.recordings, "keep", return_value=None),
+            mock.patch.object(ears.stt, "is_noise", return_value=False),
+            mock.patch.object(ears.commands, "loop_intent", return_value=None),
+            mock.patch.object(ears, "local_line", return_value=None),
+            mock.patch.object(ears.commands, "desktop_state", return_value={"windows": []}),
+            mock.patch.object(ears, "control", return_value={}),
+            mock.patch.object(ears, "note_control"),
+            mock.patch.object(ears.surroundings, "lines", return_value=[]),
+            mock.patch.object(ears.surroundings, "points_at_screen", return_value=False),
+            mock.patch.object(ears, "answer_or_background", return_value="Nine."),
+        ]
+        for patch in patches:
+            self.enterContext(patch)
+        with mock.patch.object(ears, "say_answer", return_value=True):
+            got = ears._loop_line(None, None, None, None, None, None, None, {}, heard, timeline.Timeline("loop"))
+        self.assertEqual(got, ears.CUT)
+        with mock.patch.object(ears, "say_answer", return_value=False):
+            got = ears._loop_line(None, None, None, None, None, None, None, {}, heard, timeline.Timeline("loop"))
+        self.assertIs(got, True)
+
+
 class TestSpeechControlAnswersInOrder(unittest.TestCase):
     """Two lines back to back in speech control, each answer slower than INLINE_WAIT_S: the
     first answer is spoken before the second line starts, and each reply is its own line's."""
