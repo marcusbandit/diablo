@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const source = readFileSync(new URL("../../presence/place.js", import.meta.url), "utf8").replace(/^\.pragma library\s*$/m, "");
-const place = new Function(`${source}; return { cardRect, panelRect, shouldRejoin };`)();
+const place = new Function(`${source}; return { cardRect, panelRect, shouldRejoin, nearestRect };`)();
 
 const screen = { w: 2560, h: 1440 };
 const card = { w: 300, h: 120 };
@@ -69,4 +69,16 @@ test("the orb holds still while the cursor is near its cards", () => {
     assert.equal(place.shouldRejoin({ x: 900, y: 560 }, rects), false, "on the card");
     assert.equal(place.shouldRejoin({ x: 780, y: 380 }, rects), false, "just beside the orb");
     assert.equal(place.shouldRejoin({ x: 1600, y: 560 }, rects), true, "well away");
+    assert.equal(place.shouldRejoin({ x: 600, y: 440 }, rects), true, "a short way off the orb, the cards catch up");
+});
+
+test("a point between monitors goes to the nearest one, not the first", () => {
+    // a 2560x1440 monitor and a shorter 1920x1080 one beside it, tops aligned
+    const rects = [{ x: 0, y: 0, w: 2560, h: 1440 }, { x: 2560, y: 0, w: 1920, h: 1080 }];
+    assert.equal(place.nearestRect({ x: 100, y: 100 }, rects), 0, "inside the first");
+    assert.equal(place.nearestRect({ x: 3000, y: 500 }, rects), 1, "inside the second");
+    assert.equal(place.nearestRect({ x: 3000, y: 1300 }, rects), 1, "dead corner under the shorter monitor");
+    assert.equal(place.nearestRect({ x: 2600, y: 1300 }, rects), 0, "past the first monitor edge but nearer it than the shorter one");
+    assert.equal(place.nearestRect({ x: 5000, y: -50 }, rects), 1, "past the right edge");
+    assert.equal(place.nearestRect({ x: 1, y: 1 }, []), -1, "no screens");
 });

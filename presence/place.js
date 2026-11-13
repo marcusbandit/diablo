@@ -37,7 +37,7 @@ function panelRect(screen, edge) {
 // Whether the orb and its cards should catch up with the cursor: only once it is well clear of
 // them, so moving the pointer onto a card never pushes the card away.
 function shouldRejoin(cursor, rects, reach) {
-    reach = reach === undefined ? 280 : reach;
+    reach = reach === undefined ? 160 : reach;
     for (let i = 0; i < rects.length; i++) {
         const r = rects[i];
         if (!r || r.w <= 0 || r.h <= 0)
@@ -48,6 +48,24 @@ function shouldRejoin(cursor, rects, reach) {
             return false;
     }
     return true;
+}
+
+// The index of the rect holding the point, else the one nearest it; -1 for no rects.
+function nearestRect(p, rects) {
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        const dx = Math.max(r.x - p.x, 0, p.x - (r.x + r.w));
+        const dy = Math.max(r.y - p.y, 0, p.y - (r.y + r.h));
+        const d = dx * dx + dy * dy;
+        if (d === 0)
+            return i;
+        if (d < bestD) {
+            bestD = d;
+            best = i;
+        }
+    }
+    return best;
 }
 
 function clamp(v, lo, hi) {
