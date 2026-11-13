@@ -216,6 +216,48 @@ class TestReadyAnswerEndsTheWait(unittest.TestCase):
         self.assertEqual(ears.PENDING.thinking(), 0)
 
 
+class TestCutInLineComesFirst(unittest.TestCase):
+    """He cuts an answer off with the name in speech control: say_ready puts the rest back, so
+    an answer is ready again, and the next line must not yield to it before he has spoken."""
+
+    def tearDown(self):
+        ears.PENDING.jobs.clear()
+
+    def test_after_a_cut_the_next_line_does_not_yield(self):
+        from unittest import mock
+
+        seen = {}
+
+        def fake_record(*args, **kwargs):
+            seen.update(kwargs)
+            return ears.Heard(np.zeros(0, dtype=np.float32), False)
+
+        settings = mock.Mock(get=lambda: {})
+        with mock.patch.object(ears, "record", side_effect=fake_record), mock.patch.object(ears, "set_state"):
+            ears.loop_turn(None, settings, None, LevelVAD(), yields=False)
+        self.assertIsNone(seen["interrupt"])
+
+    def test_voice_loop_passes_the_cut_on(self):
+        from unittest import mock
+
+        cuts = iter([True, False])
+        turns = []
+
+        def fake_turn(*args, **kwargs):
+            turns.append(kwargs["yields"])
+            return ears.STOP if len(turns) == 2 else True
+
+        mic = mock.Mock()
+        settings = mock.Mock(get=lambda: {})
+        with mock.patch.object(ears, "say_ready", side_effect=lambda *a: next(cuts)), \
+                mock.patch.object(ears, "loop_turn", side_effect=fake_turn), \
+                mock.patch.object(ears, "listening", return_value=True), \
+                mock.patch.object(ears, "set_state"), mock.patch.object(ears.feedback, "mode"), \
+                mock.patch.object(ears.speakers, "Hold"):
+            ears.voice_loop(mic, settings, None, LevelVAD())
+        self.assertEqual(turns, [False, True])
+
+
 class TestSpeechControlAnswersInOrder(unittest.TestCase):
     """Two lines back to back in speech control, each answer slower than INLINE_WAIT_S: the
     first answer is spoken before the second line starts, and each reply is its own line's."""

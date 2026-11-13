@@ -1384,9 +1384,11 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
     return speak_until_named(mic, speaker, words, cfg, detector, tap, tl, marks)
 
 
-def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=None):
+def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=None, yields=True):
     """One line inside the voice loop, no name needed. None when nothing was said or the
-    line was not for him, STOP when he ended the loop, True when a line was handled."""
+    line was not for him, STOP when he ended the loop, True when a line was handled.
+    yields: a ready answer may end the wait for his line. False right after he cut an answer
+    off with the name: the line he cut in to say comes before the answers put back."""
     cfg = dict(settings.get())
     cfg["ears.turn_max_s"] = cfg.get("ears.loop_turn_max_s") or cfg.get("ears.turn_max_s") or LOOP_TURN_MAX_S
     set_state("listening", holding=False, loop=True)
@@ -1394,7 +1396,7 @@ def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=No
     heard = record(mic, cfg, time.monotonic(), vad, probe=lambda clip: transcribe(clip, cfg),
                    no_speech_s=LOOP_LISTEN_S, tl=tl,
                    early=lambda words: early_read(cfg, words, commands.desktop_state()),
-                   interrupt=PENDING.has_speech)
+                   interrupt=PENDING.has_speech if yields else None)
     audio, spoke = heard
     if not spoke:
         return None
@@ -1520,10 +1522,11 @@ def voice_loop(mic, settings, speaker, vad, detector=None, tap=None, dictation=N
     mic.drain()
     last = time.monotonic()
     while listening() and time.monotonic() - last < idle_s:
-        if say_ready(mic, speaker, settings.get(), detector, tap):
+        cut = say_ready(mic, speaker, settings.get(), detector, tap)
+        if cut:
             mic.drain()
         try:
-            result = loop_turn(mic, settings, speaker, vad, detector, tap, dictation)
+            result = loop_turn(mic, settings, speaker, vad, detector, tap, dictation, yields=not cut)
         except Exception:
             log.exception("loop turn failed")
             result = None
