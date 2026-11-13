@@ -1,7 +1,9 @@
 # Diablo on the screen
 
-An orb beside the cursor shows what he is doing while Marcus talks to him, and cards show what he
-answers. It is its own Quickshell instance (`presence/`, run by `diablo-presence.service`), so a
+An orb beside the cursor shows what he is doing while Marcus talks to him or a turn of his runs,
+and cards show what he answers. Asleep he is a small grey orb resting in the bottom right corner
+of the monitor he was last on, and the cursor is not asked at all; the first cursor answer after
+he wakes brings him over. It is its own Quickshell instance (`presence/`, run by `diablo-presence.service`), so a
 crash here never touches banditshell, and Quickshell reloads the QML when a file changes, so
 Diablo can change his own look by editing those files.
 
@@ -84,7 +86,9 @@ phoneme aligner on the GPU, about 30 ms a sentence, run while the previous sente
 Jev picks a look for every clause of the sentence in one call, beside the speech fetch
 (`voice/eyes.py`), and each look starts on its clause's first word. The orb plays the track
 against the wall clock, blinking every 2 to 6 seconds and half the time when the look changes.
-Clips with no text, or no aligner, move the mouth with the loudness instead.
+Every line he speaks is fetched together with its track (`Speaker.fetch_face`), so a reply uses
+all eight drawings. Only clips with no text, or no aligner, move the mouth with the loudness
+instead, which knows three of them: rest, mid and open.
 
 The clock is the playback's own. His voice plays in the ears' process on one PipeWire stream
 (`voice/playback.py`), whose callback knows when each buffer's first sample reaches the

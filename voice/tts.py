@@ -360,13 +360,21 @@ class Speaker:
             return ("unspoken", 0.0, 0.0)
         self.cfg = cfg
         self.prime()
+        fetched = self.fetch_face(text, cfg)
+        if fetched is None:
+            return ("unspoken", 0.0, 0.0)
+        return self._speak([fetched], interruptible, cfg, on_heard=on_heard, on_done=on_done)
+
+    def fetch_face(self, text, cfg):
+        """(wav, face track) for one line: the speech, with the mouth measured from it and the
+        eyes Jev picked for its clauses, or None when the fetch gave nothing. Every spoken line
+        goes through here, so the mouth plays the measured sounds and never just the loudness."""
         spoken = interrupt.scrub(text)
         looks = eyes.tag_soon(spoken)  # beside the speech fetch, so the reply does not wait for it
         wav = self._fetch(text, cfg)
-        if wav is None:
-            return ("unspoken", 0.0, 0.0)
-        return self._speak([(wav, mouth.face_for(spoken, wav, looks(EYES_WAIT)))], interruptible, cfg,
-                           on_heard=on_heard, on_done=on_done)
+        if not wav:
+            return None
+        return wav, mouth.face_for(spoken, wav, looks(EYES_WAIT))
 
     def play_wav(self, wav, interruptible=False):
         """Plays audio already in hand, such as a cached acknowledgement."""

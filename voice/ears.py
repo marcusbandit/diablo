@@ -1590,11 +1590,11 @@ def speak_until_named(mic, speaker, words, cfg, detector, tap, tl=None, marks=("
                 return
             # Fetch, then play, so a cut during the fetch means nothing plays at all.
             speaker.prime()
-            wav = speaker._fetch(words, cfg)
+            fetched = speaker.fetch_face(words, cfg)
             if tl is not None:
                 tl.mark(marks[0])
-            if wav and not cancel.is_set():
-                speaker._speak([wav], False, cfg, on_heard=on_heard, on_done=on_done)
+            if fetched and not cancel.is_set():
+                speaker._speak([fetched], False, cfg, on_heard=on_heard, on_done=on_done)
                 if tl is not None:
                     tl.mark(marks[1])
         except Exception:
