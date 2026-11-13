@@ -51,7 +51,7 @@ NO_SPEECH_S = 6.0
 LOOP_LISTEN_S = 30.0
 LOOP_TURN_MAX_S = 90
 LOOP_IDLE_S = 300.0
-LOOP, STOP = "loop", "stop"
+LOOP, STOP, CUT = "loop", "stop", "cut"
 # An answer not back within this long is left thinking in the background, and the ears go
 # back to listening for his name: he can ask the next thing while Diablo still works.
 INLINE_WAIT_S = 1.5
@@ -60,6 +60,9 @@ INLINE_WAIT_S = 1.5
 # kept playing after each new order (2026-11-13). The wait now ends once he has been quiet
 # this long and an answer is ready.
 INTERRUPT_QUIET_S = 0.5
+# Right after he cut an answer off with the name, the rest waits this long for the line he cut
+# in to say, so it is not spoken over him.
+CUT_QUIET_S = 3.0
 # A piece this likely to be speech already holds a ready answer back: the first syllable of his
 # next line often scores under SPEECH_PROB.
 ONSET_PROB = 0.3
@@ -409,7 +412,7 @@ def early_sure(found):
 
 
 def record(mic, cfg, after, vad, start_audio=None, probe=None, hold=None, no_speech_s=NO_SPEECH_S, tl=None,
-           early=None, interrupt=None):
+           early=None, interrupt=None, interrupt_quiet_s=INTERRUPT_QUIET_S):
     """Audio from `after` (a monotonic time) until he has finished.
 
     A quiet of ears.silence_s ends the turn when the words so far read as finished, and
@@ -444,7 +447,7 @@ def record(mic, cfg, after, vad, start_audio=None, probe=None, hold=None, no_spe
     job, found = None, None
     while True:
         elapsed = time.monotonic() - began
-        if (interrupt is not None and not spoke and time.monotonic() - sound_at >= INTERRUPT_QUIET_S
+        if (interrupt is not None and not spoke and time.monotonic() - sound_at >= interrupt_quiet_s
                 and interrupt()):
             break
         # Audio time, not the wall clock, so a replay in tests caps the same way.
@@ -1384,11 +1387,11 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
     return speak_until_named(mic, speaker, words, cfg, detector, tap, tl, marks)
 
 
-def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=None, yields=True):
+def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=None, after_cut=False):
     """One line inside the voice loop, no name needed. None when nothing was said or the
-    line was not for him, STOP when he ended the loop, True when a line was handled.
-    yields: a ready answer may end the wait for his line. False right after he cut an answer
-    off with the name: the line he cut in to say comes before the answers put back."""
+    line was not for him, STOP when he ended the loop, CUT when he cut its answer off with
+    the name, True when a line was handled. after_cut: he just cut an answer off, so a ready
+    answer waits CUT_QUIET_S of quiet for the line he cut in to say."""
     cfg = dict(settings.get())
     cfg["ears.turn_max_s"] = cfg.get("ears.loop_turn_max_s") or cfg.get("ears.turn_max_s") or LOOP_TURN_MAX_S
     set_state("listening", holding=False, loop=True)
@@ -1396,7 +1399,8 @@ def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=No
     heard = record(mic, cfg, time.monotonic(), vad, probe=lambda clip: transcribe(clip, cfg),
                    no_speech_s=LOOP_LISTEN_S, tl=tl,
                    early=lambda words: early_read(cfg, words, commands.desktop_state()),
-                   interrupt=PENDING.has_speech if yields else None)
+                   interrupt=PENDING.has_speech,
+                   interrupt_quiet_s=CUT_QUIET_S if after_cut else INTERRUPT_QUIET_S)
     audio, spoke = heard
     if not spoke:
         return None
@@ -1450,8 +1454,7 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
         return STOP
     local = local_line(mic, settings, vad, text, tl, speaker)
     if local is not None:
-        say_answer(mic, speaker, local, cfg, detector, tap, tl)
-        return True
+        return CUT if say_answer(mic, speaker, local, cfg, detector, tap, tl) else True
     desktop = commands.desktop_state()
     if heard.early is not None:
         found = heard.early
@@ -1466,18 +1469,18 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
         tl.mark("hub_back")
         note_control(tl, found)
     if isinstance(found.get("act"), dict):
-        say_answer(mic, speaker, run_act(found["act"], tl, cfg), cfg, detector, tap, tl)
+        cut = say_answer(mic, speaker, run_act(found["act"], tl, cfg), cfg, detector, tap, tl)
         if found["act"].get("action") in REDIM_AFTER:
             redim()
-        return True
+        return CUT if cut else True
     # Not a plain command: the whole turn, Claude included, as if he had said the name.
     tl.points.pop("hub_sent", None)
     tl.points.pop("hub_back", None)
     context = surroundings.lines()
     shot = surroundings.screenshot() if surroundings.points_at_screen(text) else None
     words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, desktop, tl, say), tl, text)
-    if words is not None:
-        say_answer(mic, speaker, words, cfg, detector, tap, tl)
+    if words is not None and say_answer(mic, speaker, words, cfg, detector, tap, tl):
+        return CUT
     return True
 
 
@@ -1521,17 +1524,22 @@ def voice_loop(mic, settings, speaker, vad, detector=None, tap=None, dictation=N
     LOOP_HOLD["hold"].__enter__()
     mic.drain()
     last = time.monotonic()
+    cut = False
     while listening() and time.monotonic() - last < idle_s:
-        cut = say_ready(mic, speaker, settings.get(), detector, tap)
+        if not cut:
+            cut = say_ready(mic, speaker, settings.get(), detector, tap)
+            if cut:
+                mic.drain()
         if cut:
-            mic.drain()
+            last = time.monotonic()
         try:
-            result = loop_turn(mic, settings, speaker, vad, detector, tap, dictation, yields=not cut)
+            result = loop_turn(mic, settings, speaker, vad, detector, tap, dictation, after_cut=cut)
         except Exception:
             log.exception("loop turn failed")
             result = None
         if result == STOP:
             break
+        cut = result == CUT
         if result:
             last = time.monotonic()
             mic.drain()
