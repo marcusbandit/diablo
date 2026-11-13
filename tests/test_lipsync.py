@@ -122,3 +122,10 @@ def test_tuner_command_points_at_the_tuner():
     command = lipsync.tuner_command("qs")
     assert command[:3] == ["qs", "-n", "-p"]
     assert command[3].endswith("presence/tuner.qml")
+
+
+def test_a_delay_that_is_not_a_number_reads_as_zero_and_is_refused(tmp_path):
+    path = tmp_path / "lipsync.json"
+    path.write_text('{"delay_ms": Infinity}')
+    assert lipsync.delay_ms(path) == 0
+    assert lipsync.main(["set", "inf"]) == 1

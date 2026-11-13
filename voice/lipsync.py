@@ -21,6 +21,7 @@ heard and one when it has ended:
 import hashlib
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -49,6 +50,8 @@ def cache_dir():
 
 
 def clamp(ms):
+    if not math.isfinite(ms):
+        raise ValueError(f"not a delay: {ms}")
     return max(-LIMIT_MS, min(LIMIT_MS, int(round(ms))))
 
 
@@ -95,7 +98,9 @@ def sample(text=SAMPLE, fetch=None, face=None, folder=None):
     if fetch is None:
         cfg = _settings()
     voice = "" if cfg is None else f"{cfg.get('tts_provider')}:{cfg.get('tts_voice_id')}:{cfg.get('speech_rate')}"
-    key = hashlib.sha1(f"{voice}\n{text}".encode()).hexdigest()[:16]
+    # the aligner's own code is in the key, so a change to it never leaves the tuner on old cues
+    aligner = hashlib.sha1(Path(mouth.__file__).read_bytes()).hexdigest()
+    key = hashlib.sha1(f"{voice}\n{aligner}\n{text}".encode()).hexdigest()[:16]
     folder = folder or cache_dir()
     wav_file, track_file = folder / f"{key}.wav", folder / f"{key}.json"
     if wav_file.exists() and track_file.exists():
@@ -161,7 +166,7 @@ def serve(out=sys.stdout, rounds=None, source=sample, output=None, stop=None):
             if not clip.started.wait(3.0) or clip.heard_at is None:
                 _say(out, {"event": "error", "text": "The sound never started"})
                 return 1
-            _until(clip.heard_at)
+            # sent before the sound, so a mouth tuned to lead it has its track in time
             _say(out, {"event": "heard", "start": round(clip.heard_wall, 4), "duration": round(clip.seconds, 3),
                        "cues": track.get("mouth") or [], "eyes": track.get("eyes") or []})
             while not clip.finished.wait(0.05):
@@ -181,9 +186,17 @@ def tuner_command(qs=None):
     return [qs or shutil.which("qs") or "qs", "-n", "-p", str(REPO / "presence" / "tuner.qml")]
 
 
+def tuner_open():
+    return subprocess.run(["pgrep", "-f", str(REPO / "presence" / "tuner.qml")],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
 def open_tuner():
-    """Opens the tuner window on this desktop and returns at once."""
+    """Opens the tuner window on this desktop and returns at once. One tuner at a time."""
     command = tuner_command()
+    if tuner_open():
+        print("The tuner is already open")
+        return 0
     if not shutil.which(command[0]):
         print("quickshell (qs) is not installed, the tuner needs it", file=sys.stderr)
         return 1

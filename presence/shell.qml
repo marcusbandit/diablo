@@ -702,7 +702,7 @@ ShellRoot {
             mouthDelayMs: root.mouthDelayMs
             onTuneMouthRequested: {
                 root.setPanel({ open: false });
-                Quickshell.execDetached(["qs", "-n", "-p", `${Quickshell.shellDir}/tuner.qml`]);
+                Quickshell.execDetached(["sh", "-c", 'pgrep -f "$1" >/dev/null || exec qs -n -p "$1"', "sh", `${Quickshell.shellDir}/tuner.qml`]);
             }
 
             Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }

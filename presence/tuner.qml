@@ -34,12 +34,12 @@ ShellRoot {
         root.delay = root.clamp(root.delay + ms);
     }
 
+    property int saving: 0
+
     function save() {
         root.touched = true;
+        root.saving = root.delay;
         savedFile.setText(JSON.stringify({ delay_ms: root.delay }) + "\n");
-        root.saved = root.delay;
-        root.trouble = false;
-        root.status = `Saved. His answers use ${root.signed(root.delay)} ms from now on.`;
     }
 
     function leave() {
@@ -76,6 +76,15 @@ ShellRoot {
 
         path: root.configDir + "/lipsync.json"
         printErrors: false
+        onSaved: {
+            root.saved = root.saving;
+            root.trouble = false;
+            root.status = `Saved. His answers use ${root.signed(root.saved)} ms from now on.`;
+        }
+        onSaveFailed: error => {
+            root.trouble = true;
+            root.status = `Could not save to ${savedFile.path}`;
+        }
         onLoaded: {
             let ms = 0;
             try {
