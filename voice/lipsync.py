@@ -117,7 +117,10 @@ def sample(text=SAMPLE, fetch=None, face=None, folder=None):
         wav = fetch(text)
     if not wav:
         raise RuntimeError("no speech: the voice service gave nothing back")
-    track = (face or mouth.face_for)(text, wav)
+    from . import interrupt
+
+    # the same words a reply aligns, so a delay tuned here holds for replies
+    track = (face or mouth.face_for)(interrupt.scrub(text), wav)
     folder.mkdir(parents=True, exist_ok=True)
     wav_file.write_bytes(wav)
     track_file.write_text(json.dumps(track))

@@ -367,14 +367,16 @@ class Speaker:
 
     def fetch_face(self, text, cfg):
         """(wav, face track) for one line: the speech, with the mouth measured from it and the
-        eyes Jev picked for its clauses, or None when the fetch gave nothing. Every spoken line
-        goes through here, so the mouth plays the measured sounds and never just the loudness."""
+        eyes Jev picked for its clauses, or None when the fetch gave nothing. Every reply goes
+        through here, so the mouth plays the measured sounds, not just the loudness. A model
+        still loading is not waited for; that line follows the loudness."""
         spoken = interrupt.scrub(text)
         looks = eyes.tag_soon(spoken)  # beside the speech fetch, so the reply does not wait for it
         wav = self._fetch(text, cfg)
         if not wav:
             return None
-        return wav, mouth.face_for(spoken, wav, looks(EYES_WAIT))
+        wait = 0.0 if self._killed.is_set() else EYES_WAIT
+        return wav, mouth.face_for(spoken, wav, looks(wait), load=False)
 
     def play_wav(self, wav, interruptible=False):
         """Plays audio already in hand, such as a cached acknowledgement."""
@@ -403,13 +405,10 @@ class Speaker:
                 for text in parts:
                     if self._killed.is_set():
                         break
-                    spoken = interrupt.scrub(text)
-                    looks = eyes.tag_soon(spoken)
-                    wav = self._fetch(text, cfg)
-                    if wav is not None:
-                        # Measured here, ahead of playback, while the previous sentence plays.
-                        wait = 0.0 if self._killed.is_set() else EYES_WAIT
-                        ready.put((wav, mouth.face_for(spoken, wav, looks(wait))))
+                    # Measured here, ahead of playback, while the previous sentence plays.
+                    fetched = self.fetch_face(text, cfg)
+                    if fetched is not None:
+                        ready.put(fetched)
             except Exception:
                 log.exception("streamed fetch failed")
             finally:

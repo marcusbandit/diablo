@@ -148,3 +148,17 @@ class NoConversionTest(unittest.TestCase):
             os.environ.pop("DISABLE_SAFETENSORS_CONVERSION", None)
             mouth._pretrained(Model)
             self.assertEqual(os.environ.get("DISABLE_SAFETENSORS_CONVERSION"), "1")
+
+
+class TestReplyNeverWaitsForTheModel(unittest.TestCase):
+    def test_a_model_not_ready_is_loaded_aside_and_the_clip_is_not_measured(self):
+        aligner = mouth.Aligner()
+        with mock.patch.object(aligner, "_load") as load, mock.patch.object(mouth, "warm") as warm:
+            self.assertIsNone(aligner.measure("hello sir", b"wav", load=False))
+        load.assert_not_called()
+        warm.assert_called_once()
+
+    def test_a_model_loading_holds_the_lock_but_a_reply_does_not_wait_for_it(self):
+        aligner = mouth.Aligner()
+        with aligner._lock, mock.patch.object(mouth, "warm"):
+            self.assertIsNone(aligner.measure("hello sir", b"wav", load=False))
