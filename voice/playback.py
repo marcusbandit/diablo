@@ -13,7 +13,8 @@ before the sound (tests/live_tts_sync.py).
 
 The stream opens on prime(), which the speaker calls when it starts fetching a reply, so a
 sleeping sink wakes during the fetch. It closes IDLE_S after the last clip, so the sink can go
-back to sleep. It plays as application.name "Diablo", the name the sound hold leaves alone.
+back to sleep; once primed it waits up to PRIMED_S for the first clip, since a reply can take
+that long to fetch. It plays as application.name "Diablo", the name the sound hold leaves alone.
 """
 
 import collections
@@ -28,9 +29,14 @@ log = logging.getLogger("diablo.playback")
 
 RATE = 24000
 IDLE_S = 4.0
+PRIMED_S = 20.0
 LATENCY_S = 0.04
 APP = "Diablo"
 _env_lock = threading.Lock()
+
+
+class Unavailable(Exception):
+    """The stream could not play a clip; the caller plays it another way."""
 
 
 class Clip:
@@ -88,10 +94,13 @@ class Output:
         self._closer = None
 
     def prime(self, rate=RATE):
-        """Opens the stream now, playing silence, so the device is awake when the clip comes."""
+        """Opens the stream now, playing silence, so the device is awake when the clip comes. A
+        stream already open stays as it is, whatever its rate, so a clip playing is never cut."""
         with self._lock:
-            self._ensure(rate)
-            self._schedule_close()
+            if self._stream is None:
+                self._ensure(rate)
+            if not self._queue:
+                self._schedule_close(PRIMED_S)
 
     def play(self, samples, rate):
         clip = Clip(np.asarray(samples, dtype=np.float32), rate)
@@ -142,14 +151,16 @@ class Output:
             self._closer.cancel()
             self._closer = None
 
-    def _schedule_close(self):
+    def _schedule_close(self, after=None):
         self._cancel_close()
-        self._closer = threading.Timer(self._idle_s, self._close_if_idle)
+        self._closer = threading.Timer(self._idle_s if after is None else after, self._close_if_idle)
         self._closer.daemon = True
         self._closer.start()
 
     def _close_if_idle(self):
         with self._lock:
+            if self._closer is not threading.current_thread():
+                return
             if self._queue:
                 self._schedule_close()
                 return
@@ -157,8 +168,7 @@ class Output:
             self._shut()
 
     def _finish(self, clip, at):
-        if clip.heard_at is None:
-            clip.heard_at, clip.heard_wall = at, self._wall() + (at - self._clock())
+        """A clip taken off the queue early. One that never played keeps heard_at None."""
         clip.ended_at = at
         clip.started.set()
         clip.finished.set()

@@ -79,8 +79,6 @@ class Speaker:
         self._sleep = sleep
         self._gap = gap or (lambda: random.uniform(*GAP_SECONDS))
         self._spawn = spawn or _spawn_player
-        # In process playback knows when each sample is heard; a spawned player is the fallback,
-        # and what a test that hands in its own player gets.
         self._output = output if output is not None else (None if spawn else playback.Output())
         # Breath between sentences of one reply; the turn gap is for separate replies.
         self.pause = 0.25
@@ -193,7 +191,7 @@ class Speaker:
         if self._output is not None:
             try:
                 return self._play_out(wav_bytes, interruptible, duration, track, on_heard)
-            except Exception:
+            except playback.Unavailable:
                 log.exception("the voice stream failed, playing this clip through pw-play")
         return self._play_spawned(wav_bytes, interruptible, duration, track, on_heard)
 
@@ -201,24 +199,34 @@ class Speaker:
         """Plays on the stream and follows its clock: the mouth is anchored to the moment the
         first sample is heard, on_heard runs at that moment, and this returns once the last
         sample (or the cut) has been heard."""
-        samples, rate = mouth._pcm(wav_bytes)
-        clip = self._output.play(samples, rate)
+        try:
+            samples, rate = mouth._pcm(wav_bytes)
+            clip = self._output.play(samples, rate)
+        except Exception as error:
+            raise playback.Unavailable(str(error)) from error
         asked = self._clock()
-        while not clip.started.wait(0.005):
+        while not clip.started.wait(0.02):
             if self._cut(interruptible):
                 self._output.cut(clip)
                 clip.finished.wait(1.0)
                 return "interrupted", 0.0, duration
             if self._clock() - asked > 2.0:
-                self._output.cut(clip)
-                raise RuntimeError("the voice stream never asked for audio")
+                self._output.close()
+                raise playback.Unavailable("the voice stream never asked for audio")
+        if clip.heard_at is None:
+            return "interrupted", 0.0, duration
         mouth.playing(track, clip.seconds, at=clip.heard_wall)
         state = "done"
-        if on_heard is not None:
-            if self._until(clip.heard_at, interruptible):
+        if on_heard is not None and self._until(clip.heard_at, interruptible):
+            try:
                 on_heard()
-        while not clip.finished.wait(0.005):
-            if self._cut(interruptible) or self._clock() > clip.heard_at + clip.seconds + 2.0:
+            except Exception:
+                log.exception("the start of speech hook failed")
+        while not clip.finished.wait(0.02):
+            if self._clock() > clip.heard_at + clip.seconds + 2.0:
+                self._output.close()
+                break
+            if self._cut(interruptible):
                 self._output.cut(clip)
                 clip.finished.wait(1.0)
                 state = "interrupted"
@@ -243,7 +251,7 @@ class Speaker:
             # Hold for the clip's full measured length even if the player exits
             # early; the length is the truth about how long he is talking.
             while proc.poll() is None or self._clock() - started < duration:
-                if self._killed.is_set() or (interruptible and self.capture.interrupted.is_set()):
+                if self._cut(interruptible):
                     proc.kill()
                     proc.wait()
                     return "interrupted", self._clock() - started, duration

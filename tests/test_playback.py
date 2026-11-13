@@ -123,8 +123,28 @@ class TestOutputClock(unittest.TestCase):
         output = playback.Output(opener=lambda rate, cb: self.streams.append(Stream(rate, cb)) or self.streams[-1],
                                  idle_s=0.05)
         output.prime(1000)
+        output.release()
         output._closer.join(1.0)
         self.assertTrue(self.streams[-1].closed)
+
+    def test_priming_while_a_clip_plays_at_another_rate_leaves_it_playing(self):
+        clip = self.output.play(np.full(5000, 0.5), 22050)
+        self.output.prime()
+        self.assertEqual(len(self.streams), 1)
+        self.assertFalse(clip.cut)
+
+    def test_a_clip_closed_before_it_played_was_never_heard(self):
+        clip = self.output.play(np.zeros(100), 1000)
+        self.output.close()
+        self.assertTrue(clip.started.is_set())
+        self.assertIsNone(clip.heard_at)
+
+    def test_a_timer_that_was_replaced_does_not_close_the_stream(self):
+        self.output.prime(1000)
+        stale = threading.Thread(target=self.output._close_if_idle)
+        stale.start()
+        stale.join()
+        self.assertFalse(self.streams[-1].closed)
 
 
 def make_wav(seconds, rate=24000):
@@ -243,6 +263,29 @@ class TestSpeakerFollowsThePlaybackClock(unittest.TestCase):
         self.speaker._play_spawned = mock.Mock(return_value=("done", 0.2, 0.2))
         state, _, _ = self.speaker._speak([make_wav(0.2)], False)
         self.assertEqual(state, "done")
+        self.speaker._play_spawned.assert_called_once()
+
+    def test_a_failing_start_hook_does_not_replay_the_clip_through_pw_play(self):
+        self.speaker._play_spawned = mock.Mock()
+
+        def boom():
+            raise OSError("disk full")
+
+        state, _, _ = self.speaker._speak([make_wav(0.2)], False, on_heard=boom)
+        self.assertEqual(state, "done")
+        self.speaker._play_spawned.assert_not_called()
+
+    def test_a_stream_that_never_asks_for_audio_is_closed_and_the_clip_falls_back(self):
+        closed = []
+        self.output.close = lambda: closed.append(True)
+        self.output.play = lambda samples, rate: playback.Clip(samples, rate)
+        self.speaker._play_spawned = mock.Mock(return_value=("done", 0.2, 0.2))
+        self.clock.sleep(0)
+        ticking = threading.Thread(target=lambda: [self.clock.sleep(0.5) or __import__("time").sleep(0.01)
+                                                   for _ in range(20)], daemon=True)
+        ticking.start()
+        self.speaker._speak([make_wav(0.2)], False)
+        self.assertEqual(closed, [True])
         self.speaker._play_spawned.assert_called_once()
 
     def test_say_wakes_the_output_before_fetching(self):

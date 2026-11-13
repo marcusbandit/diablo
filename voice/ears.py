@@ -1359,8 +1359,6 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
         tl.note(reply=words[:300])
     if not tl.info.get("act", "").startswith("quick"):
         presence.show_reply(words)
-    # The talking face comes on with the first sample he is heard saying and goes off with the
-    # last, not when the words arrive or the stream ends (voice/playback.py has the clock).
     after = "listening" if STICKY.get("loop") else "asleep"
 
     def heard():
@@ -1371,11 +1369,18 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
             if _last_state == "speaking":
                 _set_state(after)
 
-    if detector is None:
-        speaker.say(words, cfg, interruptible=False, on_heard=heard, on_done=done)
-        tl.mark(marks[1])
-        return False
-    return speak_until_named(mic, speaker, words, cfg, detector, tap, tl, marks, on_heard=heard, on_done=done)
+    if LIVE is not None:
+        LIVE.set_state("speaking")
+    try:
+        if detector is None:
+            speaker.say(words, cfg, interruptible=False, on_heard=heard, on_done=done)
+            tl.mark(marks[1])
+            return False
+        return speak_until_named(mic, speaker, words, cfg, detector, tap, tl, marks, on_heard=heard, on_done=done)
+    finally:
+        with _state_lock:
+            if LIVE is not None and _last_state != "speaking":
+                LIVE.set_state(_last_state or "asleep")
 
 
 def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=None):
