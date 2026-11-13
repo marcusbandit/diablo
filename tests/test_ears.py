@@ -265,7 +265,10 @@ class FakeSpeaker:
         time.sleep(self.fetch_s)
         return b"wav"
 
-    def _speak(self, wavs, interruptible, cfg=None):
+    def prime(self):
+        pass
+
+    def _speak(self, wavs, interruptible, cfg=None, on_heard=None, on_done=None):
         self.played = True
         self.stopped.wait(self.play_s)
 

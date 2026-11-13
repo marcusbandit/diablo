@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 
-from . import chime, eyes, hubclient, interrupt, mouth
+from . import chime, eyes, hubclient, interrupt, mouth, playback
 from . import state as vstate
 
 log = logging.getLogger("diablo.tts")
@@ -67,7 +67,8 @@ class Speaker:
     starts, so he can never talk over himself, whichever thread asked.
     """
 
-    def __init__(self, cfg, capture, clock=time.monotonic, sleep=time.sleep, gap=None, spawn=None, hold=None):
+    def __init__(self, cfg, capture, clock=time.monotonic, sleep=time.sleep, gap=None, spawn=None, hold=None,
+                 output=None):
         self.capture = capture
         self.cfg = cfg
         self._holder = hold
@@ -78,6 +79,9 @@ class Speaker:
         self._sleep = sleep
         self._gap = gap or (lambda: random.uniform(*GAP_SECONDS))
         self._spawn = spawn or _spawn_player
+        # In process playback knows when each sample is heard; a spawned player is the fallback,
+        # and what a test that hands in its own player gets.
+        self._output = output if output is not None else (None if spawn else playback.Output())
         # Breath between sentences of one reply; the turn gap is for separate replies.
         self.pause = 0.25
         self._killed = threading.Event()
@@ -163,7 +167,70 @@ class Speaker:
         except (TypeError, ValueError):
             return 0.06
 
-    def _play(self, wav_bytes, interruptible, duration, track=None):
+    def prime(self):
+        """A reply is coming: wake the output now, while the speech is fetched."""
+        if self._output is None:
+            return
+        try:
+            self._output.prime()
+        except Exception:
+            log.exception("could not open the voice stream ahead of the reply")
+
+    def _cut(self, interruptible):
+        return self._killed.is_set() or (interruptible and self.capture.interrupted.is_set())
+
+    def _until(self, at, interruptible=None):
+        """Sleeps until the monotonic time `at`. False when a cut came first."""
+        while True:
+            if interruptible is not None and self._cut(interruptible):
+                return False
+            remaining = at - self._clock()
+            if remaining <= 0:
+                return True
+            self._sleep(min(remaining, 0.005))
+
+    def _play(self, wav_bytes, interruptible, duration, track=None, on_heard=None):
+        if self._output is not None:
+            try:
+                return self._play_out(wav_bytes, interruptible, duration, track, on_heard)
+            except Exception:
+                log.exception("the voice stream failed, playing this clip through pw-play")
+        return self._play_spawned(wav_bytes, interruptible, duration, track, on_heard)
+
+    def _play_out(self, wav_bytes, interruptible, duration, track, on_heard):
+        """Plays on the stream and follows its clock: the mouth is anchored to the moment the
+        first sample is heard, on_heard runs at that moment, and this returns once the last
+        sample (or the cut) has been heard."""
+        samples, rate = mouth._pcm(wav_bytes)
+        clip = self._output.play(samples, rate)
+        asked = self._clock()
+        while not clip.started.wait(0.005):
+            if self._cut(interruptible):
+                self._output.cut(clip)
+                clip.finished.wait(1.0)
+                return "interrupted", 0.0, duration
+            if self._clock() - asked > 2.0:
+                self._output.cut(clip)
+                raise RuntimeError("the voice stream never asked for audio")
+        mouth.playing(track, clip.seconds, at=clip.heard_wall)
+        state = "done"
+        if on_heard is not None:
+            if self._until(clip.heard_at, interruptible):
+                on_heard()
+        while not clip.finished.wait(0.005):
+            if self._cut(interruptible) or self._clock() > clip.heard_at + clip.seconds + 2.0:
+                self._output.cut(clip)
+                clip.finished.wait(1.0)
+                state = "interrupted"
+                break
+        if clip.ended_at is not None:
+            self._until(clip.ended_at)
+        if clip.cut:
+            state = "interrupted"
+        heard_at = clip.heard_at if clip.heard_at is not None else asked
+        return state, max(0.0, (clip.ended_at or self._clock()) - heard_at), duration
+
+    def _play_spawned(self, wav_bytes, interruptible, duration, track=None, on_heard=None):
         with tempfile.NamedTemporaryFile(suffix=".wav", dir="/tmp/opencode", delete=False) as handle:
             handle.write(wav_bytes)
             path = handle.name
@@ -171,6 +238,8 @@ class Speaker:
             proc = self._spawn(path)
             started = self._clock()
             mouth.playing(track, duration, self._latency())
+            if on_heard is not None:
+                on_heard()
             # Hold for the clip's full measured length even if the player exits
             # early; the length is the truth about how long he is talking.
             while proc.poll() is None or self._clock() - started < duration:
@@ -215,13 +284,16 @@ class Speaker:
             log.exception("holding other sound failed, speaking anyway")
             return None
 
-    def _speak(self, wavs, interruptible, cfg=None):
+    def _speak(self, wavs, interruptible, cfg=None, on_heard=None, on_done=None):
         """Plays WAV byte strings back to back inside one turn.
 
         The mic is muted from the first clip to the last, a short pause sits
         between clips, and the turn gap is charged once at the end. Other sound
         is held from the first clip until the last has played, failed or been
         cut off (speakers.SoundHold, setting speech_hold).
+
+        on_heard runs when the first sample of the first clip reaches the speakers, on_done when
+        the last one has, before the mouth is cleared.
         """
         state, elapsed, duration = "unspoken", 0.0, 0.0
         held = None
@@ -246,12 +318,20 @@ class Speaker:
                     clip = _wav_seconds_bytes(wav) or len(wav) / 48000.0
                     if track is None:
                         track = mouth.by_loudness(wav)
-                    state, took, clip = self._play(wav, interruptible, clip, track)
+                    state, took, clip = self._play(wav, interruptible, clip, track, on_heard)
+                    on_heard = None
                     elapsed += took
                     duration += clip
                     if state == "interrupted":
                         break
             finally:
+                if began and on_done is not None:
+                    try:
+                        on_done()
+                    except Exception:
+                        log.exception("the end of speech hook failed")
+                if self._output is not None:
+                    self._output.release()
                 if began:
                     # cleared once the whole reply is over: between its sentences the track
                     # has simply run out, which shows the resting mouth
@@ -266,17 +346,19 @@ class Speaker:
                         log.exception("giving back the sound failed")
         return (state, elapsed, duration)
 
-    def say(self, text, cfg, interruptible=True):
+    def say(self, text, cfg, interruptible=True, on_heard=None, on_done=None):
         from . import state as vstate
         if vstate.is_deaf():
             return ("unspoken", 0.0, 0.0)
         self.cfg = cfg
+        self.prime()
         spoken = interrupt.scrub(text)
         looks = eyes.tag_soon(spoken)  # beside the speech fetch, so the reply does not wait for it
         wav = self._fetch(text, cfg)
         if wav is None:
             return ("unspoken", 0.0, 0.0)
-        return self._speak([(wav, mouth.face_for(spoken, wav, looks(EYES_WAIT)))], interruptible, cfg)
+        return self._speak([(wav, mouth.face_for(spoken, wav, looks(EYES_WAIT)))], interruptible, cfg,
+                           on_heard=on_heard, on_done=on_done)
 
     def play_wav(self, wav, interruptible=False):
         """Plays audio already in hand, such as a cached acknowledgement."""
@@ -297,6 +379,7 @@ class Speaker:
                 pass
             return ("unspoken", 0.0, 0.0)
         self.cfg = cfg
+        self.prime()
         ready = queue.Queue()
 
         def fetch_ahead():

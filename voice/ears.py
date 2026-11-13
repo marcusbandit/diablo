@@ -1359,12 +1359,23 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
         tl.note(reply=words[:300])
     if not tl.info.get("act", "").startswith("quick"):
         presence.show_reply(words)
-    set_state("speaking")
+    # The talking face comes on with the first sample he is heard saying and goes off with the
+    # last, not when the words arrive or the stream ends (voice/playback.py has the clock).
+    after = "listening" if STICKY.get("loop") else "asleep"
+
+    def heard():
+        set_state("speaking")
+
+    def done():
+        with _state_lock:
+            if _last_state == "speaking":
+                _set_state(after)
+
     if detector is None:
-        speaker.say(words, cfg, interruptible=False)
+        speaker.say(words, cfg, interruptible=False, on_heard=heard, on_done=done)
         tl.mark(marks[1])
         return False
-    return speak_until_named(mic, speaker, words, cfg, detector, tap, tl, marks)
+    return speak_until_named(mic, speaker, words, cfg, detector, tap, tl, marks, on_heard=heard, on_done=done)
 
 
 def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=None):
@@ -1532,7 +1543,8 @@ BARGE_SLACK = 0.1
 MIN_BARGE_BLOCKS = 12
 
 
-def speak_until_named(mic, speaker, words, cfg, detector, tap, tl=None, marks=("tts_ready", "spoken")):
+def speak_until_named(mic, speaker, words, cfg, detector, tap, tl=None, marks=("tts_ready", "spoken"),
+                      on_heard=None, on_done=None):
     """Speaks the reply while still listening for the name. True when Marcus said it."""
     import threading
 
@@ -1543,11 +1555,12 @@ def speak_until_named(mic, speaker, words, cfg, detector, tap, tl=None, marks=("
             if vstate.is_deaf():
                 return
             # Fetch, then play, so a cut during the fetch means nothing plays at all.
+            speaker.prime()
             wav = speaker._fetch(words, cfg)
             if tl is not None:
                 tl.mark(marks[0])
             if wav and not cancel.is_set():
-                speaker._speak([wav], False, cfg)
+                speaker._speak([wav], False, cfg, on_heard=on_heard, on_done=on_done)
                 if tl is not None:
                     tl.mark(marks[1])
         except Exception:
