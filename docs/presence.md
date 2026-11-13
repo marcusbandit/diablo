@@ -1,11 +1,13 @@
 # Diablo on the screen
 
 An orb beside the cursor shows what he is doing while Marcus talks to him or a turn of his runs,
-and cards show what he answers. Asleep he is a small grey orb resting in the bottom right corner
-of the monitor he was last on, and the cursor is not asked at all; the first cursor answer after
-he wakes brings him over. It is its own Quickshell instance (`presence/`, run by `diablo-presence.service`), so a
-crash here never touches banditshell, and Quickshell reloads the QML when a file changes, so
-Diablo can change his own look by editing those files.
+and cards show what he answers. Asleep he is gone and the cursor is not asked at all. Waking
+brings him up beside the cursor, and 25 seconds after Marcus last talked to him or his last turn
+ended (`lingerMs`) he fades out again; until then he follows the cursor with his sleepy face.
+With following off he sits in the corner and goes as soon as he is done. It is its own
+Quickshell instance (`presence/`, run by `diablo-presence.service`), so a crash here never
+touches banditshell, and Quickshell reloads the QML when a file changes, so Diablo can change
+his own look by editing those files.
 
 Install once: `cp deploy/diablo-presence.service ~/.config/systemd/user/ && systemctl --user enable --now diablo-presence`.
 
