@@ -7,6 +7,7 @@ _diablo-ears() {
     'retrain:train again from the recordings already saved'
     'status:model, threshold, measured false wakes, service state'
     'chimes:play every sound he makes, one after another'
+    'mouth:tune his mouth to his voice by eye'
     'timings:where the time of each recent turn went'
     'recordings:the last turns recordings and what was heard'
     'recheck:run a recording through gvoice again'
@@ -20,6 +21,12 @@ _diablo-ears() {
     local -a ids
     ids=(last ${(f)"$(ls ~/.local/share/diablo/turns/*.wav(N:t:r) 2>/dev/null | tail -20)"})
     _describe -t ids 'recording' ids
+  elif [[ $words[2] == mouth ]] && (( CURRENT == 3 )); then
+    local -a sub
+    sub=('open:the tuner window' 'show:the saved delay' 'set:save a delay in milliseconds')
+    _describe -t sub 'mouth command' sub
+  elif [[ $words[2] == mouth && $words[3] == set ]]; then
+    _message 'milliseconds, later is positive'
   elif [[ $words[2] == timings ]]; then
     _arguments '--last[how many turns]:number' '--html[write the waterfall as a page]:file:_files'
   fi

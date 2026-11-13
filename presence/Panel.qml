@@ -17,6 +17,8 @@ Rectangle {
     signal closeRequested
     signal viewRequested(string view)
     signal followChanged(bool on)
+    property int mouthDelayMs: 0
+    signal tuneMouthRequested
 
     color: Qt.rgba(0.06, 0.07, 0.08, 0.96)
     radius: 20
@@ -271,6 +273,33 @@ Rectangle {
                 detail: on ? "He sits beside the pointer and glides after it." : "He waits in the bottom right corner."
                 on: panel.followCursor
                 onToggled: on => panel.followChanged(on)
+            }
+
+            SectionTitle { text: "His mouth" }
+
+            Item {
+                width: settingsColumn.width
+                implicitHeight: 40
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - tuneButton.width - 16
+                    text: panel.mouthDelayMs === 0 ? "In step with his voice"
+                        : `${Math.abs(panel.mouthDelayMs)} ms ${panel.mouthDelayMs > 0 ? "after" : "before"} his voice`
+                    color: panel.style.strong
+                    font.family: panel.style.family
+                    font.pixelSize: panel.style.normal + 1
+                    elide: Text.ElideRight
+                }
+
+                PillButton {
+                    id: tuneButton
+
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Tune his mouth"
+                    onClicked: panel.tuneMouthRequested()
+                }
             }
 
             SectionTitle { text: "Ears" }
