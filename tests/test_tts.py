@@ -191,6 +191,25 @@ class TestSpeakerTurns(unittest.TestCase):
             self.assertGreaterEqual(start_b, end_a + 0.1 - 0.02)
 
 
+class TestFetchFace(unittest.TestCase):
+    def test_a_line_comes_with_its_measured_mouth_and_eyes(self):
+        speaker = make_speaker(FakeClock(), {"hello sir": make_wav(1.0)})
+        track = {"mouth": [(0.0, "oo"), (0.2, "ee")], "eyes": [(0.0, "happy")]}
+        with mock.patch("voice.eyes.tag_soon", return_value=lambda wait: ["happy"]), \
+                mock.patch("voice.mouth.face_for", return_value=track) as face_for:
+            wav, got = speaker.fetch_face("hello sir", {})
+        self.assertEqual(got, track)
+        self.assertEqual(face_for.call_args.args[0], "hello sir")
+        self.assertEqual(face_for.call_args.args[1], wav)
+        self.assertEqual(face_for.call_args.args[2], ["happy"])
+
+    def test_nothing_fetched_is_none(self):
+        speaker = make_speaker(FakeClock(), {})
+        speaker._fetch = lambda text, cfg: None
+        with mock.patch("voice.eyes.tag_soon", return_value=lambda wait: []):
+            self.assertIsNone(speaker.fetch_face("hello sir", {}))
+
+
 class TestSayStream(unittest.TestCase):
     def setUp(self):
         for target in ("voice.state.is_deaf", "voice.state.is_muted"):

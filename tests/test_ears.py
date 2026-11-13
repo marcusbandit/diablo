@@ -505,18 +505,20 @@ class FakeSpeaker:
         self.play_s, self.fetch_s = play_s, fetch_s
         self.stopped = threading.Event()
         self.played = False
+        self.spoken = None
 
-    def _fetch(self, words, cfg):
+    def fetch_face(self, words, cfg):
         import time
 
         time.sleep(self.fetch_s)
-        return b"wav"
+        return b"wav", {"mouth": [(0.0, "open"), (0.1, "ee")], "eyes": []}
 
     def prime(self):
         pass
 
     def _speak(self, wavs, interruptible, cfg=None, on_heard=None, on_done=None):
         self.played = True
+        self.spoken = wavs
         self.stopped.wait(self.play_s)
 
     def stop_now(self):
@@ -580,6 +582,13 @@ class TestBargeIn(unittest.TestCase):
         speaker = FakeSpeaker(play_s=0.5)
         self.assertFalse(self.run_reply(speaker, fire_at=10, echo=True))
         self.assertFalse(speaker.stopped.is_set())
+
+    def test_the_reply_plays_with_its_measured_face_not_bare_audio(self):
+        speaker = FakeSpeaker(play_s=0.1)
+        self.run_reply(speaker, fire_at=10_000, echo=False)
+        (clip,) = speaker.spoken
+        self.assertIsInstance(clip, tuple)
+        self.assertEqual(clip[1]["mouth"], [(0.0, "open"), (0.1, "ee")])
 
     def test_a_cut_during_the_fetch_means_nothing_plays(self):
         speaker = FakeSpeaker(play_s=5.0, fetch_s=0.4)

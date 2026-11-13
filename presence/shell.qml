@@ -1,10 +1,12 @@
 // Diablo on the screen: an orb that shows what he is doing, and cards for what he answers.
 // A card grows out of the orb and stays with it (presence/place.js works out where): the orb is
-// up whenever a card is, and the two hold still while the cursor is near them, so a card can be
-// read and clicked, then catch up once the cursor moves well away.
-// The orb sits beside the cursor at all times and follows it from monitor to monitor: big while
-// Marcus is talking to him (listening, thinking, speaking, a voice loop, dictation), small and
-// grey while he sleeps. Only the setting "follow the cursor" off lets him fade out when idle.
+// up whenever a card is, and while he follows the cursor the two hold still while it is near
+// them, so a card can be read and clicked, then catch up once it moves well away.
+// The orb sits beside the cursor and follows it from monitor to monitor while Marcus is talking to
+// him (listening, thinking, speaking, a voice loop, dictation) or a turn of his runs. Asleep he is
+// small and grey and rests in the bottom right corner of the monitor he was last on, and the
+// cursor is not asked at all. The setting "follow the cursor" off keeps him in the corner always
+// and lets him fade out when idle.
 // Its own Quickshell instance, so a crash here never touches banditshell:
 //     qs -p ~/Projects/diablo/presence      (diablo-presence.service runs this)
 // Quickshell reloads these files on save, so Diablo changes his own look by editing them.
@@ -82,9 +84,23 @@ ShellRoot {
     // moment ago, so a count left behind (#215) can never hold the orb up on its own.
     readonly property bool earsBehind: (root.ears.thinking ?? 0) > 0 && root.clock - root.lastBusyAt < 15000
     readonly property bool busy: root.hubBusy || root.earsBehind
-    // With following on he is always up: asleep he is the small grey orb beside the cursor, so
-    // the cursor never loses him. Following off keeps the old rule, up only when he has a reason.
+    // With following on he is always up: asleep he is the small grey orb resting in the corner.
+    // Following off keeps the old rule, up only when he has a reason.
     readonly property bool up: root.followCursor || root.awake || root.busy || root.cardsUp || root.panelOpen
+    // Whether the orb goes after the cursor: only while Marcus is talking to him or a turn runs.
+    readonly property bool follows: root.awake || root.busy
+    // Asleep with nothing to hold out: he goes to rest in the corner instead of beside the cursor.
+    readonly property bool resting: root.followCursor && !root.follows && !root.cardsUp && !root.panelOpen
+    // In the corner: set once he rests, and kept while a card that came later grows out of him
+    // there, until the first cursor answer after he wakes (rejoin) brings him over. A card he
+    // already held when he fell asleep stays where it is until it goes.
+    property bool parked: false
+    property bool rejoin: false
+    onRestingChanged: if (root.resting) root.parked = true
+    Component.onCompleted: root.parked = root.resting
+    // Where the orb is placed: the corner of the monitor, or beside the cursor.
+    readonly property bool cornered: !root.followCursor || root.parked
+    onFollowsChanged: root.rejoin = root.follows && root.parked
     readonly property string busyWords: {
         const turns = root.hubTurns;
         if (turns.length === 0)
@@ -145,8 +161,6 @@ ShellRoot {
     // Set on waking: the cursor kept above is from the last wake until Hyprland answers again.
     // True until the first answer, so the orb starts at the cursor, not in the corner.
     property bool freshWake: true
-    // How many answers in a row came back with the cursor in the same place.
-    property int still: 0
     readonly property var cursorScreen: root.screenAt(root.cursor)
 
     // The screen under a point; a point in a gap between monitors (different heights leave
@@ -394,8 +408,9 @@ ShellRoot {
 
     // Where the cursor is, asked over Hyprland's own socket: one short request per tick, no
     // process spawned. Hyprland answers "x, y" and hangs up, so each tick connects again. The
-    // ticks only run while the orb is up (always, with following on); the rate is below. A request Hyprland never answers is dropped after
-    // 250 ms (askTimeout) so the next tick asks again, instead of waiting on it for good.
+    // ticks only run while the orb follows the cursor, once at the start, and in the corner with
+    // following off; the rate is below. A request Hyprland never answers is dropped after 250 ms
+    // (askTimeout) so the next tick asks again, instead of waiting on it for good.
     Socket {
         id: hypr
 
@@ -415,17 +430,26 @@ ShellRoot {
                 const m = /(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/.exec(data);
                 if (m) {
                     const at = Qt.point(Number(m[1]), Number(m[2]));
-                    root.still = at.x === root.cursor.x && at.y === root.cursor.y ? Math.min(root.still + 1, 1000) : 0;
                     root.cursor = at;
-                    // The first answer after waking is where he is now; start there.
-                    if (root.freshWake) {
-                        root.freshWake = false;
-                        follow.snap();
-                    }
+                    root.answered();
                 }
                 // Hang up first, before Hyprland does, which the socket would log as an error.
                 hypr.connected = false;
             }
+        }
+    }
+
+    // A fresh cursor: the first one after appearing is where he starts; the first one after
+    // waking from rest is where he glides to.
+    function answered() {
+        if (root.freshWake) {
+            root.freshWake = false;
+            root.rejoin = false;
+            follow.snap();
+        } else if (root.rejoin) {
+            root.rejoin = false;
+            root.parked = false;
+            follow.anchor = root.cursor;
         }
     }
 
@@ -436,22 +460,18 @@ ShellRoot {
         onTriggered: hypr.connected = false
     }
 
-    // Following asks 30 times a second while he is doing something or the cursor moves, 4 times
-    // a second once he sleeps and the cursor has sat still for a second, so an idle desktop costs
-    // next to nothing; the first move brings the fast rate back. The corner asks twice.
+    // Following asks 30 times a second, and only while he follows; the corner asks twice.
     Timer {
-        interval: !root.followCursor ? 500 : root.awake || root.busy || root.cardsUp || root.still < 30 ? 33 : 250
+        interval: !root.followCursor ? 500 : 33
         repeat: true
         triggeredOnStart: true
-        running: root.up
+        // Resting he never moves, so nothing asks, except once at the start to pick his monitor.
+        running: root.up && (root.freshWake || root.follows || !root.followCursor)
         onTriggered: {
             if (root.fixedCursor !== "") {
                 const xy = root.fixedCursor.split(",");
                 root.cursor = Qt.point(Number(xy[0]), Number(xy[1]));
-                if (root.freshWake) {
-                    root.freshWake = false;
-                    follow.snap();
-                }
+                root.answered();
                 return;
             }
             if (!hypr.connected)
@@ -466,8 +486,9 @@ ShellRoot {
         id: follow
 
         // The point the orb sits beside: the cursor, except while cards are up, when it holds
-        // where it was until the cursor is well clear of the orb and its cards.
-        property point anchor: root.cursor
+        // where it was until the cursor is well clear of the orb and its cards. Asleep it stays
+        // where he was, so he rests in the corner of that monitor.
+        property point anchor: Qt.point(-1, -1)
 
         screen: root.screenAt(follow.anchor)
         visible: root.up || group.opacity > 0.01
@@ -495,14 +516,14 @@ ShellRoot {
         readonly property real edge: root.orbEdge
         readonly property real localX: follow.anchor.x - (follow.screen?.x ?? 0)
         readonly property real localY: follow.anchor.y - (follow.screen?.y ?? 0)
-        readonly property bool flipX: root.followCursor && follow.localX + follow.gap + group.width > follow.width - follow.edge
-        readonly property bool flipY: root.followCursor && follow.localY + follow.gap + group.height > follow.height - follow.edge
+        readonly property bool flipX: !root.cornered && follow.localX + follow.gap + group.width > follow.width - follow.edge
+        readonly property bool flipY: !root.cornered && follow.localY + follow.gap + group.height > follow.height - follow.edge
         readonly property var panelSpot: Place.panelRect({ w: follow.width, h: follow.height }, follow.edge)
         readonly property real targetX: root.panelOpen ? follow.panelSpot.x + 18 : Math.max(follow.edge, Math.min(follow.width - group.width - follow.edge,
-            !root.followCursor ? follow.width - group.width - 22
+            root.cornered ? follow.width - group.width - 22
             : follow.flipX ? follow.localX - follow.gap - group.width : follow.localX + follow.gap))
         readonly property real targetY: root.panelOpen ? follow.panelSpot.y + 4 : Math.max(follow.edge, Math.min(follow.height - group.height - follow.edge,
-            !root.followCursor ? follow.height - group.height - 22
+            root.cornered ? follow.height - group.height - 22
             : follow.flipY ? follow.localY - follow.gap - group.height : follow.localY + follow.gap))
 
         // A fresh appearance, or a jump to another monitor, starts where he is, not where the
@@ -518,24 +539,36 @@ ShellRoot {
 
             // The last card gone: back beside the cursor, even if it has not moved since.
             function onCardsUpChanged() {
-                if (!root.cardsUp)
+                if (!root.cardsUp && (root.follows || !root.followCursor))
+                    follow.anchor = root.cursor;
+            }
+
+            // The central card closed while he follows: back beside the cursor as well.
+            function onPanelOpenChanged() {
+                if (!root.panelOpen && (root.follows || !root.followCursor))
                     follow.anchor = root.cursor;
             }
 
             function onCursorChanged() {
-                if (root.panelOpen)
-                    return;
-                if (!root.cardsUp) {
-                    follow.anchor = root.cursor;
-                    return;
-                }
-                const sx = follow.screen?.x ?? 0, sy = follow.screen?.y ?? 0;
-                const here = { x: root.cursor.x - sx, y: root.cursor.y - sy };
-                const rects = [{ x: group.x, y: group.y, w: group.width, h: group.height },
-                    { x: cards.x, y: cards.y, w: cards.width, h: cards.height }];
-                if (Place.shouldRejoin(here, rects))
-                    follow.anchor = root.cursor;
+                follow.chase();
             }
+        }
+
+        // Catch up with the cursor, unless he sleeps (he rests where he is), the central card
+        // is open, or the cursor is near the cards he holds.
+        function chase() {
+            if (root.panelOpen || (root.followCursor && !root.follows))
+                return;
+            if (!root.cardsUp) {
+                follow.anchor = root.cursor;
+                return;
+            }
+            const sx = follow.screen?.x ?? 0, sy = follow.screen?.y ?? 0;
+            const here = { x: root.cursor.x - sx, y: root.cursor.y - sy };
+            const rects = [{ x: group.x, y: group.y, w: group.width, h: group.height },
+                { x: cards.x, y: cards.y, w: cards.width, h: cards.height }];
+            if (Place.shouldRejoin(here, rects))
+                follow.anchor = root.cursor;
         }
 
         onScreenChanged: follow.snap()

@@ -224,9 +224,15 @@ class Aligner:
         with self._lock:
             self._load()
 
-    def measure(self, text, wav_bytes, lang="en"):
+    def measure(self, text, wav_bytes, lang="en", load=True):
         """(mouth cues, start of each word in text.split() or None), or None when the clip
-        cannot be measured. `lang` is one of LANGS."""
+        cannot be measured. `lang` is one of LANGS. With load False a model that is not ready
+        is never waited for: it loads in the background and this clip follows the loudness, so
+        a reply never stalls on a load or a retry."""
+        if not load and self._ready is not True:
+            if text:
+                warm()
+            return None
         with self._lock:
             if not text or not self._load():
                 return None
@@ -296,23 +302,29 @@ def spaced(text, lang):
     return re.sub(r"([、。！？])\s*", r"\1 ", text).strip()
 
 
-def face_for(text, wav_bytes, looks=None, lang="en"):
+def face_for(text, wav_bytes, looks=None, lang="en", load=True):
     """The whole face track for a clip: {"mouth": cues, "eyes": cues}. `looks` is one eye
     look per clause (voice/eyes.py); without them the eyes stay neutral. `lang` is one of
-    LANGS; Japanese text should have gone through spaced() first."""
+    LANGS; Japanese text should have gone through spaced() first. `load` as in measure()."""
     from . import eyes
 
-    measured = _aligner.measure(text, wav_bytes, lang) if text else None
+    measured = _aligner.measure(text, wav_bytes, lang, load) if text else None
     mouth_cues, word_starts = measured if measured else (by_loudness(wav_bytes), None)
     duration = seconds(wav_bytes)
     looks = looks or [eyes.NEUTRAL] * len(eyes.clauses(text))
     return {"mouth": mouth_cues, "eyes": eyes.cues(text, looks, word_starts, duration) if text else []}
 
 
+_warming = []
+
+
 def warm():
     """Loads the model in the background so the first reply does not wait for it. Returns the
-    thread, so a caller can wait for it to finish."""
+    thread, so a caller can wait for it to finish; one already loading is returned again."""
+    if _warming and _warming[0].is_alive():
+        return _warming[0]
     thread = threading.Thread(target=_aligner.warm, name="mouth-warm", daemon=True)
+    _warming[:] = [thread]
     thread.start()
     return thread
 
