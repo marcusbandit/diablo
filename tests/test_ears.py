@@ -129,6 +129,157 @@ class TestRecord(unittest.TestCase):
         self.assertFalse(spoke)
 
 
+class TimedMic:
+    """Real time audio: each read takes one block's worth of wall clock, so audio time and the
+    clock agree. level(at) is the loudness at `at` seconds after the mic was made."""
+
+    def __init__(self, level, stop=lambda: False):
+        import time
+
+        self.level, self.stop, self.t0 = level, stop, time.monotonic()
+
+    def read(self, timeout=1.0):
+        import time
+
+        if self.stop():
+            raise RuntimeError("done")
+        time.sleep(wake.CHUNK / wake.RATE)
+        at = time.monotonic() - self.t0
+        return time.monotonic(), np.full(wake.CHUNK, self.level(at), dtype=np.float32)
+
+    def drain(self):
+        pass
+
+
+class LevelVAD:
+    """The speech probability is the loudness itself."""
+
+    def reset(self):
+        pass
+
+    def prob(self, chunk):
+        return float(np.max(np.abs(chunk)))
+
+
+QUIET_CFG = {"silence_tail_s": 1.2, "ears.adaptive": "0"}
+
+
+class TestReadyAnswerEndsTheWait(unittest.TestCase):
+    """2026-11-13: in speech control a finished answer waited for his next line and then came
+    out as the reply to it, so the centering answers kept playing after each new order."""
+
+    def tearDown(self):
+        ears.PENDING.jobs.clear()
+
+    def test_a_ready_answer_ends_the_wait_while_he_is_quiet(self):
+        import time
+
+        started = time.monotonic()
+        _, spoke = ears.record(TimedMic(lambda at: 0.0), QUIET_CFG, 0.0, LevelVAD(), no_speech_s=30,
+                               interrupt=lambda: True)
+        self.assertFalse(spoke)
+        self.assertLess(time.monotonic() - started, 3.0)
+
+    def test_the_soft_start_of_his_line_holds_the_answer_back(self):
+        level = lambda at: 0.35 if 0.2 <= at < 0.6 else 0.9 if 0.6 <= at < 1.4 else 0.0
+        _, spoke = ears.record(TimedMic(level), QUIET_CFG, 0.0, LevelVAD(), no_speech_s=30, interrupt=lambda: True)
+        self.assertTrue(spoke)
+
+    def test_his_line_is_never_cut_for_a_ready_answer(self):
+        level = lambda at: 0.9 if at < 1.0 else 0.0
+        audio, spoke = ears.record(TimedMic(level), QUIET_CFG, 0.0, LevelVAD(), no_speech_s=30, interrupt=lambda: True)
+        self.assertTrue(spoke)
+        self.assertGreater(len(audio) / wake.RATE, 1.0)
+
+    def test_speech_control_listens_for_ready_answers_only(self):
+        import threading
+        from unittest import mock
+
+        seen = {}
+
+        def fake_record(*args, **kwargs):
+            seen.update(kwargs)
+            return ears.Heard(np.zeros(0, dtype=np.float32), False)
+
+        settings = mock.Mock(get=lambda: {})
+        with mock.patch.object(ears, "record", side_effect=fake_record), mock.patch.object(ears, "set_state"):
+            self.assertIsNone(ears.loop_turn(None, settings, None, LevelVAD()))
+        ready = seen["interrupt"]
+        self.assertFalse(ready())
+        done = threading.Event()
+        done.set()
+        job = {"done": done, "words": "Done.", "tl": None, "said": "x", "dropped": False, "early": []}
+        ears.PENDING.jobs.append(job)
+        self.assertTrue(ready())
+        job["dropped"] = True
+        self.assertFalse(ready())
+        self.assertEqual(ears.PENDING.thinking(), 0)
+
+
+class TestSpeechControlAnswersInOrder(unittest.TestCase):
+    """Two lines back to back in speech control, each answer slower than INLINE_WAIT_S: the
+    first answer is spoken before the second line starts, and each reply is its own line's."""
+
+    def tearDown(self):
+        ears.PENDING.jobs.clear()
+
+    def test_each_answer_is_spoken_before_the_next_line_and_matches_it(self):
+        import time
+        from unittest import mock
+
+        from voice import timeline
+
+        events, said = [], []
+        two_at = 4.5
+
+        def level(at):
+            if 0.2 <= at < 1.0:
+                return 0.6
+            if two_at <= at < two_at + 0.8:
+                if "line two starts" not in events:
+                    events.append("line two starts")
+                return 0.9
+            return 0.0
+
+        mic = TimedMic(level, stop=lambda: len(said) >= 2)
+
+        def transcribe(audio, cfg):
+            return "line two" if np.max(np.abs(audio)) > 0.75 else "line one"
+
+        def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
+            time.sleep(0.3)
+            return f"answer to {text}"
+
+        def say_answer(mic_, speaker, words, cfg, detector, tap, tl=None, first=False):
+            said.append(words)
+            events.append(f"said {words}")
+            return False
+
+        cfg = dict(QUIET_CFG, **{"ears.loop_idle_s": 10})
+        settings = mock.Mock(get=lambda: cfg)
+        with mock.patch.object(ears, "INLINE_WAIT_S", 0.05), \
+                mock.patch.object(ears, "listening", side_effect=lambda: len(said) < 2), \
+                mock.patch.object(ears, "transcribe", side_effect=transcribe), \
+                mock.patch.object(ears, "answer_words", side_effect=answer_words), \
+                mock.patch.object(ears, "say_answer", side_effect=say_answer), \
+                mock.patch.object(ears, "talk_ok", return_value=(True, 1.0)), \
+                mock.patch.object(ears, "early_read", return_value={}), \
+                mock.patch.object(ears, "control", return_value={}), \
+                mock.patch.object(ears, "local_line", return_value=None), \
+                mock.patch.object(ears, "set_state"), mock.patch.object(ears, "thinking_changed"), \
+                mock.patch.object(ears, "feedback"), mock.patch.object(ears, "chime"), \
+                mock.patch.object(ears, "recordings"), mock.patch.object(ears, "surroundings") as around, \
+                mock.patch.object(ears.speakers, "Hold"), \
+                mock.patch.object(ears.commands, "desktop_state", return_value={}), \
+                mock.patch.object(ears.commands, "loop_intent", return_value=None), \
+                mock.patch.object(timeline.Timeline, "save"), mock.patch.object(ears.log, "exception"):
+            around.lines.return_value = []
+            around.points_at_screen.return_value = False
+            ears.voice_loop(mic, settings, None, LevelVAD())
+        self.assertEqual(said, ["answer to line one", "answer to line two"])
+        self.assertLess(events.index("said answer to line one"), events.index("line two starts"))
+
+
 class TestSpoken(unittest.TestCase):
     def test_code_and_links_are_not_read_aloud(self):
         reply = "Done. Here:\n```sh\nrm -rf x\n```\nSee [the docs](https://x.y/z) or https://a.b."
