@@ -60,7 +60,8 @@ ShellRoot {
     readonly property bool testRun: (Quickshell.env("DIABLO_PRESENCE_TEST") ?? "") !== ""
 
     // Awake is only what Marcus started by talking to him: a turn he is listening to, thinking
-    // on or answering, a voice loop, dictation. Everything else stays hidden: "waking" comes
+    // on or answering, a voice loop, dictation. It picks the big orb and the words beside it;
+    // everything else is the small grey one (hidden only with following off): "waking" comes
     // before the wake is checked, so a refused one would flash him up, and answers still
     // thinking in the background or a passing moment are not Marcus talking to him.
     readonly property bool awake: ["listening", "thinking", "speaking"].includes(root.ears.state ?? "asleep")
@@ -139,7 +140,8 @@ ShellRoot {
     // The cursor in Hyprland's global layout coordinates, the same space the screens' x and y use.
     property point cursor: Qt.point(-1, -1)
     // Set on waking: the cursor kept above is from the last wake until Hyprland answers again.
-    property bool freshWake: false
+    // True until the first answer, so the orb starts at the cursor, not in the corner.
+    property bool freshWake: true
     // How many answers in a row came back with the cursor in the same place.
     property int still: 0
     readonly property var cursorScreen: root.screenAt(root.cursor)
@@ -148,19 +150,8 @@ ShellRoot {
     // dead corners in the layout) goes to the nearest screen, not the first one.
     function screenAt(p: point): var {
         const all = Quickshell.screens;
-        let best = null, bestD = Infinity;
-        for (const s of all) {
-            const dx = Math.max(s.x - p.x, 0, p.x - (s.x + s.width));
-            const dy = Math.max(s.y - p.y, 0, p.y - (s.y + s.height));
-            const d = dx * dx + dy * dy;
-            if (d === 0)
-                return s;
-            if (d < bestD) {
-                bestD = d;
-                best = s;
-            }
-        }
-        return best;
+        const i = Place.nearestRect(p, all.map(s => ({ x: s.x, y: s.y, w: s.width, h: s.height })));
+        return i < 0 ? null : all[i];
     }
 
     onEarsChanged: {
@@ -383,8 +374,7 @@ ShellRoot {
 
     // Where the cursor is, asked over Hyprland's own socket: one short request per tick, no
     // process spawned. Hyprland answers "x, y" and hangs up, so each tick connects again. The
-    // ticks only run while the orb is up; following asks 30 times a second, the corner only
-    // needs the monitor and asks twice. A request Hyprland never answers is dropped after
+    // ticks only run while the orb is up (always, with following on); the rate is below. A request Hyprland never answers is dropped after
     // 250 ms (askTimeout) so the next tick asks again, instead of waiting on it for good.
     Socket {
         id: hypr
@@ -405,7 +395,7 @@ ShellRoot {
                 const m = /(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/.exec(data);
                 if (m) {
                     const at = Qt.point(Number(m[1]), Number(m[2]));
-                    root.still = at === root.cursor || (at.x === root.cursor.x && at.y === root.cursor.y) ? root.still + 1 : 0;
+                    root.still = at.x === root.cursor.x && at.y === root.cursor.y ? Math.min(root.still + 1, 1000) : 0;
                     root.cursor = at;
                     // The first answer after waking is where he is now; start there.
                     if (root.freshWake) {
