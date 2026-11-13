@@ -2,9 +2,10 @@
 // A card grows out of the orb and stays with it (presence/place.js works out where): the orb is
 // up whenever a card is, and the two hold still while the cursor is near them, so a card can be
 // read and clicked, then catch up once the cursor moves well away.
-// While Marcus is talking to him (listening, thinking, speaking, a voice loop,
-// dictation) the orb sits beside the cursor and follows it from monitor to monitor; while he
-// sleeps it fades out and its surface goes away, so nothing polls and nothing is drawn. Its own Quickshell instance, so a crash here never touches banditshell:
+// The orb sits beside the cursor at all times and follows it from monitor to monitor: big while
+// Marcus is talking to him (listening, thinking, speaking, a voice loop, dictation), small and
+// grey while he sleeps. Only the setting "follow the cursor" off lets him fade out when idle.
+// Its own Quickshell instance, so a crash here never touches banditshell:
 //     qs -p ~/Projects/diablo/presence      (diablo-presence.service runs this)
 // Quickshell reloads these files on save, so Diablo changes his own look by editing them.
 //
@@ -77,7 +78,9 @@ ShellRoot {
     // moment ago, so a count left behind (#215) can never hold the orb up on its own.
     readonly property bool earsBehind: (root.ears.thinking ?? 0) > 0 && root.clock - root.lastBusyAt < 15000
     readonly property bool busy: root.hubBusy || root.earsBehind
-    readonly property bool up: root.awake || root.busy || root.cardsUp || root.panelOpen
+    // With following on he is always up: asleep he is the small grey orb beside the cursor, so
+    // the cursor never loses him. Following off keeps the old rule, up only when he has a reason.
+    readonly property bool up: root.followCursor || root.awake || root.busy || root.cardsUp || root.panelOpen
     readonly property string busyWords: {
         const turns = root.hubTurns;
         if (turns.length === 0)
@@ -137,15 +140,27 @@ ShellRoot {
     property point cursor: Qt.point(-1, -1)
     // Set on waking: the cursor kept above is from the last wake until Hyprland answers again.
     property bool freshWake: false
+    // How many answers in a row came back with the cursor in the same place.
+    property int still: 0
     readonly property var cursorScreen: root.screenAt(root.cursor)
 
+    // The screen under a point; a point in a gap between monitors (different heights leave
+    // dead corners in the layout) goes to the nearest screen, not the first one.
     function screenAt(p: point): var {
         const all = Quickshell.screens;
+        let best = null, bestD = Infinity;
         for (const s of all) {
-            if (p.x >= s.x && p.x < s.x + s.width && p.y >= s.y && p.y < s.y + s.height)
+            const dx = Math.max(s.x - p.x, 0, p.x - (s.x + s.width));
+            const dy = Math.max(s.y - p.y, 0, p.y - (s.y + s.height));
+            const d = dx * dx + dy * dy;
+            if (d === 0)
                 return s;
+            if (d < bestD) {
+                bestD = d;
+                best = s;
+            }
         }
-        return all.length > 0 ? all[0] : null;
+        return best;
     }
 
     onEarsChanged: {
@@ -242,7 +257,7 @@ ShellRoot {
     Timer {
         interval: 50
         repeat: true
-        running: root.up || root.webSent !== ""
+        running: root.cardsUp || root.panelOpen || root.webSent !== ""
         onTriggered: {
             const t = root.webTarget();
             let msg = { page: "" };
@@ -369,7 +384,8 @@ ShellRoot {
     // Where the cursor is, asked over Hyprland's own socket: one short request per tick, no
     // process spawned. Hyprland answers "x, y" and hangs up, so each tick connects again. The
     // ticks only run while the orb is up; following asks 30 times a second, the corner only
-    // needs the monitor and asks twice.
+    // needs the monitor and asks twice. A request Hyprland never answers is dropped after
+    // 250 ms (askTimeout) so the next tick asks again, instead of waiting on it for good.
     Socket {
         id: hypr
 
@@ -378,6 +394,9 @@ ShellRoot {
             if (hypr.connected) {
                 hypr.write("cursorpos");
                 hypr.flush();
+                askTimeout.restart();
+            } else {
+                askTimeout.stop();
             }
         }
         parser: SplitParser {
@@ -385,7 +404,9 @@ ShellRoot {
             onRead: data => {
                 const m = /(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/.exec(data);
                 if (m) {
-                    root.cursor = Qt.point(Number(m[1]), Number(m[2]));
+                    const at = Qt.point(Number(m[1]), Number(m[2]));
+                    root.still = at === root.cursor || (at.x === root.cursor.x && at.y === root.cursor.y) ? root.still + 1 : 0;
+                    root.cursor = at;
                     // The first answer after waking is where he is now; start there.
                     if (root.freshWake) {
                         root.freshWake = false;
@@ -399,7 +420,17 @@ ShellRoot {
     }
 
     Timer {
-        interval: root.followCursor ? 33 : 500
+        id: askTimeout
+
+        interval: 250
+        onTriggered: hypr.connected = false
+    }
+
+    // Following asks 30 times a second while he is doing something or the cursor moves, 4 times
+    // a second once he sleeps and the cursor has sat still for a second, so an idle desktop costs
+    // next to nothing; the first move brings the fast rate back. The corner asks twice.
+    Timer {
+        interval: !root.followCursor ? 500 : root.awake || root.busy || root.cardsUp || root.still < 30 ? 33 : 250
         repeat: true
         triggeredOnStart: true
         running: root.up

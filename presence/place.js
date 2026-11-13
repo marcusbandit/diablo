@@ -37,7 +37,7 @@ function panelRect(screen, edge) {
 // Whether the orb and its cards should catch up with the cursor: only once it is well clear of
 // them, so moving the pointer onto a card never pushes the card away.
 function shouldRejoin(cursor, rects, reach) {
-    reach = reach === undefined ? 280 : reach;
+    reach = reach === undefined ? 120 : reach;
     for (let i = 0; i < rects.length; i++) {
         const r = rects[i];
         if (!r || r.w <= 0 || r.h <= 0)

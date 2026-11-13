@@ -13,7 +13,7 @@ A card is never placed at the cursor. It opens next to the orb, below it or abov
 screen runs out, lined up with his side, and scales up from the point nearest him
 (`presence/place.js`, `cardRect`). While a card is up the orb is up too, holding it out with his
 proud face, and the two hold still while the cursor is within reach of them, so a card can be
-read and clicked. Once the cursor is well clear (`shouldRejoin`, 280 px) they glide after it.
+read and clicked. Once the cursor is well clear (`shouldRejoin`, 120 px) they glide after it.
 
 `node --test tests/presence/place.test.mjs` checks the placement; CI runs it.
 `scripts/presence-shots.sh` draws every scene into `captures/presence/`: by default offscreen

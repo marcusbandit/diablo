@@ -325,11 +325,17 @@ Item {
 
     // Thinking in the background: one slow moon circles him while he is free to talk.
     Item {
+        id: moon
+
         anchors.fill: parent
         visible: orb.thinkingBehind && orb.mood !== "thinking"
 
-        RotationAnimation on rotation {
-            running: parent.visible
+        // Not the `on rotation` form: that one starts itself and keeps the whole scene rendering
+        // at the monitor's rate (10% of a core) even while the moon is hidden.
+        RotationAnimation {
+            target: moon
+            property: "rotation"
+            running: moon.visible
             from: 0
             to: 360
             duration: 2600

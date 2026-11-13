@@ -69,4 +69,5 @@ test("the orb holds still while the cursor is near its cards", () => {
     assert.equal(place.shouldRejoin({ x: 900, y: 560 }, rects), false, "on the card");
     assert.equal(place.shouldRejoin({ x: 780, y: 380 }, rects), false, "just beside the orb");
     assert.equal(place.shouldRejoin({ x: 1600, y: 560 }, rects), true, "well away");
+    assert.equal(place.shouldRejoin({ x: 600, y: 440 }, rects), true, "a short way off the orb, the cards catch up");
 });
