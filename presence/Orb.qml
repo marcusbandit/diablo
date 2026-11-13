@@ -17,12 +17,50 @@ Item {
     property string cardSide: ""        // where the card he holds is: "left" or "right", he looks at it
     property bool hovered: false
     property var mouthTrack: ({ start: 0, duration: 0, cues: [] })
+    // Seconds the mouth runs behind the sound, tuned by eye (voice/lipsync.py); negative leads it.
+    property real mouthDelay: 0
     // Where his drawings are: shell.qml and the offscreen preview (presence/preview) set it.
     property string facesDir: ""
 
     // While a measured track plays, the talking face is drawn in two parts: the head without
     // its mouth, and one of Marcus's mouth drawings for the sound being said this instant.
-    readonly property bool lipSync: face === "talking" && (mouthTrack.cues ?? []).length > 0
+    readonly property bool lipSync: (orb.face === "talking" || orb.inWindow) && (orb.played.cues ?? []).length > 0
+    // The track being played. A delay moves the mouth out past the sound, so the track is kept
+    // until its delayed end even after mouth.stopped() clears mouthTrack, and the mouth plays
+    // from the delayed start even before the mood turns to speaking.
+    property var played: ({ start: 0, duration: 0, cues: [] })
+    property real closeAt: Infinity
+    property bool inWindow: false
+    onMouthTrackChanged: {
+        if ((orb.mouthTrack.cues ?? []).length > 0) {
+            orb.played = orb.mouthTrack;
+            orb.closeAt = Infinity;
+        } else {
+            orb.closeAt = Date.now() / 1000 + Math.max(0, orb.mouthDelay);
+        }
+        orb.schedule();
+    }
+    onMouthDelayChanged: orb.schedule()
+    function schedule() {
+        const now = Date.now() / 1000;
+        const open = orb.played.start + Math.min(0, orb.mouthDelay);
+        const close = Math.min(orb.closeAt, orb.played.start + orb.played.duration + Math.max(0, orb.mouthDelay));
+        windowClock.stop();
+        if ((orb.played.cues ?? []).length === 0 || now >= close) {
+            orb.inWindow = false;
+            if (orb.closeAt !== Infinity && now >= orb.closeAt)
+                orb.played = { start: 0, duration: 0, cues: [] };
+            return;
+        }
+        orb.inWindow = now >= open;
+        windowClock.interval = Math.max(1, Math.ceil(((orb.inWindow ? close : open) - now) * 1000));
+        windowClock.start();
+    }
+    Timer {
+        id: windowClock
+
+        onTriggered: orb.schedule()
+    }
     property string mouthShape: "rest"
     property int mouthTake: 1
     property string eyeLook: "neutral"
@@ -176,6 +214,10 @@ Item {
             }
 
             layer.enabled: true
+            // drawn at the drawings' own size, so a scaled up orb (the tuner's) stays sharp
+            layer.textureSize: Qt.size(160, 160)
+            layer.mipmap: true
+            layer.smooth: true
             layer.effect: MultiEffect {
                 colorization: 1.0
                 colorizationColor: Qt.lighter(orb.hue, orb.awake ? 1.25 : 1.7)
@@ -206,28 +248,27 @@ Item {
                 asynchronous: false
             }
 
-            // Plays the track against the wall clock, the same clock the voice stamped it with.
-            Timer {
-                interval: 16
-                repeat: true
+            // Plays the track against the wall clock, the same clock the voice stamped it with,
+            // once for every frame drawn, so a new shape lands on the first frame it belongs to.
+            FrameAnimation {
                 running: orb.lipSync && orb.visible
                 onTriggered: {
-                    const t = Date.now() / 1000 - orb.mouthTrack.start;
+                    const t = Date.now() / 1000 - orb.played.start - orb.mouthDelay;
                     let next = "rest";
-                    for (const cue of orb.mouthTrack.cues) {
+                    for (const cue of orb.played.cues) {
                         if (cue[0] > t)
                             break;
                         next = cue[1];
                     }
-                    if (t < 0 || t > orb.mouthTrack.duration)
+                    if (t < 0 || t > orb.played.duration)
                         next = "rest";
                     let look = "neutral";
-                    for (const cue of (orb.mouthTrack.eyes ?? [])) {
+                    for (const cue of (orb.played.eyes ?? [])) {
                         if (cue[0] > t)
                             break;
                         look = cue[1];
                     }
-                    const speaking = t >= 0 && t <= orb.mouthTrack.duration;
+                    const speaking = t >= 0 && t <= orb.played.duration;
                     if (!speaking)
                         look = "neutral";
                     if (look !== orb.eyeLook) {

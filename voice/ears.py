@@ -1959,6 +1959,7 @@ The setup and the meter live in the desktop app: Settings, then Voice.
   diablo-ears train       the setup from a terminal (--fresh drops saved takes of the name)
   diablo-ears retrain     learn again from the takes already saved
   diablo-ears chimes      play every sound he makes, one after another
+  diablo-ears mouth       tune his mouth to his voice by eye (show, set MS)
   diablo-ears timings     where each recent turn's time went (--last N, --html FILE)
   diablo-ears recordings  the last turns' recordings and what was heard (a number shows more)
   diablo-ears recheck     run a recording (an id, or the last) through gvoice again
@@ -2036,6 +2037,10 @@ def main(argv=None):
         return 0
     if command == "recheck":
         return recheck_cli(argv[1] if len(argv) > 1 else "last")
+    if command == "mouth":
+        from . import lipsync
+
+        return lipsync.main(argv[1:])
     if command == "chimes":
         for name in ("listen", "done", "never", "ok", "back", "mode_on", "mode_off", "dictate_on", "piece", "dictate_off", "thinking"):
             print(name)

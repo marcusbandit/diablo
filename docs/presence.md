@@ -95,6 +95,16 @@ The stream opens when a reply starts fetching, so a sleeping sink wakes during t
 closes a few seconds after the last clip. If it cannot open, the clip plays through pw-play and
 `mouth_latency_ms` (default 60) stands in for the start delay.
 
+The orb steps the track once per drawn frame (`FrameAnimation`), and moves it by the delay saved
+in `~/.config/diablo/lipsync.json` (`{"delay_ms": n}`, positive is later, kept per box): what is
+left after the playback clock (the screen, the compositor, what reads as in step) is tuned by eye.
+`diablo-ears mouth` opens the tuner (`presence/tuner.qml`), as does "Tune his mouth" in Settings:
+his face, big, saying one line over and over on the same voice stream, a slider, left and right
+for 10 ms, Shift for 50, Enter saves, Esc leaves. `diablo-ears mouth show` and `set MS` read and
+write the same file. The reference for "in step" is `diablo-act` on the same audio: a screen
+recording of the orb should match its video. On banditbox the orb lands about 27 ms behind it
+with no delay.
+
 `.venv-voice/bin/python tests/live_tts_sync.py` checks it live: it speaks four short replies
 (one line, a first line and an answer 2.5 s later, one cut off) while recording the default
 sink's monitor, and fails when the face or the mouth is more than 50 ms off the sound.

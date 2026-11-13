@@ -27,6 +27,9 @@ ShellRoot {
     readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || `${Quickshell.env("HOME")}/.local/state`) + "/diablo"
     property var ears: ({ state: "asleep" })
     property var mouthTrack: ({ start: 0, duration: 0, cues: [] })
+    // How far his mouth runs behind his voice, tuned by eye in presence/tuner.qml.
+    readonly property string configDir: (Quickshell.env("XDG_CONFIG_HOME") || `${Quickshell.env("HOME")}/.config`) + "/diablo"
+    property int mouthDelayMs: 0
     property var cards: []
     property real now: Date.now() / 1000
     property var dismissed: ({})
@@ -303,6 +306,23 @@ ShellRoot {
         }
     }
 
+    // The saved mouth delay, ~/.config/diablo/lipsync.json, read again whenever the tuner saves.
+    FileView {
+        id: lipsyncFile
+
+        property bool seen: false
+
+        path: root.configDir + "/lipsync.json"
+        watchChanges: true
+        printErrors: false
+        onFileChanged: lipsyncFile.reload()
+        onLoaded: {
+            lipsyncFile.seen = true;
+            const ms = Number(root.parse(lipsyncFile.text(), { delay_ms: 0 }).delay_ms);
+            root.mouthDelayMs = isFinite(ms) ? Math.max(-400, Math.min(400, Math.round(ms))) : 0;
+        }
+    }
+
     FileView {
         id: panelFile
 
@@ -349,7 +369,7 @@ ShellRoot {
 
     // A state file that is not there when the shell starts gets no watch, so on a fresh box the
     // ears' first state, a card or the central card would never be read. Ask again until each loads.
-    readonly property var stateFiles: [earsFile, mouthFile, panelFile, settingsFile, presenceFile]
+    readonly property var stateFiles: [earsFile, mouthFile, lipsyncFile, panelFile, settingsFile, presenceFile]
 
     Timer {
         interval: 2000
@@ -582,6 +602,7 @@ ShellRoot {
                     cardSide: !cards.showing ? "" : (cards.x + cards.width / 2 < group.x + orbBox.width / 2 ? "left" : "right")
                     moment: root.moment
                     mouthTrack: root.mouthTrack
+                    mouthDelay: root.mouthDelayMs / 1000
                     facesDir: `${Quickshell.shellDir}/../assets/faces`
 
                     Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
@@ -699,6 +720,11 @@ ShellRoot {
             onCloseRequested: root.setPanel({ open: false })
             onViewRequested: view => root.setPanel({ view: view })
             onFollowChanged: on => root.setFollow(on)
+            mouthDelayMs: root.mouthDelayMs
+            onTuneMouthRequested: {
+                root.setPanel({ open: false });
+                Quickshell.execDetached(["sh", "-c", 'pgrep -f "$1" >/dev/null || exec qs -n -p "$1"', "sh", `${Quickshell.shellDir}/tuner.qml`]);
+            }
 
             Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
