@@ -41,6 +41,7 @@ def message_added(message_id, source, meta, main_sources):
 
 
 PLAIN = {
+    "focus_window": "your desktop", "stage_window": "your desktop",
     "hue_light": "lights", "lights": "lights", "notify": "Telegram", "phone_status": "your phone",
     "fleet_power": "the fleet", "fleet_where": "the fleet", "fleet_run": "the fleet", "fleet_fetch": "the fleet",
     "fleet_put": "the fleet", "wake_banditbox": "banditbox", "list_devices": "devices", "pair_device": "devices",
