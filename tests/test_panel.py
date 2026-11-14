@@ -17,6 +17,16 @@ class TestIntent(unittest.TestCase):
         for line in ("Open up", "Diablo, expand yourself.", "Expand", "Could you come to the middle?", "go big"):
             self.assertEqual(panel.intent(line, SHUT, []), "open", line)
 
+    def test_opening_the_history(self):
+        for line in ("Show my history", "Diablo, open the history.", "open history please", "Can you show me our conversation history?",
+                     "pull up the chat history", "show me everything I've said", "Open the whole history", "go to history"):
+            self.assertEqual(panel.intent(line, SHUT, []), "history", line)
+            self.assertEqual(panel.intent(line, OPEN, [CARD]), "history", line)
+
+    def test_other_histories_are_left_alone(self):
+        for line in ("Show my browser history", "open the history of Rome", "clear my history", "show the history tab in Firefox"):
+            self.assertIsNone(panel.intent(line, SHUT, []), line)
+
     def test_asking_for_his_settings(self):
         for line in ("Show me your settings", "open your settings please", "Go to your settings.", "Diablo, go to your settings",
                      "I want to go to your settings", "take me to your settings", "open the settings", "pull up your settings", "open settings",
@@ -64,6 +74,11 @@ class TestApply(unittest.TestCase):
         state = json.loads(panel.FILE.read_text())
         self.assertTrue(state["open"])
         self.assertEqual(state["view"], "settings")
+
+    def test_history_opens_on_its_page(self):
+        self.assertEqual(panel.apply("history"), "")
+        state = panel.read()
+        self.assertEqual((state["open"], state["view"]), (True, "history"))
 
     def test_settings_and_voice_name_the_page(self):
         presence.show("Weather", "7°", ["cloudy"], ttl=60)

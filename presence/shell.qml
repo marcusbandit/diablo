@@ -33,6 +33,10 @@ ShellRoot {
     // How far his mouth runs behind his voice, tuned by eye in presence/tuner.qml.
     readonly property string configDir: (Quickshell.env("XDG_CONFIG_HOME") || `${Quickshell.env("HOME")}/.config`) + "/diablo"
     property int mouthDelayMs: 0
+    // The hub, for History in the central card: busy.py prints the hub_url and hub_token it reads
+    // from config.toml. DIABLO_HUB_URL and DIABLO_HUB_TOKEN stand in for them on a test run.
+    property string hubUrl: Quickshell.env("DIABLO_HUB_URL") ?? ""
+    property string hubToken: Quickshell.env("DIABLO_HUB_TOKEN") ?? ""
     property var cards: []
     property real now: Date.now() / 1000
     property var dismissed: ({})
@@ -164,6 +168,11 @@ ShellRoot {
         const got = root.parse(line, null);
         if (!got)
             return;
+        if (got.hub !== undefined) {
+            root.hubUrl = Quickshell.env("DIABLO_HUB_URL") || got.hub.url || "";
+            root.hubToken = Quickshell.env("DIABLO_HUB_TOKEN") || got.hub.token || "";
+            return;
+        }
         root.hubSeen = Date.now();
         root.clock = root.hubSeen;
         if (got.tasks !== undefined)
@@ -844,6 +853,8 @@ ShellRoot {
             pageAt: root.panelState.page_at ?? 0
             followCursor: root.followCursor
             earsUrl: Quickshell.env("DIABLO_EARS_URL") || "http://127.0.0.1:8758"
+            hubUrl: root.hubUrl
+            hubToken: root.hubToken
             focus: root.panelOpen
             Keys.onEscapePressed: root.setPanel({ open: false, page: "" })
             onCloseRequested: root.setPanel({ open: false, page: "" })

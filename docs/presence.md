@@ -38,9 +38,15 @@ preview can load them; what needs Quickshell lives in `shell.qml` or a file load
 
 Asked to, he opens up: the orb glides to the middle of the monitor and a big card grows out of
 him (`Panel.qml`, sized by `Place.panelRect`). It no longer follows the cursor. Escape, the
-close button or a click anywhere outside puts him back. Two pages:
+close button or a click anywhere outside puts him back. Three pages:
 
 - **Now**: a card shown big. "Enlarge this" moves the newest card here.
+- **History**: everything Marcus said to him on every channel, marked spoken or typed, and every
+  reply, newest at the bottom (`History.qml`). It reads `GET /v1/history` with the `hub_url` and
+  `hub_token` that `busy.py` reads from `config.toml` and prints to the shell; scrolling up loads
+  the page above, new lines come in every 4 s while it is open (`after`, so a quiet poll is empty),
+  a page that failed is asked for again, and a search field and one chip per channel narrow it.
+  The wheel and the keys scroll through `WheelStep.qml`, 100 px a notch, the touchpad 1:1.
 - **Settings**: whether he follows the cursor (kept in `presence-settings.json`), whether the
   ears listen for his name, live meters for the microphone and the wake score, how well he knows
   your voice, and the voice setup itself, driven through the ears' control panel on
@@ -49,6 +55,7 @@ close button or a click anywhere outside puts him back. Two pages:
 The spoken quick actions (`voice/panel.py`, no model turn): "open up", "expand" open it;
 "go to your settings", "open your settings", "take me to your settings" open it on Settings;
 "train your voice", "teach you my voice", "retrain your ears" open it on Settings at Your voice;
+"show my history", "open the history" open it on History;
 "enlarge this", "make it bigger" enlarge the newest card; "close", "shrink", "make it small
 again" close it. "Close it" and "make it bigger" also mean a window, so they only count while the
 central card is open or a card is on screen. The state is `panel.json` (`{open, view, card,
@@ -57,7 +64,7 @@ page, page_at, at}`) in the same state dir; the ears, `busy.py` and `shell.qml` 
 `page_at` stamp, so asking again moves it again; scrolling by hand stops it at once.
 
 Typed, or on any channel the quick actions do not catch, the brain does the same with the
-`open_settings` tool (`page` settings or voice). It posts to `POST /v1/screen/open`, which goes out
+`open_settings` tool (`page` settings, voice or history). It posts to `POST /v1/screen/open`, which goes out
 as a `screen` event with `open`, and `busy.py` writes it into `panel.json`, the same road
 `show_on_screen` takes.
 

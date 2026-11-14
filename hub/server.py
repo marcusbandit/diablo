@@ -889,6 +889,33 @@ def search(q: str = "", limit: int = 200, thread: str = "", _: None = Depends(re
     return {"messages": [message_out(m) for m in rows], "now": time.time()}
 
 
+HISTORY_PAGE = 60
+
+
+def history_out(m):
+    meta = m["meta"] if isinstance(m["meta"], dict) else {}
+    return {"id": m["id"], "ts": m["ts"], "role": m["role"], "text": m["text"], "channel": m["source"] or "",
+            "spoken": m["source"] == "voice" or bool(meta.get("voice")), "section": meta.get("section") or ""}
+
+
+@app.get("/v1/history")
+def history(before: int = 0, after: int = 0, limit: int = HISTORY_PAGE, q: str = "", channel: str = "",
+            _: None = Depends(require_token)):
+    """Everything he said on every channel and every reply, one page at a time, oldest first
+    within the page. `before` is the oldest id already shown, `more` says older ones remain.
+    `after` is the newest id shown: only newer lines come back, and no channel counts."""
+    limit = max(1, min(limit, 200))
+    sources = tuple(dict.fromkeys(x.strip() for x in channel.split(",") if x.strip()))[:12]
+    hidden = tuple(s["id"] for s in sections.all_sections() if s.get("deleted"))
+    rows = db.history(max(0, before), limit + 1, q.split()[:12], sources, after=max(0, after), hidden_sections=hidden)
+    more = len(rows) > limit
+    rows = rows[1:] if more and after > 0 else rows[:limit]
+    body = {"messages": [history_out(m) for m in reversed(rows)], "more": more, "now": time.time()}
+    if after <= 0:
+        body["channels"] = db.history_channels(hidden)
+    return body
+
+
 @app.post("/v1/threads")
 def new_thread(body: ThreadIn, _: None = Depends(require_token)):
     if body.split_from:
@@ -1418,13 +1445,14 @@ async def screen(body: ScreenIn, caller: dict = Depends(require_token)):
     return {"ok": True, "id": card["id"]}
 
 
-SCREEN_PAGES = ("settings", "voice")
+SCREEN_PAGES = ("settings", "voice", "history")
 
 
 @app.post("/v1/screen/open")
 async def screen_open(body: ScreenOpenIn, caller: dict = Depends(require_token)):
     """Opens the central card on Marcus's desktop at one of its pages: "settings", the Settings
-    tab from the top, or "voice", Settings at Your voice where he teaches him his voice. It goes
+    tab from the top, "voice", Settings at Your voice where he teaches him his voice, or "history",
+    everything said between them. It goes
     out as a `screen` event with `open`, which presence/busy.py writes into panel.json."""
     if not caller.get("master"):
         raise HTTPException(status_code=403, detail="only the hub token may open things on screen")

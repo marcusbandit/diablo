@@ -10,6 +10,9 @@ The live task cards ride along the same way: GET /v1/tasks at the start and with
 then each `task` event, printed as {"tasks": [{"id", "state", "title"}]} with only the active ones
 (queued, working, waiting), so the orb can carry one moon for each.
 
+Before each connection it prints {"hub": {"url", "token"}} from config.toml, so History in the
+central card reads the hub with the same pair.
+
 Standard library only: the system python runs it, no venv.
 
 It also carries what the brain shows on screen (`screen` events from POST /v1/screen): a small
@@ -164,19 +167,22 @@ def locked():
     return handle
 
 
-PAGES = ("settings", "voice")
+PAGES = ("settings", "voice", "history")
 
 
 def show(event, now=None):
     """A `screen` event onto the desktop: small into presence.json, large into panel.json, an
-    `open` one into panel.json as the Settings page it names."""
+    `open` one into panel.json as the Settings page it names, or the History tab."""
     now = time.time() if now is None else now
     if event.get("open") is not None:
         page = event.get("open")
         if page not in PAGES:
             return None
         panel = read_json(STATE / "panel.json", {})
-        write_json(STATE / "panel.json", {**panel, "open": True, "view": "settings", "page": page, "page_at": now, "at": now})
+        if page == "history":
+            write_json(STATE / "panel.json", {**panel, "open": True, "view": "history", "page": "", "at": now})
+        else:
+            write_json(STATE / "panel.json", {**panel, "open": True, "view": "settings", "page": page, "page_at": now, "at": now})
         return page
     card = dict(event.get("card") or {})
     if not card.get("id"):
@@ -256,8 +262,10 @@ def follow(cfg):
 
 def main():
     while True:
+        cfg = config()
+        say({"hub": {"url": cfg["hub_url"], "token": cfg["hub_token"]}})
         try:
-            follow(config())
+            follow(cfg)
         except Exception as error:
             sys.stderr.write(f"busy feed: {error}\n")
         with TASKS_LOCK:

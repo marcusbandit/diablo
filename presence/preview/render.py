@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Renders presence/preview/Preview.qml offscreen, one PNG per scene: no compositor, no window,
-nothing real read. Panel scenes get a fake ears API (scripts/fakeears.py) to talk to.
+nothing real read. Panel scenes get a fake ears API (scripts/fakeears.py) to talk to, and the
+History scenes a fake hub (scripts/fakehub.py).
 
     python3 presence/preview/render.py OUT_DIR [scene...]
 
@@ -15,9 +16,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCENES = ["orb-listening", "orb-thinking", "orb-speaking", "act-speaking", "act-surprised", "act-sorry", "act-delighted", "moons-0", "moons-1", "moons-3", "moons-9", "card-below", "card-above", "card-right-edge",
-          "two-cards", "panel-settings", "panel-voice", "panel-training", "panel-now"]
+          "two-cards", "panel-settings", "panel-voice", "panel-training", "panel-now", "panel-history", "panel-history-search"]
 EARS = {"panel-settings": "trained", "panel-voice": "trained", "panel-training": "speech", "panel-now": "trained"}
 PORT = 18758
+HUB_PORT = 18755
 
 
 def wait_for_port(port, seconds=10):
@@ -48,7 +50,8 @@ def render(scene, out):
         "code = app.exec()\n"
         "sys.exit(3 if bad else code)\n"
     )
-    argv = [sys.executable, "-c", code, "--", scene, str(out), str(ROOT / "assets/faces"), f"http://127.0.0.1:{PORT}"]
+    argv = [sys.executable, "-c", code, "--", scene, str(out), str(ROOT / "assets/faces"), f"http://127.0.0.1:{PORT}",
+            f"http://127.0.0.1:{HUB_PORT}"]
     # The rhi backend, or the MultiEffect that tints his face draws nothing offscreen. A machine
     # with no GPU (CI) sets PRESENCE_SOFTWARE=1: everything draws, the face just goes untinted.
     backend = "software" if os.environ.get("PRESENCE_SOFTWARE") else "rhi"
@@ -63,18 +66,22 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     failed = 0
     for scene in sys.argv[2:] or SCENES:
-        ears = None
-        if scene in EARS:
-            ears = subprocess.Popen([sys.executable, str(ROOT / "scripts/fakeears.py"), str(PORT), EARS[scene]],
+        fake = None
+        if scene.startswith("panel-history"):
+            fake = subprocess.Popen([sys.executable, str(ROOT / "scripts/fakehub.py"), str(HUB_PORT)],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            wait_for_port(HUB_PORT)
+        elif scene in EARS:
+            fake = subprocess.Popen([sys.executable, str(ROOT / "scripts/fakeears.py"), str(PORT), EARS[scene]],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_for_port(PORT)
         try:
             path = out / f"{scene}.png"
             code = render(scene, path)
         finally:
-            if ears:
-                ears.terminate()
-                ears.wait()
+            if fake:
+                fake.terminate()
+                fake.wait()
         ok = code == 0 and path.exists()
         failed += not ok
         print(("ok   " if ok else f"FAIL (exit {code}) ") + str(path), flush=True)

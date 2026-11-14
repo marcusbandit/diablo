@@ -1,14 +1,15 @@
 import QtQuick
 import QtQuick.Layouts
 
-// The central card: Diablo opened up in the middle of the screen. Two pages: Now, a card he was
-// asked to show big, and Settings, the few things worth changing about him, the voice setup
-// among them. It talks to the ears' control panel (voice/ears_api.py) on this machine only.
+// The central card: Diablo opened up in the middle of the screen. Three pages: Now, a card he was
+// asked to show big; History, everything said to him and everything he answered (History.qml,
+// from the hub); and Settings, the few things worth changing about him, the voice setup among
+// them. Settings talks to the ears' control panel (voice/ears_api.py) on this machine only.
 Rectangle {
     id: panel
 
     required property var style
-    property string view: "settings"       // "now" or "settings"
+    property string view: "settings"       // "now", "history" or "settings"
     property var card: null                // what "Now" shows: {title, big, lines, page?}
     // A Settings page asked for from outside: "settings" scrolls to the top, "voice" to Your
     // voice. pageAt is when it was asked (panel.json's page_at), so asking twice moves it again.
@@ -16,6 +17,8 @@ Rectangle {
     property real pageAt: 0
     property bool followCursor: true
     property string earsUrl: "http://127.0.0.1:8758"
+    property string hubUrl: ""
+    property string hubToken: ""
     // Where an HTML page goes: shell.qml hands this rect to the web view so it sits over it.
     readonly property alias pageArea: pageArea
     signal closeRequested
@@ -29,6 +32,17 @@ Rectangle {
     border.width: 1
     border.color: panel.style.line
     clip: true
+
+    function historySearch(text: string) {
+        historyPage.searchFor(text);
+    }
+
+    function historyKey(event: var) {
+        if (panel.view === "history")
+            historyPage.key(event);
+    }
+
+    Keys.onPressed: event => panel.historyKey(event)
 
     // The ears, read while Settings is open: the whole status each second, the meters faster.
     property var ears: null
@@ -161,7 +175,7 @@ Rectangle {
         Item { Layout.fillWidth: true }
 
         Repeater {
-            model: [{ id: "now", label: "Now" }, { id: "settings", label: "Settings" }]
+            model: [{ id: "now", label: "Now" }, { id: "history", label: "History" }, { id: "settings", label: "Settings" }]
 
             Rectangle {
                 required property var modelData
@@ -298,6 +312,21 @@ Rectangle {
         }
     }
 
+    // ---- History: everything said, newest at the bottom ---------------------------------------
+    History {
+        id: historyPage
+
+        x: 32
+        y: 96
+        width: parent.width - 64
+        height: parent.height - y - 20
+        visible: panel.view === "history"
+        active: panel.visible && panel.view === "history"
+        style: panel.style
+        hubUrl: panel.hubUrl
+        hubToken: panel.hubToken
+    }
+
     // ---- Settings ---------------------------------------------------------------------------
     Flickable {
         id: settingsPage
@@ -312,6 +341,11 @@ Rectangle {
         onMovementStarted: panel.letGo()
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+
+        WheelStep {
+            flick: settingsPage
+            onBegan: panel.letGo()
+        }
 
         Column {
             id: settingsColumn

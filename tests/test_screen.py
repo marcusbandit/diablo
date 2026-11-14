@@ -44,7 +44,7 @@ class TestEndpoint(ApiCase):
         self.assertEqual(self.client.post("/v1/screen", json={"title": "x"}).status_code, 403)
 
     def test_opening_a_settings_page_goes_out_as_a_screen_event(self):
-        for page in ("settings", "voice"):
+        for page in ("settings", "voice", "history"):
             with mock.patch.object(server, "publish") as published:
                 reply = self.client.post("/v1/screen/open", headers=HEADERS, json={"page": page})
             self.assertEqual(reply.status_code, 200)
@@ -94,6 +94,11 @@ class TestDesktopSide(unittest.TestCase):
         busy.show({"card": {"id": "b2", "title": "Next"}, "size": "large"}, now=8)
         self.assertEqual((self.read("panel.json")["view"], self.read("panel.json")["page"]), ("now", ""))
 
+    def test_open_history_puts_the_central_card_on_history(self):
+        self.assertEqual(busy.show({"open": "history"}, now=9), "history")
+        panel = self.read("panel.json")
+        self.assertEqual((panel["open"], panel["view"], panel["page"]), (True, "history", ""))
+
     def test_an_unknown_page_writes_nothing(self):
         self.assertIsNone(busy.show({"open": "../x"}, now=5))
         self.assertFalse((Path(self.tmp.name) / "panel.json").exists())
@@ -131,11 +136,25 @@ class TestTool(unittest.TestCase):
             self.assertTrue(post.call_args.args[0].endswith("/v1/screen/open"))
             mcp_server.call("open_settings", {})
             self.assertEqual(post.call_args.kwargs["json"], {"page": "settings"})
+            self.assertIn("History", mcp_server.call("open_settings", {"page": "history"}))
+            self.assertEqual(post.call_args.kwargs["json"], {"page": "history"})
 
     def test_the_charter_says_when_to_open_settings(self):
         from hub import charter
 
         self.assertIn("open_settings with page voice", charter.CHARTER)
+        self.assertIn("open_settings with page history", charter.CHARTER)
+
+
+class TestHubPair(unittest.TestCase):
+    def test_the_hub_pair_goes_out_before_each_connection(self):
+        said = []
+        cfg = {"hub_url": "http://100.64.0.9:8755", "hub_token": "pair-token"}
+        with mock.patch.object(busy, "config", return_value=cfg), mock.patch.object(busy, "say", side_effect=said.append), \
+                mock.patch.object(busy, "follow", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                busy.main()
+        self.assertEqual(said, [{"hub": {"url": "http://100.64.0.9:8755", "token": "pair-token"}}])
 
 
 if __name__ == "__main__":

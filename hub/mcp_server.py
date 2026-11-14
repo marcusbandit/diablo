@@ -36,10 +36,10 @@ EXTRA = [
     },
     {
         "name": "open_settings",
-        "description": "Open your central card on Marcus's desktop at a page of your Settings tab, whichever channel he asked on. page settings: when he asks to open, see or go to your settings. page voice: Settings at Your voice, with Teach him again, when he asks to train or retrain your voice or ears, to teach you his voice, or to learn his voice. It only opens the page; he starts the training there.",
+        "description": "Open your central card on Marcus's desktop at a page of your Settings tab, whichever channel he asked on. page settings: when he asks to open, see or go to your settings. page voice: Settings at Your voice, with Teach him again, when he asks to train or retrain your voice or ears, to teach you his voice, or to learn his voice. It only opens the page; he starts the training there. page history: the History tab, everything he said on every channel and every reply, when he asks to see his history, the chat history, or everything he has said.",
         "inputSchema": {
             "type": "object",
-            "properties": {"page": {"type": "string", "enum": ["settings", "voice"]}},
+            "properties": {"page": {"type": "string", "enum": ["settings", "voice", "history"]}},
         },
     },
     {
@@ -350,6 +350,8 @@ def open_settings(arguments):
     failed = screen_post("/v1/screen/open", {"page": page})
     if failed:
         return failed if failed.startswith("could not") else f"not opened: {failed}"
+    if page == "history":
+        return "opened the History tab"
     return "opened Settings at Your voice" if page == "voice" else "opened your Settings"
 
 
