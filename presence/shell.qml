@@ -80,12 +80,36 @@ ShellRoot {
     property real clock: Date.now()
     readonly property int hubStaleMs: 35000
     readonly property bool hubBusy: root.hubTurns.length > 0
+    // The hub's live task cards that are not finished, oldest first: watched T3 threads and
+    // update_task work. Queued or working ones keep him busy; one waiting on Marcus only gets a
+    // moon of its own colour while something else does.
+    property var hubTasks: []
+    readonly property var tasksRunning: root.hubTasks.filter(t => t.state !== "waiting")
+    // Task cards running on their own keep him up with their moons, but not busy: the face,
+    // the cards he holds out and speech control read busy as a turn of his own.
+    readonly property bool tasksBusy: root.tasksRunning.length > 0
     // An answer the ears hold in the background keeps him busy only while the hub was busy a
     // moment ago, so a count left behind (#215) can never hold the orb up on its own.
     readonly property bool earsBehind: (root.ears.thinking ?? 0) > 0 && root.clock - root.lastBusyAt < 15000
     readonly property bool busy: root.hubBusy || root.earsBehind
+    // One moon for each thing he works on: every running turn and every active task card.
+    readonly property var moons: {
+        if (!root.busy && !root.tasksBusy)
+            return [];
+        const out = [];
+        for (const t of root.hubTurns) {
+            const id = `turn:${t.origin}:${t.since}`;
+            if (!out.some(m => m.id === id))
+                out.push({ id: id });
+        }
+        if (out.length === 0 && root.earsBehind)
+            out.push({ id: "ears" });
+        for (const t of root.hubTasks)
+            out.push({ id: `task:${t.id}`, waiting: t.state === "waiting" });
+        return out;
+    }
     // Marcus talking to him or a turn of his running.
-    readonly property bool active: root.awake || root.busy
+    readonly property bool active: root.awake || root.busy || root.tasksBusy
     // After the last of those, or a moment, he stays beside the cursor this long, sleepy, then
     // fades out. The clock keeps running for as long as he is active, so the instant he stops
     // it is already running and `up` never blinks.
@@ -106,8 +130,13 @@ ShellRoot {
     readonly property bool cornered: !root.followCursor
     readonly property string busyWords: {
         const turns = root.hubTurns;
-        if (turns.length === 0)
-            return "working";
+        if (turns.length === 0) {
+            const tasks = root.tasksRunning;
+            if (tasks.length === 0 || root.earsBehind)
+                return "working";
+            const title = tasks[tasks.length - 1].title || "working";
+            return tasks.length > 1 ? `${title} +${tasks.length - 1}` : title;
+        }
         const words = turns[turns.length - 1].words || "thinking";
         return turns.length > 1 ? `${words} +${turns.length - 1}` : words;
     }
@@ -118,6 +147,8 @@ ShellRoot {
             return;
         root.hubSeen = Date.now();
         root.clock = root.hubSeen;
+        if (got.tasks !== undefined)
+            root.hubTasks = got.tasks;
         if (got.turns === undefined)
             return;
         if (root.hubTurns.length > 0 || got.turns.length > 0)
@@ -135,6 +166,7 @@ ShellRoot {
         }
         onExited: {
             root.hubTurns = [];
+            root.hubTasks = [];
             if (!root.testRun)
                 feedAgain.restart();
         }
@@ -151,11 +183,13 @@ ShellRoot {
     Timer {
         interval: 2000
         repeat: true
-        running: root.hubBusy || root.earsBehind
+        running: root.busy || root.tasksBusy
         onTriggered: {
             root.clock = Date.now();
-            if (root.hubBusy && root.clock - root.hubSeen > root.hubStaleMs)
+            if (root.clock - root.hubSeen > root.hubStaleMs) {
                 root.hubTurns = [];
+                root.hubTasks = [];
+            }
         }
     }
 
@@ -624,7 +658,8 @@ ShellRoot {
                     mood: root.awake ? (root.ears.state ?? "asleep") : "asleep"
                     control: !!root.ears.loop
                     dictating: !!root.ears.dictation
-                    thinkingBehind: root.busy
+                    thinkingBehind: root.busy || (root.tasksBusy && !root.cardsUp && !root.panelOpen)
+                    moons: root.moons
                     presenting: (root.cardsUp || root.panelOpen) && !root.awake && !root.busy
                     // He looks at the card he holds out: which side of him its middle is on.
                     cardSide: !cards.showing ? "" : (cards.x + cards.width / 2 < group.x + orbBox.width / 2 ? "left" : "right")
@@ -642,7 +677,7 @@ ShellRoot {
                 id: pill
 
                 // Words only while he is doing something; holding out a card says it already.
-                visible: (root.awake || root.busy || root.moment !== "") && !root.panelOpen
+                visible: (root.awake || root.busy || (root.tasksBusy && !root.cardsUp) || root.moment !== "") && !root.panelOpen
                 x: follow.flipX ? 0 : orbBox.width + 8
                 anchors.verticalCenter: orbBox.verticalCenter
                 width: label.implicitWidth + 24 + (dots.visible ? dots.width + 6 : 0)
@@ -656,7 +691,7 @@ ShellRoot {
 
                 // Busy: thinking, a tool step, an answer held back, until the turn is over.
                 readonly property bool working: root.moment === "" && !orb.dictating
-                    && (orb.mood === "thinking" || (orb.mood !== "speaking" && orb.mood !== "listening" && root.busy))
+                    && (orb.mood === "thinking" || (orb.mood !== "speaking" && orb.mood !== "listening" && orb.thinkingBehind))
 
                 Text {
                     id: label
@@ -672,7 +707,7 @@ ShellRoot {
                         : orb.mood === "thinking" && root.hubBusy ? root.busyWords
                         : orb.mood === "thinking" ? "thinking"
                         : orb.control && (orb.mood === "listening" || orb.mood === "asleep") && !root.busy ? "speech control"
-                        : orb.mood === "asleep" && root.busy ? root.busyWords
+                        : orb.mood === "asleep" && orb.thinkingBehind ? root.busyWords
                         : orb.mood === "waking" ? "listening"
                         : orb.mood
                 }

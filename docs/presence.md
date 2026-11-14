@@ -68,9 +68,16 @@ line boils, every 700 ms while he sleeps) on a small dark disc, tinted by what h
 | listening, brass, with a ring | dictating |
 | thinking, orange | thinking |
 | talking, green, pulsing | speaking |
-| working, one slow moon circling | an answer is thinking in the background |
+| working, moons circling | one moon per thing he works on in the background, up to 8 |
 | delighted / sorry / relieved, for under two seconds | it worked / it failed / he went back |
 | worried or resting, pink | the ears are untrained or off |
+
+The moons count what he has in flight: every running hub turn and every live task card
+(`GET /v1/tasks` and the `task` event, which `busy.py` follows beside the turns). Queued and
+working tasks keep him up beside the cursor with their moons, without the busy face while he
+holds out a card; a task waiting on Marcus gets a blue moon while anything else runs.
+They sit evenly around one orbit and turn together; one that ends fades where it was and the
+rest glide to even spacing, all in QML (`Orb.moons`).
 
 He acts in every awake state, not only while a measured line plays: the face is drawn from
 the horns, his eyes (`assets/faces/eyes/<look>`) and his mouth, with blinks every few seconds and

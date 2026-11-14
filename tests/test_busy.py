@@ -144,5 +144,42 @@ class TestFeed(unittest.TestCase):
         self.assertEqual(feed.shown({"kind": "busy"}), {"turns": []})
 
 
+class TestTaskFeed(unittest.TestCase):
+    def setUp(self):
+        feed.TASKS.clear()
+        feed.LAST_TASKS[0] = None
+        self.addCleanup(feed.TASKS.clear)
+
+    def test_active_tasks_come_and_go_with_their_events(self):
+        self.assertTrue(feed.track({"id": "b", "state": "working", "title": "Fix the orb", "started_at": 20}))
+        self.assertTrue(feed.track({"id": "a", "state": "queued", "title": "Ship it", "started_at": 10}))
+        self.assertFalse(feed.track({"id": "a", "state": "queued", "title": "Ship it", "started_at": 10}))
+        self.assertTrue(feed.track({"id": "a", "state": "waiting", "title": "Ship it", "started_at": 10}))
+        self.assertEqual(feed.tasks_line(), {"tasks": [{"id": "a", "state": "waiting", "title": "Ship it"},
+                                                       {"id": "b", "state": "working", "title": "Fix the orb"}]})
+        self.assertTrue(feed.track({"id": "b", "state": "done"}))
+        self.assertFalse(feed.track({"id": "zz", "state": "failed"}))
+        self.assertFalse(feed.track("junk"))
+        self.assertEqual([t["id"] for t in feed.tasks_line()["tasks"]], ["a"])
+
+    def test_a_listing_replaces_what_was_known(self):
+        feed.track({"id": "old", "state": "working"})
+        feed.replace_tasks([{"id": "n", "state": "working", "started_at": 1}, {"id": "d", "state": "done"}, "junk"])
+        self.assertEqual(feed.tasks_line(), {"tasks": [{"id": "n", "state": "working", "title": ""}]})
+
+    def test_a_listing_never_undoes_an_event_that_came_while_it_was_fetched(self):
+        before = feed.TASK_EVENTS[0]
+        feed.track({"id": "n", "state": "done"})
+        self.assertFalse(feed.replace_tasks([{"id": "n", "state": "working"}], before))
+        self.assertEqual(feed.tasks_line(), {"tasks": []})
+
+    def test_the_same_set_is_printed_once(self):
+        feed.track({"id": "n", "state": "working"})
+        with mock.patch.object(feed, "say") as said:
+            feed.say_tasks()
+            feed.say_tasks()
+        self.assertEqual(said.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
