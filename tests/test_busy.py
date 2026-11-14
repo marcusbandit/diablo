@@ -147,6 +147,7 @@ class TestFeed(unittest.TestCase):
 class TestTaskFeed(unittest.TestCase):
     def setUp(self):
         feed.TASKS.clear()
+        feed.LAST_TASKS[0] = None
         self.addCleanup(feed.TASKS.clear)
 
     def test_active_tasks_come_and_go_with_their_events(self):
@@ -165,6 +166,19 @@ class TestTaskFeed(unittest.TestCase):
         feed.track({"id": "old", "state": "working"})
         feed.replace_tasks([{"id": "n", "state": "working", "started_at": 1}, {"id": "d", "state": "done"}, "junk"])
         self.assertEqual(feed.tasks_line(), {"tasks": [{"id": "n", "state": "working", "title": ""}]})
+
+    def test_a_listing_never_undoes_an_event_that_came_while_it_was_fetched(self):
+        before = feed.TASK_EVENTS[0]
+        feed.track({"id": "n", "state": "done"})
+        self.assertFalse(feed.replace_tasks([{"id": "n", "state": "working"}], before))
+        self.assertEqual(feed.tasks_line(), {"tasks": []})
+
+    def test_the_same_set_is_printed_once(self):
+        feed.track({"id": "n", "state": "working"})
+        with mock.patch.object(feed, "say") as said:
+            feed.say_tasks()
+            feed.say_tasks()
+        self.assertEqual(said.call_count, 1)
 
 
 if __name__ == "__main__":

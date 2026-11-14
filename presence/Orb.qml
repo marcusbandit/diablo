@@ -455,7 +455,16 @@ Item {
                     dot.angle = dot.target;
                     dot.born = true;
                 }
-                onOpacityChanged: if (dot.leaving && dot.opacity === 0) orb.dropMoon(dot.key)
+                // Dropped by the clock, not by the fade ending: one that leaves before it was
+                // ever seen never changes its opacity, and would stay in the list for good.
+                onLeavingChanged: dot.leaving ? gone.restart() : gone.stop()
+
+                Timer {
+                    id: gone
+
+                    interval: 320
+                    onTriggered: orb.dropMoon(dot.key)
+                }
 
                 Behavior on angle { enabled: dot.born; NumberAnimation { duration: 450; easing.type: Easing.InOutCubic } }
                 Behavior on opacity { NumberAnimation { duration: 300 } }

@@ -74,7 +74,8 @@ line boils, every 700 ms while he sleeps) on a small dark disc, tinted by what h
 
 The moons count what he has in flight: every running hub turn and every live task card
 (`GET /v1/tasks` and the `task` event, which `busy.py` follows beside the turns). Queued and
-working tasks keep him busy; a task waiting on Marcus gets a blue moon while anything else runs.
+working tasks keep him up beside the cursor with their moons, without the busy face while he
+holds out a card; a task waiting on Marcus gets a blue moon while anything else runs.
 They sit evenly around one orbit and turn together; one that ends fades where it was and the
 rest glide to even spacing, all in QML (`Orb.moons`).
 

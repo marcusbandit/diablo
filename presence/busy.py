@@ -63,11 +63,18 @@ def shown(event):
 ACTIVE = ("queued", "working", "waiting")
 TASKS = {}
 TASKS_LOCK = threading.Lock()
+# Bumped by every task event, so a listing asked for before one never undoes it.
+TASK_EVENTS = [0]
+LAST_TASKS = [None]
 
 
-def task_shown(task):
-    return {"id": str(task.get("id") or ""), "state": task.get("state") or "working",
-            "title": " ".join(str(task.get("title") or "").split())[:60]}
+def entry(task):
+    """What the orb keeps of one active task, or None for a finished or malformed one."""
+    if not isinstance(task, dict) or not task.get("id") or task.get("state") not in ACTIVE:
+        return None
+    return {"id": str(task["id"]), "state": task["state"],
+            "title": " ".join(str(task.get("title") or "").split())[:60],
+            "started_at": number(task.get("started_at"), 0.0)}
 
 
 def tasks_line():
@@ -76,25 +83,38 @@ def tasks_line():
     return {"tasks": [{k: v for k, v in row.items() if k != "started_at"} for row in rows]}
 
 
+def say_tasks():
+    """Prints the tasks line, only when it differs from the last one printed."""
+    line = tasks_line()
+    with TASKS_LOCK:
+        if line == LAST_TASKS[0]:
+            return
+        LAST_TASKS[0] = line
+    say(line)
+
+
 def track(task):
     """One task event into the set of active ones. True when the set changed."""
     if not isinstance(task, dict) or not task.get("id"):
         return False
-    key = str(task["id"])
-    if task.get("state") in ACTIVE:
-        entry = {**task_shown(task), "started_at": float(task.get("started_at") or 0)}
-        changed = TASKS.get(key) != entry
-        TASKS[key] = entry
-        return changed
-    return TASKS.pop(key, None) is not None
+    TASK_EVENTS[0] += 1
+    kept = entry(task)
+    if kept is None:
+        return TASKS.pop(str(task["id"]), None) is not None
+    changed = TASKS.get(kept["id"]) != kept
+    TASKS[kept["id"]] = kept
+    return changed
 
 
-def replace_tasks(listing):
+def replace_tasks(listing, events_before=None):
+    """The whole set from a listing, unless a task event came in while it was being fetched."""
     with TASKS_LOCK:
+        if events_before is not None and events_before != TASK_EVENTS[0]:
+            return False
         TASKS.clear()
-        for task in listing:
-            if isinstance(task, dict) and task.get("id") and task.get("state") in ACTIVE:
-                TASKS[str(task["id"])] = {**task_shown(task), "started_at": float(task.get("started_at") or 0)}
+        for kept in filter(None, map(entry, listing)):
+            TASKS[kept["id"]] = kept
+        return True
 
 
 def write_json(path, body):
@@ -169,13 +189,15 @@ def ask(base, headers):
     with urllib.request.urlopen(urllib.request.Request(f"{base}/v1/busy", headers=headers), timeout=10) as reply:
         say(shown(json.loads(reply.read())))
     url = f"{base}/v1/tasks?state={','.join(ACTIVE)}"
+    with TASKS_LOCK:
+        before = TASK_EVENTS[0]
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=10) as reply:
-            replace_tasks(json.loads(reply.read()).get("tasks") or [])
+            replace_tasks(json.loads(reply.read()).get("tasks") or [], before)
     except Exception as error:  # the turns still count when the task list can not be read
         sys.stderr.write(f"tasks feed: {error}\n")
         return
-    say(tasks_line())
+    say_tasks()
 
 
 def recheck(base, headers, done):
@@ -210,7 +232,7 @@ def follow(cfg):
                         with TASKS_LOCK:
                             changed = track(event.get("task"))
                         if changed:
-                            say(tasks_line())
+                            say_tasks()
                     elif isinstance(event, dict) and event.get("kind") == "screen":
                         try:
                             show(event)
@@ -228,6 +250,7 @@ def main():
             sys.stderr.write(f"busy feed: {error}\n")
         with TASKS_LOCK:
             TASKS.clear()
+            LAST_TASKS[0] = {"tasks": []}
         say({"turns": [], "tasks": [], "lost": True})
         time.sleep(RETRY_S)
 
