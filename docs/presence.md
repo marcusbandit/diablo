@@ -46,11 +46,20 @@ close button or a click anywhere outside puts him back. Two pages:
   your voice, and the voice setup itself, driven through the ears' control panel on
   `127.0.0.1:8758` (`voice/ears_api.py`).
 
-The spoken quick actions (`voice/panel.py`, no model turn): "open up", "expand", "show your
-settings" open it; "enlarge this", "make it bigger" enlarge the newest card; "close", "shrink",
-"make it small again" close it. "Close it" and "make it bigger" also mean a window, so they only
-count while the central card is open or a card is on screen. The state is `panel.json`
-(`{open, view, card, at}`) in the same state dir; the ears and `shell.qml` both write it.
+The spoken quick actions (`voice/panel.py`, no model turn): "open up", "expand" open it;
+"go to your settings", "open your settings", "take me to your settings" open it on Settings;
+"train your voice", "teach you my voice", "retrain your ears" open it on Settings at Your voice;
+"enlarge this", "make it bigger" enlarge the newest card; "close", "shrink", "make it small
+again" close it. "Close it" and "make it bigger" also mean a window, so they only count while the
+central card is open or a card is on screen. The state is `panel.json` (`{open, view, card,
+page, page_at, at}`) in the same state dir; the ears, `busy.py` and `shell.qml` all write it.
+`page` asks Settings to glide to the top (`settings`) or to Your voice (`voice`), once for each
+`page_at` stamp, so asking again moves it again; scrolling by hand stops it at once.
+
+Typed, or on any channel the quick actions do not catch, the brain does the same with the
+`open_settings` tool (`page` settings or voice). It posts to `POST /v1/screen/open`, which goes out
+as a `screen` event with `open`, and `busy.py` writes it into `panel.json`, the same road
+`show_on_screen` takes.
 
 ## What it reads
 

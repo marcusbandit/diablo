@@ -39,6 +39,7 @@ SCENES=(
   "card-right-edge|asleep|$((mw - 40)),500|$(card a 'Next bus' '5 min' 'then 20 min')"
   "two-cards|speaking|900,400|$(card a Weather 7° 'cloudy, feels like 4°'),$(card b Diablo '' 'Here is the weather for today, sir.')"
   "panel-settings|asleep|900,400||{\"open\":true,\"view\":\"settings\"}|trained"
+  "panel-voice|asleep|900,400||{\"open\":true,\"view\":\"settings\",\"page\":\"voice\",\"page_at\":1}|trained"
   "panel-training|listening|900,400||{\"open\":true,\"view\":\"settings\"}|speech"
   "panel-now|asleep|900,400||{\"open\":true,\"view\":\"now\",\"card\":{\"title\":\"Weather\",\"big\":\"7°\",\"lines\":[\"Cloudy, feels like 4°. Rain from 16:00.\",\"Tomorrow 4 to 8 degrees, light rain.\"]}}|trained"
 )

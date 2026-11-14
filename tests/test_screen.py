@@ -43,6 +43,17 @@ class TestEndpoint(ApiCase):
     def test_only_the_hub_token_may_show(self):
         self.assertEqual(self.client.post("/v1/screen", json={"title": "x"}).status_code, 403)
 
+    def test_opening_a_settings_page_goes_out_as_a_screen_event(self):
+        for page in ("settings", "voice"):
+            with mock.patch.object(server, "publish") as published:
+                reply = self.client.post("/v1/screen/open", headers=HEADERS, json={"page": page})
+            self.assertEqual(reply.status_code, 200)
+            self.assertEqual(published.call_args.args[0], {"kind": "screen", "open": page})
+
+    def test_opening_an_unknown_page_or_without_the_hub_token_is_refused(self):
+        self.assertEqual(self.client.post("/v1/screen/open", headers=HEADERS, json={"page": "secrets"}).status_code, 400)
+        self.assertEqual(self.client.post("/v1/screen/open", json={"page": "voice"}).status_code, 403)
+
 
 class TestDesktopSide(unittest.TestCase):
     def setUp(self):
@@ -72,6 +83,21 @@ class TestDesktopSide(unittest.TestCase):
         panel = self.read("panel.json")
         self.assertEqual((panel["open"], panel["view"], panel["card"]["title"]), (True, "now", "Atom"))
 
+    def test_open_puts_the_central_card_on_a_settings_page(self):
+        busy.show({"card": {"id": "big", "title": "Atom"}, "size": "large"}, now=5)
+        self.assertEqual(busy.show({"open": "voice"}, now=6), "voice")
+        panel = self.read("panel.json")
+        self.assertEqual((panel["open"], panel["view"], panel["page"], panel["page_at"]), (True, "settings", "voice", 6))
+        self.assertEqual(panel["card"]["title"], "Atom")
+        busy.show({"open": "settings"}, now=7)
+        self.assertEqual(self.read("panel.json")["page"], "settings")
+        busy.show({"card": {"id": "b2", "title": "Next"}, "size": "large"}, now=8)
+        self.assertEqual((self.read("panel.json")["view"], self.read("panel.json")["page"]), ("now", ""))
+
+    def test_an_unknown_page_writes_nothing(self):
+        self.assertIsNone(busy.show({"open": "../x"}, now=5))
+        self.assertFalse((Path(self.tmp.name) / "panel.json").exists())
+
     def test_a_page_is_saved_and_referenced(self):
         busy.show({"card": {"id": "p1", "html": "<b>3d</b>", "ttl": 60}, "size": "small"}, now=1000)
         card = self.read("presence.json")["cards"][0]
@@ -92,8 +118,24 @@ class TestTool(unittest.TestCase):
     def test_the_tool_is_listed_and_allowed_while_locked(self):
         from hub import lockguard
 
-        self.assertIn("show_on_screen", [t["name"] for t in mcp_server.EXTRA])
-        self.assertIn("show_on_screen", lockguard.SAFE_HOUSE)
+        for name in ("show_on_screen", "open_settings"):
+            self.assertIn(name, [t["name"] for t in mcp_server.EXTRA])
+            self.assertIn(name, lockguard.SAFE_HOUSE)
+
+    def test_open_settings_posts_the_page(self):
+        reply = mock.Mock(status_code=200)
+        with mock.patch.object(mcp_server, "get_config", return_value={"hub_token": "t"}), \
+                mock.patch.object(mcp_server.httpx, "post", return_value=reply) as post:
+            self.assertIn("Your voice", mcp_server.call("open_settings", {"page": "voice"}))
+            self.assertEqual(post.call_args.kwargs["json"], {"page": "voice"})
+            self.assertTrue(post.call_args.args[0].endswith("/v1/screen/open"))
+            mcp_server.call("open_settings", {})
+            self.assertEqual(post.call_args.kwargs["json"], {"page": "settings"})
+
+    def test_the_charter_says_when_to_open_settings(self):
+        from hub import charter
+
+        self.assertIn("open_settings with page voice", charter.CHARTER)
 
 
 if __name__ == "__main__":

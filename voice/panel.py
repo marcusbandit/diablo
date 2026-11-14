@@ -1,8 +1,10 @@
 """The central card: Diablo opened up in the middle of the screen (presence/Panel.qml).
 
-Quick actions, no model turn: "open up" or "show your settings" opens it on Settings, "enlarge
-this" moves the newest card into it, "close" or "make it small again" puts him back by the
-cursor. presence/shell.qml reads panel.json and writes it back when the card is closed there.
+Quick actions, no model turn: "open up" or "go to your settings" opens it on Settings, "train
+your voice" on Settings at Your voice, "enlarge this" moves the newest card into it, "close" or
+"make it small again" puts him back by the cursor. presence/shell.qml reads panel.json and writes
+it back when the card is closed there. `page` in panel.json asks the card to scroll Settings to
+the top ("settings") or to Your voice ("voice"); shell.qml clears it once a tab is clicked.
 """
 
 import json
@@ -12,12 +14,26 @@ import time
 from . import presence
 
 FILE = presence.STATE_DIR / "panel.json"
+SHUT = {"open": False, "view": "settings", "card": None, "page": ""}
+PAGES = ("settings", "voice")
 
 _LEAD = r"^\W*(?:diablo\W+)?(?:(?:please|can\s+you|could\s+you|would\s+you)\W+)?"
 _TAIL = r"(?:\W+(?:please|for\s+me|now))*\W*$"
 OPEN = re.compile(
-    _LEAD + r"(?:open\s+(?:up|yourself|your\s+settings|the\s+settings|settings)|expand(?:\s+yourself)?"
-    r"|show\s+(?:me\s+)?(?:your|the)\s+settings|come\s+to\s+the\s+(?:middle|centre|center)|go\s+big)" + _TAIL,
+    _LEAD + r"(?:open\s+(?:up|yourself)|expand(?:\s+yourself)?|come\s+to\s+the\s+(?:middle|centre|center)|go\s+big)" + _TAIL,
+    re.I,
+)
+SETTINGS = re.compile(
+    _LEAD + r"(?:i\s+(?:want|would\s+like|wanna)\s+(?:to\s+)?)?"
+    r"(?:(?:open|show)\s+(?:me\s+)?(?:(?:your|the|diablo'?s)\s+)?settings"
+    r"|(?:go\s+to|take\s+me\s+to|bring\s+up|pull\s+up|let\s+me\s+see)\s+(?:your|diablo'?s)\s+settings)" + _TAIL,
+    re.I,
+)
+TRAIN = re.compile(
+    _LEAD + r"(?:(?:re)?train\s+(?:your|the)\s+(?:voice|ears|wake\s+word)(?:\s+(?:model|again))?"
+    r"|(?:re)?teach\s+(?:you|yourself|him|diablo)\s+my\s+voice(?:\s+again)?"
+    r"|(?:re)?train\s+(?:you|yourself|him|diablo)\s+(?:on|to)\s+(?:my\s+voice|recogni[sz]e\s+me)"
+    r"|learn\s+my\s+voice(?:\s+again)?)" + _TAIL,
     re.I,
 )
 ENLARGE = re.compile(
@@ -33,7 +49,7 @@ CLOSE = re.compile(
 
 
 def intent(text, state=None, cards=None):
-    """open, enlarge or close for a line that asks for one, else None. "Close it" and "make it
+    """open, settings, voice, enlarge or close for a line that asks for one, else None. "Close it" and "make it
     bigger" mean the window to every other command, so they only count here while the central
     card is open or a card is on screen. "Expand" alone opens him up; "expand it" enlarges."""
     text = str(text or "")
@@ -41,6 +57,10 @@ def intent(text, state=None, cards=None):
     cards = presence._read() if cards is None else cards
     if ENLARGE.match(text) and not re.search(r"\bexpand(?:\s+yourself)?\W*$", text, re.I):
         return "enlarge" if cards or state.get("card") else None
+    if TRAIN.match(text):
+        return "voice"
+    if SETTINGS.match(text):
+        return "settings"
     if OPEN.match(text):
         return "open"
     if CLOSE.match(text):
@@ -52,8 +72,8 @@ def read():
     try:
         state = json.loads(FILE.read_text())
     except (OSError, ValueError):
-        return {"open": False, "view": "settings", "card": None}
-    return state if isinstance(state, dict) else {"open": False, "view": "settings", "card": None}
+        return dict(SHUT)
+    return state if isinstance(state, dict) else dict(SHUT)
 
 
 def write(**changes):
@@ -76,21 +96,24 @@ def newest_card():
 def apply(kind):
     """Does it and returns his words: short, the screen shows the rest."""
     if kind == "open":
-        write(open=True, view="settings")
+        write(open=True, view="settings", page="")
+        return ""
+    if kind in PAGES:
+        write(open=True, view="settings", page=kind, page_at=time.time())
         return ""
     if kind == "enlarge":
         card = newest_card()
         if card is None:
             state = read()
             if state.get("card"):
-                write(open=True, view="now")
+                write(open=True, view="now", page="")
                 return ""
             return "There is nothing on screen to enlarge, sir."
-        write(open=True, view="now", card=card)
+        write(open=True, view="now", card=card, page="")
         return ""
     if kind == "close":
         if not read().get("open"):
             return ""
-        write(open=False)
+        write(open=False, page="")
         return ""
     return None
