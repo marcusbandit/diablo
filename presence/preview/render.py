@@ -15,8 +15,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCENES = ["orb-listening", "orb-thinking", "orb-speaking", "act-speaking", "act-surprised", "act-sorry", "act-delighted", "card-below", "card-above", "card-right-edge",
-          "two-cards", "panel-settings", "panel-training", "panel-now"]
-EARS = {"panel-settings": "trained", "panel-training": "speech", "panel-now": "trained"}
+          "two-cards", "panel-settings", "panel-voice", "panel-training", "panel-now"]
+EARS = {"panel-settings": "trained", "panel-voice": "trained", "panel-training": "speech", "panel-now": "trained"}
 PORT = 18758
 
 

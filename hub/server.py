@@ -160,6 +160,10 @@ class ScreenIn(BaseModel):
     ttl: float = 0
 
 
+class ScreenOpenIn(BaseModel):
+    page: str = "settings"
+
+
 class EarsReportIn(BaseModel):
     state: str
     detail: str = ""
@@ -1412,6 +1416,22 @@ async def screen(body: ScreenIn, caller: dict = Depends(require_token)):
         raise HTTPException(status_code=400, detail=card)
     publish({"kind": "screen", "card": card, "size": card.pop("size")})
     return {"ok": True, "id": card["id"]}
+
+
+SCREEN_PAGES = ("settings", "voice")
+
+
+@app.post("/v1/screen/open")
+async def screen_open(body: ScreenOpenIn, caller: dict = Depends(require_token)):
+    """Opens the central card on Marcus's desktop at one of its pages: "settings", the Settings
+    tab from the top, or "voice", Settings at Your voice where he teaches him his voice. It goes
+    out as a `screen` event with `open`, which presence/busy.py writes into panel.json."""
+    if not caller.get("master"):
+        raise HTTPException(status_code=403, detail="only the hub token may open things on screen")
+    if body.page not in SCREEN_PAGES:
+        raise HTTPException(status_code=400, detail=f"page is one of {', '.join(SCREEN_PAGES)}")
+    publish({"kind": "screen", "open": body.page})
+    return {"ok": True, "page": body.page}
 
 
 def screen_card(body):

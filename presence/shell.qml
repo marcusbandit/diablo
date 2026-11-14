@@ -43,8 +43,10 @@ ShellRoot {
     property bool followCursor: true
 
     // The central card (Panel.qml): Diablo opened up in the middle of the screen. panel.json
-    // holds {open, view, card}; the ears write it for "open up", "enlarge this" and "close",
-    // and this file writes it when the card is closed here.
+    // holds {open, view, card, page}; the ears write it for "open up", "go to your settings",
+    // "train your voice", "enlarge this" and "close", busy.py for what the brain shows or opens,
+    // and this file writes it when a tab is picked or the card is closed here. `page` asks
+    // Settings to scroll to the top or to Your voice; a tab picked here clears it.
     property var panelState: ({ open: false, view: "settings", card: null })
     readonly property bool panelOpen: !!root.panelState.open
 
@@ -721,7 +723,7 @@ ShellRoot {
             anchors.fill: parent
             z: -2
             enabled: root.panelOpen
-            onClicked: root.setPanel({ open: false })
+            onClicked: root.setPanel({ open: false, page: "" })
         }
 
         // The central card, grown out of the orb: it scales up from where he was and he moves
@@ -741,16 +743,18 @@ ShellRoot {
             opacity: root.panelOpen ? 1 : 0
             view: root.panelState.view ?? "settings"
             card: root.panelState.card ?? null
+            page: root.panelState.page ?? ""
+            pageAt: (root.panelState.page ?? "") !== "" ? (root.panelState.at ?? 0) : 0
             followCursor: root.followCursor
             earsUrl: Quickshell.env("DIABLO_EARS_URL") || "http://127.0.0.1:8758"
             focus: root.panelOpen
-            Keys.onEscapePressed: root.setPanel({ open: false })
-            onCloseRequested: root.setPanel({ open: false })
-            onViewRequested: view => root.setPanel({ view: view })
+            Keys.onEscapePressed: root.setPanel({ open: false, page: "" })
+            onCloseRequested: root.setPanel({ open: false, page: "" })
+            onViewRequested: view => root.setPanel({ view: view, page: "" })
             onFollowChanged: on => root.setFollow(on)
             mouthDelayMs: root.mouthDelayMs
             onTuneMouthRequested: {
-                root.setPanel({ open: false });
+                root.setPanel({ open: false, page: "" });
                 Quickshell.execDetached(["sh", "-c", 'pgrep -f "$1" >/dev/null || exec qs -n -p "$1"', "sh", `${Quickshell.shellDir}/tuner.qml`]);
             }
 

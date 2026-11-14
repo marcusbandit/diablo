@@ -35,6 +35,14 @@ EXTRA = [
         },
     },
     {
+        "name": "open_settings",
+        "description": "Open your central card on Marcus's desktop at a page of your Settings tab, whichever channel he asked on. page settings: when he asks to open, see or go to your settings. page voice: Settings at Your voice, with Teach him again, when he asks to train or retrain your voice or ears, to teach you his voice, or to learn his voice. It only opens the page; he starts the training there.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"page": {"type": "string", "enum": ["settings", "voice"]}},
+        },
+    },
+    {
         "name": "notify",
         "description": "Send Marcus a Telegram message right now, outside the current reply. For reports he should see on his phone when the reply itself goes elsewhere, like the web app.",
         "inputSchema": {
@@ -329,6 +337,22 @@ def show_on_screen(arguments):
     return "shown in the central card" if size == "large" else "shown beside the orb; he can say enlarge this"
 
 
+def open_settings(arguments):
+    token = str(get_config().get("hub_token") or "")
+    page = str(arguments.get("page") or "settings")
+    try:
+        response = httpx.post(f"{devices.public_url()}/v1/screen/open", headers={"X-Diablo-Token": token}, json={"page": page}, timeout=20)
+    except httpx.HTTPError as error:
+        return f"could not reach the hub: {error}"
+    if response.status_code != 200:
+        try:
+            why = response.json().get("detail")
+        except ValueError:
+            why = response.text[:200]
+        return f"not opened: {why}"
+    return "opened Settings at Your voice" if page == "voice" else "opened your Settings"
+
+
 def restart(arguments):
     token = str(get_config().get("hub_token") or "")
     body = {
@@ -409,6 +433,8 @@ def call(name, arguments):
         return notify(arguments.get("text"))
     if name == "show_on_screen":
         return show_on_screen(arguments)
+    if name == "open_settings":
+        return open_settings(arguments)
     if name == "send_voice":
         return send_voice(arguments.get("text"), arguments.get("language"))
     if name == "watch_t3_thread":

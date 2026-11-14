@@ -40,6 +40,7 @@ Window {
         "two-cards": { mood: "speaking", at: [240, 100], cards: [{ id: "a", title: "Weather", big: "7°", lines: ["cloudy, feels like 4°"] },
             { id: "b", title: "Diablo", big: "", lines: ["Here is the weather for today, sir."] }] },
         "panel-settings": { mood: "asleep", panel: { view: "settings" } },
+        "panel-voice": { mood: "asleep", panel: { view: "settings", page: "voice" } },
         "panel-training": { mood: "listening", panel: { view: "settings" } },
         "panel-now": { mood: "asleep", panel: { view: "now", card: { title: "Weather", big: "7°", lines: ["Cloudy, feels like 4°. Rain from 16:00.", "Tomorrow 4 to 8 degrees, light rain."] } } }
     })
@@ -153,6 +154,8 @@ Window {
         style: theme
         view: win.s.panel?.view ?? "settings"
         card: win.s.panel?.card ?? null
+        page: win.s.panel?.page ?? ""
+        pageAt: (win.s.panel?.page ?? "") !== "" ? 1 : 0
         earsUrl: win.ears
     }
 
