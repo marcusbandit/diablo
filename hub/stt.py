@@ -196,10 +196,14 @@ def _post(b, data, filename):
     return str(body.get("text", "")).strip(), _language(body.get("language")), model
 
 
-def transcribe(data, filename):
+def transcribe(data, filename, skip=()):
+    """skip names backends the caller already knows are out, the desk's own Whisper after gvoice
+    failed; they are left out only while another backend remains."""
     skipped = []
     empty = None
-    for b in configured():
+    backends = configured()
+    backends = [b for b in backends if b["name"] not in skip] or backends
+    for b in backends:
         if not healthy(b):
             skipped.append(f"{b['name']} unhealthy")
             continue

@@ -117,6 +117,15 @@ class TestOrdering(SttCase):
         self.assertEqual(stt.transcribe(b"ogg", "voice.ogg")[0], "from groq")
         self.assertEqual(len(self.local.posts), 0)
 
+    def test_a_skipped_backend_is_left_out(self):
+        self.assertEqual(stt.transcribe(b"ogg", "voice.ogg", ("local",))[0], "from groq")
+        self.assertEqual(len(self.local.posts), 0)
+        self.assertEqual(self.local.health_calls, 0)
+
+    def test_skipping_every_backend_still_tries_them(self):
+        settings.set_setting("transcription.backends", "local")
+        self.assertEqual(stt.transcribe(b"ogg", "voice.ogg", ("local",))[0], "from the gpu")
+
     def test_cloud_only(self):
         settings.set_setting("transcription.backends", "cloud")
         self.assertEqual(stt.transcribe(b"ogg", "voice.ogg")[0], "from groq")

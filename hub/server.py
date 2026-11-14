@@ -310,7 +310,8 @@ def voice_host(caller, host):
 @app.post("/v1/stt")
 async def stt_transcribe(request: Request, _: dict = Depends(require_token)):
     """A clip from ears on another box, transcribed the way voice notes are: diablo-stt on banditbox
-    first, Groq when it is not up. The body is the audio itself, a wav unless X-Filename says otherwise."""
+    first, Groq when it is not up. The body is the audio itself, a wav unless X-Filename says otherwise.
+    X-Stt-Skip lists backends to leave out, local when the desk's own Whisper just failed."""
     try:
         declared = int(request.headers.get("content-length") or 0)
     except ValueError:
@@ -326,8 +327,9 @@ async def stt_transcribe(request: Request, _: dict = Depends(require_token)):
     if not data:
         raise HTTPException(status_code=400, detail="empty audio")
     name = re.sub(r"[^\w.-]", "", request.headers.get("x-filename") or "") or "clip.wav"
+    skip = tuple(part.strip() for part in (request.headers.get("x-stt-skip") or "").split(",") if part.strip())
     try:
-        text, language = await asyncio.to_thread(stt.transcribe, data, name)
+        text, language = await asyncio.to_thread(stt.transcribe, data, name, skip)
     except stt.TranscriptionError as error:
         raise HTTPException(status_code=503, detail=str(error))
     return {"text": text, "language": language, "backend": stt.last_backend()}

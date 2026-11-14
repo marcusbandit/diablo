@@ -184,7 +184,7 @@ def double_check(index, progress=print, model=None, floor=0.1, peaks=5):
                     cut = Path(handle.name)
                 try:
                     stt.write_wav(piece, wake.RATE, str(cut))
-                    heard = stt.transcribe_file(str(cut), cfg)
+                    heard = stt.transcribe_file(str(cut), cfg, fallback=False)
                 except Exception as error:
                     log.warning("could not listen again to %s: %s", name, error)
                     break

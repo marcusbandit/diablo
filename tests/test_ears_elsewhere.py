@@ -171,7 +171,14 @@ class HubEndpointTest(unittest.TestCase):
             answer = self.client.post("/v1/stt", content=b"RIFFdata", headers={"Content-Type": "audio/wav"})
         self.assertEqual(answer.status_code, 200)
         self.assertEqual(answer.json(), {"text": "hello", "language": "en", "backend": "local"})
-        self.assertEqual(done.call_args.args, (b"RIFFdata", "clip.wav"))
+        self.assertEqual(done.call_args.args, (b"RIFFdata", "clip.wav", ()))
+
+    def test_the_desk_can_skip_its_own_whisper(self):
+        with mock.patch.object(self.server.stt, "transcribe", return_value=("hello", "en")) as done, \
+                mock.patch.object(self.server.stt, "last_backend", return_value="cloud"):
+            answer = self.client.post("/v1/stt", content=b"RIFFdata", headers={"X-Stt-Skip": "local"})
+        self.assertEqual(answer.json()["backend"], "cloud")
+        self.assertEqual(done.call_args.args[2], ("local",))
 
     def test_every_backend_down_is_503(self):
         with mock.patch.object(self.server.stt, "transcribe", side_effect=self.server.stt.TranscriptionError("all down")):

@@ -559,13 +559,18 @@ def _start_early(clip, probe, early):
     return job
 
 
-def transcribe(audio, cfg):
+def transcribe(audio, cfg, tl=None, fallback=True):
+    """The words in audio. fallback lets a failed gvoice hand the clip to Groq through the hub;
+    end-of-turn checks run without it, so they never pay for a cloud call. tl gets stt_via."""
     TMP.mkdir(exist_ok=True)
     with tempfile.NamedTemporaryFile(suffix=".wav", dir=TMP, delete=False) as handle:
         path = handle.name
     try:
         stt.write_wav(audio, wake.RATE, path)
-        return stt.transcribe_file(path, cfg)
+        text, via = stt.transcribe(path, cfg, fallback)
+        if tl is not None:
+            tl.note(stt_via=via)
+        return text
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -1238,7 +1243,7 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
             # A follow-up turn: he waits for the chime here, so skip most of it.
             after = time.monotonic() + chime.seconds("listen") * 0.6
         heard = record(mic, cfg, after, vad, start_audio=lead,
-                       probe=lambda clip: transcribe(clip, cfg), hold=set_holding, tl=tl,
+                       probe=lambda clip: transcribe(clip, cfg, fallback=False), hold=set_holding, tl=tl,
                        early=lambda words: early_read(cfg, words, seen.desktop or commands.desktop_state()))
         audio, spoke = heard
     if not spoke:
@@ -1267,7 +1272,7 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
     try:
         # The end-of-turn check already has the words when nothing was said after it.
         started = time.monotonic()
-        text = heard.text if heard.text is not None else transcribe(audio, cfg)
+        text = heard.text if heard.text is not None else transcribe(audio, cfg, tl)
         tl.note(stt_ms=round((time.monotonic() - started) * 1000), stt_reused=heard.text is not None)
     except Exception as error:
         log.warning("speech to text failed: %s", error)
@@ -1344,7 +1349,7 @@ def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=No
     cfg["ears.turn_max_s"] = cfg.get("ears.loop_turn_max_s") or cfg.get("ears.turn_max_s") or LOOP_TURN_MAX_S
     set_state("listening", holding=False, loop=True)
     tl = timeline.Timeline("loop")
-    heard = record(mic, cfg, time.monotonic(), vad, probe=lambda clip: transcribe(clip, cfg),
+    heard = record(mic, cfg, time.monotonic(), vad, probe=lambda clip: transcribe(clip, cfg, fallback=False),
                    no_speech_s=LOOP_LISTEN_S, tl=tl,
                    early=lambda words: early_read(cfg, words, commands.desktop_state()),
                    interrupt=PENDING.has_speech,
@@ -1382,7 +1387,7 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
     set_state("thinking", loop=True, **({} if heard.text is not None else {"step": "transcribing"}))
     try:
         started = time.monotonic()
-        text = heard.text if heard.text is not None else transcribe(audio, cfg)
+        text = heard.text if heard.text is not None else transcribe(audio, cfg, tl)
         tl.note(stt_ms=round((time.monotonic() - started) * 1000), stt_reused=heard.text is not None)
     except Exception as error:
         log.warning("loop: speech to text failed: %s", error)
@@ -1915,7 +1920,7 @@ def recheck_cli(clip):
     print(f"recording  {found}")
     print(f"the turn heard  {meta.get('text', '')!r}" + ("  (Jev ended it early)" if meta.get("early") else ""))
     try:
-        print(f"gvoice now      {stt.transcribe_file(str(found), load_config())!r}")
+        print(f"gvoice now      {stt.transcribe_file(str(found), load_config(), fallback=False)!r}")
     except Exception as error:
         print(f"gvoice failed: {error}")
         return 1

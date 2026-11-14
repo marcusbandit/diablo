@@ -339,7 +339,7 @@ class TestSpeechControlAnswersInOrder(unittest.TestCase):
 
         mic = TimedMic(level, stop=lambda: len(said) >= 2)
 
-        def transcribe(audio, cfg):
+        def transcribe(audio, cfg, *_, **__):
             return "line two" if np.max(np.abs(audio)) > 0.75 else "line one"
 
         def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):

@@ -142,6 +142,8 @@ def text_report(rows, width=50):
         if split:
             out.append(f"  {'':16} hub: {split}")
         extra = [f"{k} {row[k]} ms" for k in ("probe_ms", "stt_ms", "voice_check_ms", "act_ms") if k in row]
+        if row.get("stt_via"):
+            extra.append(f"stt by {row['stt_via']}")
         if extra:
             out.append(f"  {'':16} inside: " + ", ".join(extra))
         out.append("")
@@ -172,6 +174,8 @@ def html_report(rows):
         split = hub_split(row)
         inside = [f"{k.replace('_ms', '').replace('_', ' ')} {row[k]} ms"
                   for k in ("probe_ms", "stt_ms", "voice_check_ms", "act_ms") if k in row]
+        if row.get("stt_via"):
+            inside.append(f"stt by {row['stt_via']}")
         foot = " · ".join(x for x in [("hub: " + split) if split else "", ("inside: " + ", ".join(inside)) if inside else ""] if x)
         cards.append(
             f'<section class="c"><div class="h"><span class="s">{html.escape(str(row.get("text") or "(nothing heard)"))}</span>'
