@@ -87,7 +87,7 @@ class TestDesktopSide(unittest.TestCase):
         busy.show({"card": {"id": "big", "title": "Atom"}, "size": "large"}, now=5)
         self.assertEqual(busy.show({"open": "voice"}, now=6), "voice")
         panel = self.read("panel.json")
-        self.assertEqual((panel["open"], panel["view"], panel["page"], panel["at"]), (True, "settings", "voice", 6))
+        self.assertEqual((panel["open"], panel["view"], panel["page"], panel["page_at"]), (True, "settings", "voice", 6))
         self.assertEqual(panel["card"]["title"], "Atom")
         busy.show({"open": "settings"}, now=7)
         self.assertEqual(self.read("panel.json")["page"], "settings")

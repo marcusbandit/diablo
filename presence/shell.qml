@@ -45,8 +45,8 @@ ShellRoot {
     // The central card (Panel.qml): Diablo opened up in the middle of the screen. panel.json
     // holds {open, view, card, page}; the ears write it for "open up", "go to your settings",
     // "train your voice", "enlarge this" and "close", busy.py for what the brain shows or opens,
-    // and this file writes it when a tab is picked or the card is closed here. `page` asks
-    // Settings to scroll to the top or to Your voice; a tab picked here clears it.
+    // and this file writes it when a tab is picked or the card is closed here. `page` and
+    // its stamp `page_at` ask Settings to glide to the top or to Your voice, once per stamp.
     property var panelState: ({ open: false, view: "settings", card: null })
     readonly property bool panelOpen: !!root.panelState.open
 
@@ -744,7 +744,7 @@ ShellRoot {
             view: root.panelState.view ?? "settings"
             card: root.panelState.card ?? null
             page: root.panelState.page ?? ""
-            pageAt: (root.panelState.page ?? "") !== "" ? (root.panelState.at ?? 0) : 0
+            pageAt: root.panelState.page_at ?? 0
             followCursor: root.followCursor
             earsUrl: Quickshell.env("DIABLO_EARS_URL") || "http://127.0.0.1:8758"
             focus: root.panelOpen

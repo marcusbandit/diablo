@@ -318,38 +318,38 @@ def restart_text(verdict):
     return "\n".join(lines)
 
 
-def show_on_screen(arguments):
+def screen_post(path, body):
+    """POSTs to one of the hub's /v1/screen routes; None when it worked, else why not."""
     token = str(get_config().get("hub_token") or "")
+    try:
+        response = httpx.post(f"{devices.public_url()}{path}", headers={"X-Diablo-Token": token}, json=body, timeout=20)
+    except httpx.HTTPError as error:
+        return f"could not reach the hub: {error}"
+    if response.status_code == 200:
+        return None
+    try:
+        detail = response.json()
+        return str(detail.get("detail") if isinstance(detail, dict) else detail)
+    except ValueError:
+        return response.text[:200]
+
+
+def show_on_screen(arguments):
     body = {key: arguments[key] for key in ("title", "big", "lines", "html", "size", "ttl") if arguments.get(key) is not None}
     if isinstance(body.get("lines"), str):
         body["lines"] = [body["lines"]]
-    try:
-        response = httpx.post(f"{devices.public_url()}/v1/screen", headers={"X-Diablo-Token": token}, json=body, timeout=20)
-    except httpx.HTTPError as error:
-        return f"could not reach the hub: {error}"
-    if response.status_code != 200:
-        try:
-            why = response.json().get("detail")
-        except ValueError:
-            why = response.text[:200]
-        return f"not shown: {why}"
+    failed = screen_post("/v1/screen", body)
+    if failed:
+        return failed if failed.startswith("could not") else f"not shown: {failed}"
     size = body.get("size") or "small"
     return "shown in the central card" if size == "large" else "shown beside the orb; he can say enlarge this"
 
 
 def open_settings(arguments):
-    token = str(get_config().get("hub_token") or "")
     page = str(arguments.get("page") or "settings")
-    try:
-        response = httpx.post(f"{devices.public_url()}/v1/screen/open", headers={"X-Diablo-Token": token}, json={"page": page}, timeout=20)
-    except httpx.HTTPError as error:
-        return f"could not reach the hub: {error}"
-    if response.status_code != 200:
-        try:
-            why = response.json().get("detail")
-        except ValueError:
-            why = response.text[:200]
-        return f"not opened: {why}"
+    failed = screen_post("/v1/screen/open", {"page": page})
+    if failed:
+        return failed if failed.startswith("could not") else f"not opened: {failed}"
     return "opened Settings at Your voice" if page == "voice" else "opened your Settings"
 
 

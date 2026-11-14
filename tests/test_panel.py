@@ -18,8 +18,8 @@ class TestIntent(unittest.TestCase):
             self.assertEqual(panel.intent(line, SHUT, []), "open", line)
 
     def test_asking_for_his_settings(self):
-        for line in ("Show me your settings", "open your settings please", "Go to your settings.", "Diablo, go to settings",
-                     "I want to go to your settings", "take me to your settings", "open the settings", "pull up your settings",
+        for line in ("Show me your settings", "open your settings please", "Go to your settings.", "Diablo, go to your settings",
+                     "I want to go to your settings", "take me to your settings", "open the settings", "pull up your settings", "open settings",
                      "Can you bring up your settings?"):
             self.assertEqual(panel.intent(line, SHUT, []), "settings", line)
             self.assertEqual(panel.intent(line, OPEN, [CARD]), "settings", line)
@@ -43,7 +43,8 @@ class TestIntent(unittest.TestCase):
     def test_other_lines_are_left_alone(self):
         for line in ("Open Spotify", "close the window", "What is the weather?", "enlarge the font in my editor",
                      "Open up the terminal", "expand the folder", "open the settings in firefox", "go to the settings page of spotify",
-                     "train your voice on this podcast", "teach me your voice"):
+                     "train your voice on this podcast", "teach me your voice", "open my settings", "go to settings",
+                     "go to the settings", "train my voice", "pull up the settings"):
             self.assertIsNone(panel.intent(line, OPEN, [CARD]), line)
 
 

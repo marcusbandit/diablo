@@ -19,18 +19,18 @@ PAGES = ("settings", "voice")
 
 _LEAD = r"^\W*(?:diablo\W+)?(?:(?:please|can\s+you|could\s+you|would\s+you)\W+)?"
 _TAIL = r"(?:\W+(?:please|for\s+me|now))*\W*$"
-_SETTINGS = r"(?:your|the|my|diablo'?s)\s+settings|settings"
 OPEN = re.compile(
     _LEAD + r"(?:open\s+(?:up|yourself)|expand(?:\s+yourself)?|come\s+to\s+the\s+(?:middle|centre|center)|go\s+big)" + _TAIL,
     re.I,
 )
 SETTINGS = re.compile(
-    _LEAD + r"(?:i\s+(?:want|would\s+like|wanna)\s+(?:to\s+)?)?(?:(?:open|show)\s+(?:me\s+|up\s+)?|go\s+to\s+|take\s+me\s+to\s+"
-    r"|bring\s+up\s+|pull\s+up\s+|let\s+me\s+see\s+)(?:" + _SETTINGS + r")" + _TAIL,
+    _LEAD + r"(?:i\s+(?:want|would\s+like|wanna)\s+(?:to\s+)?)?"
+    r"(?:(?:open|show)\s+(?:me\s+)?(?:(?:your|the|diablo'?s)\s+)?settings"
+    r"|(?:go\s+to|take\s+me\s+to|bring\s+up|pull\s+up|let\s+me\s+see)\s+(?:your|diablo'?s)\s+settings)" + _TAIL,
     re.I,
 )
 TRAIN = re.compile(
-    _LEAD + r"(?:(?:re)?train\s+(?:your|the|my)\s+(?:voice|ears|wake\s+word)(?:\s+(?:model|again))?"
+    _LEAD + r"(?:(?:re)?train\s+(?:your|the)\s+(?:voice|ears|wake\s+word)(?:\s+(?:model|again))?"
     r"|(?:re)?teach\s+(?:you|yourself|him|diablo)\s+my\s+voice(?:\s+again)?"
     r"|(?:re)?train\s+(?:you|yourself|him|diablo)\s+(?:on|to)\s+(?:my\s+voice|recogni[sz]e\s+me)"
     r"|learn\s+my\s+voice(?:\s+again)?)" + _TAIL,
@@ -99,7 +99,7 @@ def apply(kind):
         write(open=True, view="settings", page="")
         return ""
     if kind in PAGES:
-        write(open=True, view="settings", page=kind)
+        write(open=True, view="settings", page=kind, page_at=time.time())
         return ""
     if kind == "enlarge":
         card = newest_card()

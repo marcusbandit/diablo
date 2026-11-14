@@ -11,7 +11,7 @@ Rectangle {
     property string view: "settings"       // "now" or "settings"
     property var card: null                // what "Now" shows: {title, big, lines, page?}
     // A Settings page asked for from outside: "settings" scrolls to the top, "voice" to Your
-    // voice. pageAt is when it was asked, so asking twice moves it again.
+    // voice. pageAt is when it was asked (panel.json's page_at), so asking twice moves it again.
     property string page: ""
     property real pageAt: 0
     property bool followCursor: true
@@ -108,10 +108,17 @@ Rectangle {
 
     // The page is found again while what is above and below it is still arriving from the ears.
     onPageAtChanged: {
+        if (panel.pageAt <= 0)
+            return;
         pageSettle.restart();
         pageHold.restart();
     }
-    onViewChanged: if (panel.page !== "") pageSettle.restart()
+    // Scrolling by hand ends it at once: no glide, nothing queued, no settling after.
+    function letGo() {
+        pageHold.stop();
+        pageSettle.stop();
+        pageGlide.stop();
+    }
     Timer {
         id: pageSettle
 
@@ -302,7 +309,7 @@ Rectangle {
         visible: panel.view === "settings"
         contentHeight: settingsColumn.implicitHeight + 20
         onContentHeightChanged: if (pageHold.running) pageSettle.restart()
-        onMovementStarted: pageHold.stop()
+        onMovementStarted: panel.letGo()
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 

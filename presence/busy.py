@@ -115,7 +115,7 @@ def show(event, now=None):
         if page not in PAGES:
             return None
         panel = read_json(STATE / "panel.json", {})
-        write_json(STATE / "panel.json", {**panel, "open": True, "view": "settings", "page": page, "at": now})
+        write_json(STATE / "panel.json", {**panel, "open": True, "view": "settings", "page": page, "page_at": now, "at": now})
         return page
     card = dict(event.get("card") or {})
     if not card.get("id"):
