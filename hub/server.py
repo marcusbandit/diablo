@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from . import agent, autoship, brains, busy, db, devices, events, files, jev, llm, hue, lockguard, modules, questions, releases, route, sections, selfrestart, standby, stt, t3link, t3threads, tasks, threads, usage, watch
+from . import agent, autoship, brains, busy, db, devices, events, files, jev, llm, hue, lockguard, modules, questions, releases, route, sections, selfrestart, standby, stt, t3link, t3threads, tasks, threads, usage, voicemerge, watch
 from . import settings as app_settings
 from .config import get_config
 
@@ -1476,6 +1476,17 @@ async def voice_control(body: ControlIn, caller: dict = Depends(require_token)):
         act = None
     return {"act": act, "jev_ms": (answer or {}).get("ms"), "hub_ms": round((time.time() - started) * 1000),
             "choice": (answer or {}).get("desktop"), "confidence": (answer or {}).get("desktop_confidence")}
+
+
+class MergeIn(BaseModel):
+    turns: list[dict] = []
+
+
+@app.post("/v1/voice/merge")
+async def voice_merge(body: MergeIn, caller: dict = Depends(require_token)):
+    """One spoken reply for a burst of spoken turns: {"turns": [{"heard", "reply"}], oldest first}
+    gives {"say", "via", "ms"}. An empty say means the merge failed; the ears then make their own."""
+    return await voicemerge.merge(body.turns)
 
 
 @app.post("/v1/ears/report")

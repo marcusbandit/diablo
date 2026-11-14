@@ -32,7 +32,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from . import chime, commands, ears_api, endturn, feedback, hubclient, jevfast, mouth, panel, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake
+from . import burst, chime, commands, ears_api, endturn, feedback, hubclient, jevfast, mouth, panel, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake
 from . import state as vstate
 from .config import load_config
 
@@ -628,135 +628,67 @@ def read_lines(lines, on_say):
     raise ValueError("the hub's answer ended early")
 
 
-class Pending:
-    """Answers still thinking on the hub while the ears listen again. Each job runs its hub
-    call on a thread; finished ones are spoken by the main loop between his turns."""
-
-    def __init__(self):
-        self.jobs = []
-        self.lock = threading.Lock()
-
-    def start(self, work, tl, said):
-        """work(say) runs the hub call; each line it hands to say is spoken as soon as the
-        main loop is free, ahead of the answer and in the order they came."""
-        job = {"done": threading.Event(), "words": "", "tl": tl, "said": said, "dropped": False, "early": []}
-
-        def say(words):
-            with self.lock:
-                if not job["dropped"]:
-                    job["early"].append(words)
-
-        def run():
-            try:
-                job["words"] = work(say)
-            except Exception:
-                log.exception("background answer failed")
-                job["words"] = "That one failed on my side."
-            finally:
-                job["done"].set()
-
-        with self.lock:
-            self.jobs.append(job)
-        threading.Thread(target=run, daemon=True, name="answer").start()
-        return job
-
-    def show(self, job):
-        feedback.thinking()
-        thinking_changed()
-
-    def forget(self, job):
-        with self.lock:
-            if job in self.jobs:
-                self.jobs.remove(job)
-
-    def take_early(self, job):
-        with self.lock:
-            early, job["early"] = job["early"], []
-        return early
-
-    def keep(self, unsaid):
-        """Puts back what say_ready took but never said, ahead of anything newer: the first
-        lines left and the finished answers, so a cut off line never loses the answer."""
-        with self.lock:
-            for job, early, finished in reversed(unsaid):
-                if job["dropped"]:
-                    continue
-                job["early"] = list(early) + job["early"]
-                if job not in self.jobs:
-                    self.jobs.insert(0, job)
-
-    def has_speech(self):
-        with self.lock:
-            self.jobs = [job for job in self.jobs if not (job["dropped"] and job["done"].is_set())]
-            return any(not job["dropped"] and (job["early"] or job["done"].is_set()) for job in self.jobs)
-
-    def speakable(self):
-        """[(job, first lines, finished)], oldest job first: the lines each job has to say now,
-        and whether its answer is in. Finished jobs come off the list; dropped ones say nothing."""
-        out = []
-        with self.lock:
-            for job in list(self.jobs):
-                finished = job["done"].is_set()
-                early, job["early"] = job["early"], []
-                if finished:
-                    self.jobs.remove(job)
-                if not job["dropped"] and (early or finished):
-                    out.append((job, early, finished))
-        return out
-
-    def thinking(self):
-        with self.lock:
-            return len(self.jobs)
-
-    def drop_all(self):
-        with self.lock:
-            for job in self.jobs:
-                job["dropped"] = True
-                job["early"] = []
-            return len(self.jobs)
-
-
-PENDING = Pending()
+PENDING = burst.Burst()
 
 # "Never mind", "cancel that", "stop thinking": drops what Diablo is still thinking on.
 CANCEL = re.compile(r"^\W*(?:diablo\W+)?(?:never\s*mind|cancel(?:\s+(?:that|it|this))?|forget\s+(?:it|that)|stop\s+thinking)\W*$", re.I)
 
 
 def answer_or_background(work, tl, said):
-    """Runs work(say) (the hub call and any act) and returns its words when it is quick. When it
-    is not back within INLINE_WAIT_S, returns None and leaves it thinking: the main loop says
-    his first line as soon as it comes, then the answer once it lands and he is not mid-turn."""
+    """Runs work(say) (the hub call and any act) and returns its words when it is quick and alone.
+    Otherwise returns None and leaves it thinking: a lone turn says its first line as soon as it
+    comes and its answer once it lands; a turn that starts while an earlier one is still thinking
+    or unsaid joins that one's burst, and the burst is spoken as one merged reply (voice/burst.py)."""
     job = PENDING.start(work, tl, said)
-    if job["done"].wait(INLINE_WAIT_S):
+    alone = PENDING.alone(job)
+    if alone and job["done"].wait(INLINE_WAIT_S) and PENDING.alone(job):
         PENDING.forget(job)
-        return " ".join(w for w in PENDING.take_early(job) + [job["words"]] if w).strip()
+        return burst.answer_of(job)
     tl.note(background=True)
     tl.mark("backgrounded")
-    PENDING.show(job)
-    log.info("still thinking on %r, listening again", said[:80])
+    feedback.thinking()
+    thinking_changed()
+    if alone:
+        log.info("still thinking on %r, listening again", said[:80])
+    else:
+        log.info("%r joins a burst of %d, its answer waits for the rest", said[:80], PENDING.size())
     return None
 
 
 def say_ready(mic, speaker, cfg, detector, tap):
-    """Speaks the first lines of answers still thinking and every answer that finished in the
-    background, each job's lines in order. True when he cut one off with the name, so a turn
-    follows; whatever was not said yet waits for after that turn."""
-    ready = PENDING.speakable()
-    if any(finished for _, _, finished in ready):
-        thinking_changed()
-    for at, (job, early, finished) in enumerate(ready):
+    """Speaks what is ready: a lone job's first lines while it works, a lone job's answer once
+    it is in, or a burst's one merged reply. True when he cut it off with the name, so a turn
+    follows. A cut reply is never said again; only the answer behind a cut first line is kept,
+    for the reply after his next turn."""
+    PENDING.quiet_s = burst.quiet_s(cfg)
+    for job, early in PENDING.take_early():
         for n, words in enumerate(early):
             if say_answer(mic, speaker, words, cfg, detector, tap, job["tl"], first=True):
-                PENDING.keep([(job, early[n + 1:], finished)] + ready[at + 1:])
+                PENDING.keep_early(job, early[n + 1:])
                 return True
-        if finished:
-            cut = say_answer(mic, speaker, job["words"], cfg, detector, tap, job["tl"])
-            job["tl"].mark("end")
-            job["tl"].save()
-            if cut:
-                PENDING.keep(ready[at + 1:])
-                return True
-    return False
+    jobs, merged = PENDING.take()
+    if not jobs:
+        return False
+    thinking_changed()
+    last = jobs[-1]
+    tl = last["tl"] or timeline.Timeline()
+    try:
+        if merged is None:
+            early, last["early"] = list(last["early"]), []
+            for n, words in enumerate(early):
+                if say_answer(mic, speaker, words, cfg, detector, tap, tl, first=True):
+                    last["early"] = early[n + 1:]
+                    PENDING.keep([last])
+                    return True
+            return say_answer(mic, speaker, last["words"], cfg, detector, tap, tl)
+        log.info("a burst of %d spoken as one reply", len(jobs))
+        tl.note(burst=[job["said"][:120] for job in jobs])
+        return say_answer(mic, speaker, spoken(merged), cfg, detector, tap, tl)
+    finally:
+        for job in jobs:
+            if job["tl"] is not None and job not in PENDING.jobs:
+                job["tl"].mark("end")
+                job["tl"].save()
 
 
 def cancel_thinking(cfg):
@@ -850,7 +782,7 @@ def run_act(act, tl, cfg):
 def local_line(mic, settings, vad, text, tl, speaker=None):
     """Lines the ears handle on their own: "never mind" while he thinks, "type ...", and
     "dictate". The words to say, or None when the line is not one of them."""
-    if PENDING.thinking() and CANCEL.match(text):
+    if PENDING.size() and CANCEL.match(text):
         dropped = cancel_thinking(settings.get())
         thinking_changed()
         tl.note(outcome=f"cancelled {dropped} still thinking")
@@ -1656,6 +1588,7 @@ def run():
     REPORT = HubReport(cfg)
     atexit.register(REPORT.stop)
     settings = Settings(cfg)
+    PENDING.merger = lambda turns: burst.merge(settings.get(), turns)
     # Jev straight from here for speech control and early ends, on the hub's own rules.
     try:
         jevfast.bind(settings)

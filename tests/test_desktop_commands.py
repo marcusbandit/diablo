@@ -348,6 +348,9 @@ class TestQueueOrBeside(unittest.TestCase):
 
 
 class TestBackground(unittest.TestCase):
+    def tearDown(self):
+        ears.PENDING.jobs.clear()
+
     def test_a_quick_answer_comes_back_and_a_slow_one_waits_in_the_background(self):
         from voice import timeline
 
@@ -360,8 +363,9 @@ class TestBackground(unittest.TestCase):
         self.assertEqual(ears.PENDING.thinking(), 1)
         gate.set()
         ears.PENDING.jobs[0]["done"].wait(2)
-        ready = ears.PENDING.speakable()
-        self.assertEqual([(job["words"], early, finished) for job, early, finished in ready], [("slow", [], True)])
+        jobs, merged = ears.PENDING.take()
+        self.assertEqual([job["words"] for job in jobs], ["slow"])
+        self.assertIsNone(merged)
         self.assertEqual(ears.PENDING.thinking(), 0)
 
     def test_never_mind_drops_what_is_thinking(self):
@@ -376,7 +380,7 @@ class TestBackground(unittest.TestCase):
         cancel.assert_called_once()
         gate.set()
         ears.PENDING.jobs[0]["done"].wait(2)
-        self.assertEqual(ears.PENDING.speakable(), [])
+        self.assertEqual(ears.PENDING.take(), ([], None))
 
 
 class TestFirstLine(unittest.TestCase):
