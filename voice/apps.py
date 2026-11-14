@@ -15,6 +15,8 @@ import urllib.parse
 from functools import partial
 from pathlib import Path
 
+from . import window
+
 APP_DIRS = [Path(p).expanduser() for p in ("/usr/share/applications", "~/.local/share/applications",
             "/var/lib/flatpak/exports/share/applications", "~/.local/share/flatpak/exports/share/applications")]
 _CACHE = {"stamp": None, "apps": []}
@@ -157,14 +159,11 @@ def _clients():
 
 
 def _focus(target):
-    clients, error = _clients()
-    if clients is None:
-        return None, error
-    hits = [c for field in ("class", "title") for c in clients if target.lower() in str(c.get(field) or "").lower()]
-    if not hits:
-        return None, f"no window matching {target}; open: " + ", ".join(sorted({str(c.get("class") or "?") for c in clients}))
-    ok, out = _dispatch(f'hl.dsp.focus({{ window = "address:{hits[0]["address"]}" }})')
-    return (hits[0], f"focused {hits[0].get('class')}") if ok else (None, out)
+    client, why = window.find(target)
+    if client is None:
+        return None, why
+    ok, out = window.bring(client["address"])
+    return (client, f"focused {client.get('class')}") if ok else (None, out)
 
 
 def list_windows(args, ctx):
@@ -175,10 +174,16 @@ def list_windows(args, ctx):
     return True, "; ".join(lines) or "no windows open"
 
 
-def focus_window(args, ctx):
-    target = str(args.get("target") or "").strip()
-    client, text = _focus(target) if target else (None, "focus which window?")
-    return client is not None, text
+def _verb(args, ctx, verb, did):
+    client, why = window.find(args.get("target"))
+    if client is None:
+        return False, why
+    ok, why = getattr(window, verb)(client["address"])
+    return ok, f"{did} {client.get('class')}" if ok else why
+
+
+focus_window = partial(_verb, verb="focus", did="focused")
+stage_window = partial(_verb, verb="stage", did="staged")
 
 
 def close_window(args, ctx):
@@ -257,8 +262,12 @@ SKILLS = [
          _params(("url",), url="string"), open_url, "act", "open"),
         ("web_search", "Search the web for something and show the results in the browser.", _params(("query",), query="string"), web_search, "act", "open"),
         ("list_windows", "Which windows are open right now, with their workspace numbers.", _params(), list_windows, "tell", "done"),
-        ("focus_window", "Bring an open window to the front by its app name or part of its title, like Spotify or the Discord window.",
+        ("focus_window", "Focus an open window by its app name or part of its title, for focus, switch to or go to. "
+         "Only moves focus and the cursor; it never stages or resizes anything.",
          _params(("target",), target="string"), focus_window, "act", "done"),
+        ("stage_window", "Put an open window on the stage, the centerpiece of his layout, the same as his Super+Shift+Enter, "
+         "for center or stage followed by an app. Focuses it and moves the cursor there too.",
+         _params(("target",), target="string"), stage_window, "act", "done"),
         ("close_window", "Close a window by its app name or part of its title. With no target, close the active window.",
          _params(target="string"), close_window, "act", "done"),
         ("switch_workspace", "Go to a workspace by number, 1 to 10.", _params(("number",), number="integer"), switch_workspace, "act", "done"),
