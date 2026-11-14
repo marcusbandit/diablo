@@ -169,6 +169,8 @@ ShellRoot {
     }
     // What keeps him beside the cursor even while it rests.
     readonly property bool needed: root.awake || root.moment !== "" || root.cardsUp || root.panelOpen
+    // Done with what he was needed for, he stays beside a still pointer for one more rest.
+    onNeededChanged: if (!root.needed) root.stirred()
     // The cursor's monitor shows a fullscreen window, as Hyprland reports it over its event socket.
     readonly property bool fullscreenHere: !!follow.screen && !!Hyprland.monitorFor(follow.screen)?.activeWorkspace?.hasFullscreen
     readonly property string rest: Place.restSpot(root.resting, root.needed, root.fullscreenHere)
@@ -563,7 +565,7 @@ ShellRoot {
     // Following asks 30 times a second; the corner only needs the monitor and asks twice. Stepped
     // aside, ten times a second is enough to notice the pointer moving again.
     Timer {
-        interval: root.rest !== "follow" ? 100 : !root.followCursor ? 500 : 33
+        interval: root.tucked ? 100 : !root.followCursor ? 500 : root.rest !== "follow" ? 100 : 33
         repeat: true
         triggeredOnStart: true
         running: root.up
@@ -595,7 +597,7 @@ ShellRoot {
         property var trail: []
 
         screen: root.screenAt(follow.anchor)
-        visible: (root.up && !root.tucked) || group.opacity > 0.01
+        visible: group.shown || group.opacity > 0.01
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
@@ -620,8 +622,8 @@ ShellRoot {
         readonly property real edge: root.orbEdge
         readonly property real localX: follow.anchor.x - (follow.screen?.x ?? 0)
         readonly property real localY: follow.anchor.y - (follow.screen?.y ?? 0)
-        readonly property bool flipX: !root.cornered && follow.localX + follow.gap + group.width > follow.width - follow.edge
-        readonly property bool flipY: !root.cornered && follow.localY + follow.gap + group.height > follow.height - follow.edge
+        readonly property bool flipX: root.followCursor && follow.localX + follow.gap + group.width > follow.width - follow.edge
+        readonly property bool flipY: root.followCursor && follow.localY + follow.gap + group.height > follow.height - follow.edge
         readonly property var panelSpot: Place.panelRect({ w: follow.width, h: follow.height }, follow.edge)
         readonly property real targetX: root.panelOpen ? follow.panelSpot.x + 18 : Math.max(follow.edge, Math.min(follow.width - group.width - follow.edge,
             root.cornered ? follow.width - group.width - 22
@@ -693,9 +695,11 @@ ShellRoot {
         Connections {
             target: root
 
+            // Coming up keeps a pointer that was resting as resting, so a turn starting in the
+            // background never flashes him over a video; only a pointer that moved brings him.
             function onUpChanged() {
-                if (root.up)
-                    root.stirred();
+                if (root.up && !root.resting)
+                    restClock.restart();
                 if (root.up && group.opacity < 0.05) {
                     root.freshWake = true;
                     follow.snap();
@@ -744,12 +748,25 @@ ShellRoot {
             height: orbBox.height
             readonly property bool shown: root.up && !root.tucked
 
-            opacity: group.shown ? 1 : 0
+            opacity: 0
             scale: root.up ? 1 : 0.6
             transformOrigin: follow.flipX ? Item.Right : Item.Left
 
             // Fading away over a video is slow, so it never draws the eye; coming back is quick.
-            Behavior on opacity { NumberAnimation { duration: root.tucked ? 700 : 240; easing.type: Easing.OutCubic } }
+            onShownChanged: {
+                fade.stop();
+                fade.duration = !group.shown && root.up ? 700 : 240;
+                fade.to = group.shown ? 1 : 0;
+                fade.start();
+            }
+
+            NumberAnimation {
+                id: fade
+
+                target: group
+                property: "opacity"
+                easing.type: Easing.OutCubic
+            }
             Behavior on scale { NumberAnimation { duration: 280; easing.type: Easing.OutBack } }
 
             // The orb sits nearest the cursor, its words on the far side.
