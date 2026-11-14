@@ -20,16 +20,21 @@ log = logging.getLogger("diablo.ears.burst")
 # After the newest turn of a burst is in, the burst waits this long with no new turn or
 # answer before it speaks, so a next "Diablo, and also..." still joins it.
 QUIET_S = 2.0
-# A turn of the burst still thinking this long after the newest one is in is left behind:
-# the rest is spoken without it, and it speaks on its own once it lands.
-STRAGGLE_S = 30.0
+# With answers in but a turn still thinking, the burst waits this long after the last turn
+# started or landed. Then the answers that are in are spoken, and the turns still thinking are
+# left behind: each speaks once it lands, or joins the next burst.
+STRAGGLE_S = 6.0
 MERGE_TIMEOUT_S = 25.0
 FIRST_SENTENCE_CHARS = 160
+FALLBACK_CHARS = 900
 
 
 def quiet_s(cfg):
+    value = cfg.get("ears.burst_quiet_s") if hasattr(cfg, "get") else None
+    if value is None or value == "":
+        return QUIET_S
     try:
-        return min(max(float(cfg.get("ears.burst_quiet_s") or QUIET_S), 0.0), 15.0)
+        return min(max(float(value), 0.0), 15.0)
     except (TypeError, ValueError, AttributeError):
         return QUIET_S
 
@@ -80,10 +85,14 @@ class Burst:
         with self.lock:
             if self.merging is not None:
                 # He went on talking while the last burst was being merged: it is not over yet.
-                self.jobs = self.merging["jobs"] + self.jobs
+                self.jobs = sorted(self.merging["jobs"] + self.jobs, key=lambda j: j["n"])
                 self.merging = None
             self.jobs.append(job)
             self.last = max(self.last, now)
+            live = self._live()
+            if len(live) > 1:
+                for each in live:
+                    each["grouped"] = True
         if run:
             threading.Thread(target=go, daemon=True, name="answer").start()
         return job
@@ -108,7 +117,8 @@ class Burst:
         more than one says none; its lines go into the merged reply instead."""
         with self.lock:
             live = self._live()
-            if self.merging is not None or len(live) != 1 or live[0]["done"].is_set() or not live[0]["early"]:
+            if (self.merging is not None or len(live) != 1 or live[0]["done"].is_set() or not live[0]["early"]
+                    or live[0].get("grouped")):
                 return []
             job = live[0]
             early, job["early"] = job["early"], []
@@ -128,13 +138,11 @@ class Burst:
             self.jobs = back + self.jobs
 
     def _in(self, now):
-        """The jobs whose answers are in and make up the burst, or []: the newest job must be
-        in, and an earlier one still thinking waits until it has been left behind."""
+        """The jobs whose answers are in and make up the burst, or []: all of them once every
+        job is in, else those that are in once nothing started or landed for straggle_s."""
         live = self._live()
-        if not live or not live[-1]["done"].is_set():
-            return []
         out = [job for job in live if job["done"].is_set()]
-        if len(out) < len(live) and now - (live[-1]["finished"] or now) < self.straggle_s:
+        if not out or (len(out) < len(live) and now - self.last < self.straggle_s):
             return []
         return out
 
@@ -171,7 +179,7 @@ class Burst:
         live = self._live()
         if len(live) == 1 and live[0]["done"].is_set():
             return True
-        return len(live) == 1 and bool(live[0]["early"])
+        return len(live) == 1 and bool(live[0]["early"]) and not live[0].get("grouped")
 
     def take(self):
         """(jobs, words) for the burst to speak now, taken off the list; ([], None) when none is
@@ -179,17 +187,16 @@ class Burst:
         with its merged reply, once he has been quiet for quiet_s after its newest turn."""
         with self.lock:
             self._advance()
-            now = self.clock()
+            if not self._speakable(self.clock()):
+                return [], None
             if self.merging is not None:
-                if not self._speakable(now):
-                    return [], None
                 holder, self.merging = self.merging, None
                 return holder["jobs"], holder["words"]
             live = self._live()
-            if len(live) == 1 and live[0]["done"].is_set():
-                self.jobs.remove(live[0])
-                return live, None
-            return [], None
+            if not live[0]["done"].is_set():
+                return [], None
+            self.jobs.remove(live[0])
+            return live, None
 
     def has_speech(self):
         """Whether the main loop has something to say now; a burst whose answers are all in
@@ -236,12 +243,17 @@ def fallback(turns):
     if not turns:
         return ""
     newest = turns[-1]["reply"].strip()
-    parts, seen = [newest], {newest}
+    parts, seen, size = [newest], {newest}, len(newest)
     for turn in reversed(turns[:-1]):
         line = first_sentence(turn["reply"])
-        if line and line not in seen and line not in newest:
-            parts.append(line)
-            seen.add(line)
+        if not line or line in seen or line in newest:
+            continue
+        if size + len(line) > FALLBACK_CHARS:
+            parts.append("The rest is in the chat.")
+            break
+        parts.append(line)
+        seen.add(line)
+        size += len(line) + 1
     return " ".join(parts)
 
 

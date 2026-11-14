@@ -34,16 +34,11 @@ MERGE_SYSTEM = (
 quick_merge = threads.Quick(MERGE_SYSTEM)
 
 
-def clip(text, limit=MAX_CHARS):
-    text = " ".join(str(text or "").split())
-    return text if len(text) <= limit else text[:limit].rstrip() + "..."
-
-
 def prompt(turns):
     lines = []
     for n, turn in enumerate(turns[-MAX_TURNS:], 1):
-        lines.append(f"{n}. Marcus said: {clip(turn.get('heard'), 300)}")
-        lines.append(f"   Diablo replied: {clip(turn.get('reply'))}")
+        lines.append(f"{n}. Marcus said: {threads.clip(turn.get('heard'), 300)}")
+        lines.append(f"   Diablo replied: {threads.clip(turn.get('reply'), MAX_CHARS)}")
     return "\n".join(lines)
 
 

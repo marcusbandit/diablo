@@ -641,7 +641,7 @@ def answer_or_background(work, tl, said):
     or unsaid joins that one's burst, and the burst is spoken as one merged reply (voice/burst.py)."""
     job = PENDING.start(work, tl, said)
     alone = PENDING.alone(job)
-    if alone and job["done"].wait(INLINE_WAIT_S) and PENDING.alone(job):
+    if alone and job["done"].wait(INLINE_WAIT_S):
         PENDING.forget(job)
         return burst.answer_of(job)
     tl.note(background=True)
@@ -683,7 +683,7 @@ def say_ready(mic, speaker, cfg, detector, tap):
             return say_answer(mic, speaker, last["words"], cfg, detector, tap, tl)
         log.info("a burst of %d spoken as one reply", len(jobs))
         tl.note(burst=[job["said"][:120] for job in jobs])
-        return say_answer(mic, speaker, spoken(merged), cfg, detector, tap, tl)
+        return say_answer(mic, speaker, merged, cfg, detector, tap, tl)
     finally:
         for job in jobs:
             if job["tl"] is not None and job not in PENDING.jobs:

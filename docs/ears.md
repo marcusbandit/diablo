@@ -155,7 +155,7 @@ newest answer whole and the first sentence of each earlier one.
 A turn alone is as before: a quick answer is spoken at once, a slow one says its first line while
 it works and its answer when it lands. A reply he cuts off with the name stops and is never said
 again; only an answer still waiting behind a cut first line joins the next burst. A turn of the
-burst still thinking 30 s after the newest one is in is left behind and speaks alone when it lands.
+burst still thinking once nothing started or landed for 6 s is left behind: the answers that are in are spoken, and it speaks alone when it lands.
 
 ## Where the time goes
 

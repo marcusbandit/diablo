@@ -92,7 +92,7 @@ class TestRapidTurns(BurstCase):
     def test_answers_landing_out_of_order_wait_for_every_one(self):
         a, b = self.start("A"), self.start("B")
         self.finish(b, "Reply B.")
-        self.clock.now += 10
+        self.clock.now += burst.STRAGGLE_S - 1
         self.assertFalse(self.ready())
         self.finish(a, "Reply A.")
         self.clock.now += burst.QUIET_S
@@ -164,6 +164,48 @@ class TestRapidTurns(BurstCase):
         self.assertTrue(self.ready())
         self.assertEqual(self.group.take(), ([a], None))
 
+    def test_a_quick_turn_behind_a_slow_one_speaks_after_the_straggle_wait(self):
+        a, b = self.start("A"), self.start("B")
+        self.clock.now += 1
+        self.finish(b, "Reply B.")
+        self.clock.now += burst.STRAGGLE_S - 0.1
+        self.assertFalse(self.ready())
+        self.clock.now += 0.2
+        self.assertTrue(self.ready())
+        self.assertEqual(self.group.take()[0], [b])
+        self.assertEqual(self.group.thinking(), 1)
+
+    def test_a_slow_newest_turn_does_not_hold_the_earlier_answers(self):
+        x = self.start("X")
+        self.finish(x, "Reply X.")
+        self.clock.now += 1
+        self.start("Y")
+        self.clock.now += burst.STRAGGLE_S
+        self.assertTrue(self.ready())
+        self.assertEqual(self.group.take()[0], [x])
+
+    def test_a_left_behind_turn_never_says_its_first_line_late(self):
+        a, b = self.start("A"), self.start("B")
+        a["early"].append("On it.")
+        self.finish(b, "Reply B.")
+        self.clock.now += burst.STRAGGLE_S
+        self.assertTrue(self.ready())
+        self.group.take()
+        self.assertEqual(self.group.take_early(), [])
+        self.assertFalse(self.group.has_speech())
+        self.finish(a, "Reply A.")
+        self.assertEqual(self.group.take(), ([a], None))
+        self.assertEqual(burst.answer_of(a), "On it. Reply A.")
+
+    def test_a_rejoined_burst_keeps_the_order_the_turns_started_in(self):
+        a, b = self.start("A"), self.start("B")
+        self.finish(b, "Reply B.")
+        self.clock.now += burst.STRAGGLE_S
+        self.group.has_speech()
+        self.assertEqual(self.group.merging["jobs"], [b])
+        c = self.start("C")
+        self.assertEqual(self.group.jobs, [a, b, c])
+
     def test_never_mind_drops_a_burst_being_merged(self):
         a, b = self.start("A"), self.start("B")
         self.finish(a, "Reply A.")
@@ -179,6 +221,7 @@ class TestRapidTurns(BurstCase):
         self.assertEqual(burst.quiet_s({"ears.burst_quiet_s": "3.5"}), 3.5)
         self.assertEqual(burst.quiet_s({"ears.burst_quiet_s": "nonsense"}), burst.QUIET_S)
         self.assertEqual(burst.quiet_s({"ears.burst_quiet_s": 99}), 15.0)
+        self.assertEqual(burst.quiet_s({"ears.burst_quiet_s": 0}), 0.0)
 
 
 class TestFallback(unittest.TestCase):
@@ -190,6 +233,13 @@ class TestFallback(unittest.TestCase):
     def test_a_repeated_answer_is_said_once(self):
         turns = [{"heard": "A", "reply": "Centered."}, {"heard": "B", "reply": "Centered."}]
         self.assertEqual(burst.fallback(turns), "Centered.")
+
+    def test_a_long_fallback_keeps_the_newest_whole(self):
+        newest = "Pick one. " + " ".join(f"Option {n} is a fine pick." for n in range(1, 30))
+        turns = [{"heard": str(n), "reply": f"Earlier reply number {n} is done."} for n in range(20)]
+        text = burst.fallback(turns + [{"heard": "x", "reply": newest}])
+        self.assertTrue(text.startswith(newest))
+        self.assertTrue(text.endswith("The rest is in the chat."))
 
     def test_merge_without_the_hub_falls_back(self):
         turns = [{"heard": "A", "reply": "One done."}, {"heard": "B", "reply": "Two done."}]
