@@ -8,6 +8,10 @@
 // speaking, a voice loop, dictation) or a turn of his runs, then lingers there, sleepy, for
 // lingerMs after the last of those before he fades out. The setting "follow the cursor" off puts
 // him in the bottom right corner of the cursor's monitor instead.
+// He steps aside when the pointer rests (restMs): over a fullscreen window, a video whose player
+// hid the pointer, he fades away; over anything else he glides to the bottom right corner. The
+// pointer moving brings him back beside it. Never while Marcus needs him: talking to him, a card
+// or the central card up, or a passing moment.
 // Its own Quickshell instance, so a crash here never touches banditshell:
 //     qs -p ~/Projects/diablo/presence      (diablo-presence.service runs this)
 // Quickshell reloads these files on save, so Diablo changes his own look by editing them.
@@ -20,6 +24,7 @@
 // by the cursor with what he is doing in a word or two, until the hub says the turn is over.
 import QtQuick
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import "place.js" as Place
@@ -149,8 +154,30 @@ ShellRoot {
     // following on; the corner goes at once), or showing a card.
     readonly property bool up: root.active || root.moment !== "" || (root.followCursor && lingerClock.running)
         || root.cardsUp || root.panelOpen
+    // The pointer has not moved for restMs: a media player hides it after about this long.
+    readonly property int restMs: 2500
+    property bool resting: false
+    Timer {
+        id: restClock
+
+        interval: root.restMs
+        onTriggered: root.resting = true
+    }
+    function stirred() {
+        root.resting = false;
+        restClock.restart();
+    }
+    // What keeps him beside the cursor even while it rests.
+    readonly property bool needed: root.awake || root.moment !== "" || root.cardsUp || root.panelOpen
+    // Done with what he was needed for, he stays beside a still pointer for one more rest.
+    onNeededChanged: if (!root.needed) root.stirred()
+    // The cursor's monitor shows a fullscreen window, as Hyprland reports it over its event socket.
+    readonly property bool fullscreenHere: !!follow.screen && !!Hyprland.monitorFor(follow.screen)?.activeWorkspace?.hasFullscreen
+    readonly property string rest: Place.restSpot(root.resting, root.needed, root.fullscreenHere)
+    // Faded out over a fullscreen window until the pointer moves; his layer is unmapped meanwhile.
+    readonly property bool tucked: root.up && root.rest === "away"
     // Where the orb is placed: the corner of the monitor, or beside the cursor.
-    readonly property bool cornered: !root.followCursor
+    readonly property bool cornered: !root.followCursor || root.rest === "corner"
     readonly property string busyWords: {
         const turns = root.hubTurns;
         if (turns.length === 0) {
@@ -496,11 +523,8 @@ ShellRoot {
             splitMarker: ""
             onRead: data => {
                 const m = /(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/.exec(data);
-                if (m) {
-                    const at = Qt.point(Number(m[1]), Number(m[2]));
-                    root.cursor = at;
-                    root.answered();
-                }
+                if (m)
+                    root.moveCursor(Qt.point(Number(m[1]), Number(m[2])));
                 // Hang up first, before Hyprland does, which the socket would log as an error.
                 hypr.connected = false;
             }
@@ -510,9 +534,16 @@ ShellRoot {
     // A test's cursor, "x,y"; anything else is ignored.
     function fixCursor(text: string) {
         const p = Place.parsePoint(text);
-        if (!p)
-            return;
-        root.cursor = Qt.point(p.x, p.y);
+        if (p)
+            root.moveCursor(Qt.point(p.x, p.y));
+    }
+
+    // Every answer about the cursor: one that moved it restarts the rest clock.
+    function moveCursor(at: point) {
+        if (Math.abs(at.x - root.cursor.x) > 0.5 || Math.abs(at.y - root.cursor.y) > 0.5) {
+            root.cursor = at;
+            root.stirred();
+        }
         root.answered();
     }
 
@@ -531,9 +562,10 @@ ShellRoot {
         onTriggered: hypr.connected = false
     }
 
-    // Following asks 30 times a second; the corner only needs the monitor and asks twice.
+    // Following asks 30 times a second; the corner only needs the monitor and asks twice. Stepped
+    // aside, ten times a second is enough to notice the pointer moving again.
     Timer {
-        interval: !root.followCursor ? 500 : 33
+        interval: root.tucked ? 100 : !root.followCursor ? 500 : root.rest !== "follow" ? 100 : 33
         repeat: true
         triggeredOnStart: true
         running: root.up
@@ -565,7 +597,7 @@ ShellRoot {
         property var trail: []
 
         screen: root.screenAt(follow.anchor)
-        visible: root.up || group.opacity > 0.01
+        visible: group.shown || group.opacity > 0.01
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
@@ -590,8 +622,8 @@ ShellRoot {
         readonly property real edge: root.orbEdge
         readonly property real localX: follow.anchor.x - (follow.screen?.x ?? 0)
         readonly property real localY: follow.anchor.y - (follow.screen?.y ?? 0)
-        readonly property bool flipX: !root.cornered && follow.localX + follow.gap + group.width > follow.width - follow.edge
-        readonly property bool flipY: !root.cornered && follow.localY + follow.gap + group.height > follow.height - follow.edge
+        readonly property bool flipX: root.followCursor && follow.localX + follow.gap + group.width > follow.width - follow.edge
+        readonly property bool flipY: root.followCursor && follow.localY + follow.gap + group.height > follow.height - follow.edge
         readonly property var panelSpot: Place.panelRect({ w: follow.width, h: follow.height }, follow.edge)
         readonly property real targetX: root.panelOpen ? follow.panelSpot.x + 18 : Math.max(follow.edge, Math.min(follow.width - group.width - follow.edge,
             root.cornered ? follow.width - group.width - 22
@@ -663,11 +695,21 @@ ShellRoot {
         Connections {
             target: root
 
+            // Coming up keeps a pointer that was resting as resting, so a turn starting in the
+            // background never flashes him over a video; only a pointer that moved brings him.
             function onUpChanged() {
+                if (root.up && !root.resting)
+                    restClock.restart();
                 if (root.up && group.opacity < 0.05) {
                     root.freshWake = true;
                     follow.snap();
                 }
+            }
+
+            // Back from fading away: he comes up where the pointer is now.
+            function onTuckedChanged() {
+                if (!root.tucked && root.up && group.opacity < 0.05)
+                    follow.snap();
             }
         }
 
@@ -679,7 +721,8 @@ ShellRoot {
         FrameAnimation {
             running: follow.visible && (Math.abs(group.x - follow.targetX) > 0.5 || Math.abs(group.y - follow.targetY) > 0.5 || follow.cardsAway)
             onTriggered: {
-                const k = 1 - Math.exp(-frameTime * 16);
+                // Stepping aside to the corner is an unhurried drift; following is quick.
+                const k = 1 - Math.exp(-frameTime * (root.rest === "corner" && root.followCursor ? 5 : 16));
                 group.x += (follow.targetX - group.x) * k;
                 group.y += (follow.targetY - group.y) * k;
                 if (cards.showing) {
@@ -703,11 +746,27 @@ ShellRoot {
 
             width: orbBox.width + (pill.visible ? 8 + pill.width : 0)
             height: orbBox.height
-            opacity: root.up ? 1 : 0
+            readonly property bool shown: root.up && !root.tucked
+
+            opacity: 0
             scale: root.up ? 1 : 0.6
             transformOrigin: follow.flipX ? Item.Right : Item.Left
 
-            Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+            // Fading away over a video is slow, so it never draws the eye; coming back is quick.
+            onShownChanged: {
+                fade.stop();
+                fade.duration = !group.shown && root.up ? 700 : 240;
+                fade.to = group.shown ? 1 : 0;
+                fade.start();
+            }
+
+            NumberAnimation {
+                id: fade
+
+                target: group
+                property: "opacity"
+                easing.type: Easing.OutCubic
+            }
             Behavior on scale { NumberAnimation { duration: 280; easing.type: Easing.OutBack } }
 
             // The orb sits nearest the cursor, its words on the far side.
