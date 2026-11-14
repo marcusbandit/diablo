@@ -147,7 +147,7 @@ left after the playback clock (the screen, the compositor, what reads as in step
 his face, big, saying one line over and over on the same voice stream, a slider, left and right
 for 10 ms, Shift for 50, Enter saves, Esc leaves. `diablo-ears mouth show` and `set MS` read and
 write the same file. The reference for "in step" is `diablo-act` on the same audio: a screen
-recording of the orb should match its video. On banditbox the orb lands about 27 ms behind it
+recording of the orb should match its video. On the desktop box the orb lands about 27 ms behind it
 with no delay.
 
 `.venv-voice/bin/python tests/live_tts_sync.py` checks it live: it speaks four short replies
@@ -167,7 +167,7 @@ model: the time (local), the weather at home (Open-Meteo, about 80 ms) and the n
 the hub settings `bus.stop_id`, `bus.line` and `bus.toward` override the stop. Without them
 those questions go to the hub. Every spoken reply is shown too.
 
-Cost, measured on banditbox: a second Quickshell instance idles at about 95 MB and 0% CPU.
+Cost, measured on the desktop box: a second Quickshell instance idles at about 95 MB and 0% CPU.
 
 ## A take, acted out
 
