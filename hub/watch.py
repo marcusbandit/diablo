@@ -102,12 +102,16 @@ def read_thread(watch):
 
 async def check_once(deliver):
     tasks.prune()
+    try:
+        await _check_watches(deliver)
+    finally:
+        tasks.sweep()
+
+
+async def _check_watches(deliver):
     for watch in db.open_watches():
         if time.time() - watch["created"] > EXPIRE_SECONDS:
             db.set_watch(watch["thread_id"], "expired")
-            known = db.get_task(watch["thread_id"])
-            if known and known.get("state") in tasks.ACTIVE:
-                tasks.save(watch["thread_id"], {"state": "done", "step": "No longer watched"})
             continue
         try:
             data, step = await asyncio.to_thread(read_thread, watch)

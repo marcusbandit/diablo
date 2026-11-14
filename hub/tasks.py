@@ -33,6 +33,9 @@ REWATCH_S = 300
 REWATCH_GRACE_S = 120
 UNREADABLE_RETRY_S = 600
 PRUNE_EVERY_S = 3600
+UNTRACKED_S = 6 * 3600
+UNWATCHED_STEP = "No longer watched"
+UNTRACKED_STEP = "No update in a while"
 
 _write = threading.Lock()
 _pruned = [0.0]
@@ -210,6 +213,29 @@ def prune(now=None):
     if now - _pruned[0] >= PRUNE_EVERY_S:
         _pruned[0] = now
         db.prune_tasks(now - PRUNE_S)
+
+
+def sweep(now=None):
+    """Finishes the cards nothing keeps up to date any more, so none stays working forever: a
+    T3 thread's card whose watch is closed, and a card made with update_task that has had no
+    update for UNTRACKED_S. The watches are read after the cards, and watch_t3_thread opens its
+    watch before it makes the card, so a card made meanwhile is never taken for an orphan.
+    Returns the finished cards."""
+    now = time.time() if now is None else now
+    active = db.list_tasks(ACTIVE, limit=500)
+    watched = {w["thread_id"] for w in db.open_watches()}
+    finished = []
+    for task in active:
+        if str(task.get("source") or "").startswith("t3:"):
+            if task["id"] in watched:
+                continue
+            step = UNWATCHED_STEP
+        elif now - float(task.get("updated_at") or 0) >= UNTRACKED_S:
+            step = UNTRACKED_STEP
+        else:
+            continue
+        finished.append(save(task["id"], {"state": "done", "step": step}, now))
+    return finished
 
 
 def thread_state(thread, run):

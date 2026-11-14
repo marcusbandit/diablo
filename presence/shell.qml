@@ -28,6 +28,7 @@ import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import "place.js" as Place
+import "busy.js" as Busy
 
 ShellRoot {
     id: root
@@ -109,35 +110,17 @@ ShellRoot {
     readonly property int hubStaleMs: 35000
     readonly property bool hubBusy: root.hubTurns.length > 0
     // The hub's live task cards that are not finished, oldest first: watched T3 threads and
-    // update_task work. Queued or working ones keep him busy; one waiting on Marcus only gets a
-    // moon of its own colour while something else does.
+    // update_task work. They are not him: a card never makes him busy, raises him or puts its
+    // title in his words. While a turn of his own runs, each one rides along as a moon, one
+    // waiting on Marcus in its own colour.
     property var hubTasks: []
-    readonly property var tasksRunning: root.hubTasks.filter(t => t.state !== "waiting")
-    // Task cards running on their own keep him up with their moons, but not busy: the face,
-    // the cards he holds out and speech control read busy as a turn of his own.
-    readonly property bool tasksBusy: root.tasksRunning.length > 0
     // An answer the ears hold in the background keeps him busy only while the hub was busy a
     // moment ago, so a count left behind (#215) can never hold the orb up on its own.
     readonly property bool earsBehind: (root.ears.thinking ?? 0) > 0 && root.clock - root.lastBusyAt < 15000
-    readonly property bool busy: root.hubBusy || root.earsBehind
-    // One moon for each thing he works on: every running turn and every active task card.
-    readonly property var moons: {
-        if (!root.busy && !root.tasksBusy)
-            return [];
-        const out = [];
-        for (const t of root.hubTurns) {
-            const id = `turn:${t.origin}:${t.since}`;
-            if (!out.some(m => m.id === id))
-                out.push({ id: id });
-        }
-        if (out.length === 0 && root.earsBehind)
-            out.push({ id: "ears" });
-        for (const t of root.hubTasks)
-            out.push({ id: `task:${t.id}`, waiting: t.state === "waiting" });
-        return out;
-    }
+    readonly property bool busy: Busy.isBusy(root.hubTurns, root.earsBehind)
+    readonly property var moons: Busy.moons(root.hubTurns, root.hubTasks, root.earsBehind)
     // Marcus talking to him or a turn of his running.
-    readonly property bool active: root.awake || root.busy || root.tasksBusy
+    readonly property bool active: root.awake || root.busy
     // After the last of those, or a moment, he stays beside the cursor this long, sleepy, then
     // fades out. The clock keeps running for as long as he is active, so the instant he stops
     // it is already running and `up` never blinks.
@@ -178,18 +161,7 @@ ShellRoot {
     readonly property bool tucked: root.up && root.rest === "away"
     // Where the orb is placed: the corner of the monitor, or beside the cursor.
     readonly property bool cornered: !root.followCursor || root.rest === "corner"
-    readonly property string busyWords: {
-        const turns = root.hubTurns;
-        if (turns.length === 0) {
-            const tasks = root.tasksRunning;
-            if (tasks.length === 0 || root.earsBehind)
-                return "working";
-            const title = tasks[tasks.length - 1].title || "working";
-            return tasks.length > 1 ? `${title} +${tasks.length - 1}` : title;
-        }
-        const words = turns[turns.length - 1].words || "thinking";
-        return turns.length > 1 ? `${words} +${turns.length - 1}` : words;
-    }
+    readonly property string busyWords: Busy.busyWords(root.hubTurns)
 
     function hubLine(line: string) {
         const got = root.parse(line, null);
@@ -238,7 +210,7 @@ ShellRoot {
     Timer {
         interval: 2000
         repeat: true
-        running: root.busy || root.tasksBusy
+        running: root.busy || root.hubTasks.length > 0
         onTriggered: {
             root.clock = Date.now();
             if (root.clock - root.hubSeen > root.hubStaleMs) {
@@ -790,7 +762,7 @@ ShellRoot {
                     mood: root.awake ? (root.ears.state ?? "asleep") : "asleep"
                     control: !!root.ears.loop
                     dictating: !!root.ears.dictation
-                    thinkingBehind: root.busy || (root.tasksBusy && !root.cardsUp && !root.panelOpen)
+                    thinkingBehind: root.busy
                     moons: root.moons
                     presenting: (root.cardsUp || root.panelOpen) && !root.awake && !root.busy
                     // He looks at the card he holds out: which side of him its middle is on.
@@ -809,7 +781,7 @@ ShellRoot {
                 id: pill
 
                 // Words only while he is doing something; holding out a card says it already.
-                visible: (root.awake || root.busy || (root.tasksBusy && !root.cardsUp) || root.moment !== "") && !root.panelOpen
+                visible: (root.awake || root.busy || root.moment !== "") && !root.panelOpen
                 x: follow.flipX ? 0 : orbBox.width + 8
                 anchors.verticalCenter: orbBox.verticalCenter
                 width: label.implicitWidth + 24 + (dots.visible ? dots.width + 6 : 0)
