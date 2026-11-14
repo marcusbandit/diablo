@@ -164,6 +164,10 @@ class ScreenOpenIn(BaseModel):
     page: str = "settings"
 
 
+class EarsDuckIn(BaseModel):
+    keep_up: bool = True
+
+
 class EarsReportIn(BaseModel):
     state: str
     detail: str = ""
@@ -1546,6 +1550,17 @@ def ears_report(body: EarsReportIn, caller: dict = Depends(require_token)):
         t3threads.voice_threads()
     selfrestart.report_ears(body.state, body.detail, body.host)
     return {"ok": True}
+
+
+@app.post("/v1/ears/duck")
+async def ears_duck(body: EarsDuckIn, caller: dict = Depends(require_token)):
+    """Keeps other sound up on Marcus's desktop for the rest of the spoken conversation
+    (keep_up true), or turns it down again (false). It goes out as a `duck` event, which
+    presence/busy.py hands to the ears there (voice/duck.py)."""
+    if not caller.get("master"):
+        raise HTTPException(status_code=403, detail="only the hub token may change the sound")
+    publish({"kind": "duck", "keep_up": body.keep_up})
+    return {"ok": True, "keep_up": body.keep_up}
 
 
 async def deliver(text, watched):

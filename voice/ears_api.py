@@ -9,6 +9,9 @@
     POST /v1/ears/listen             {"on": bool} turns listening for the name on or off
     POST /v1/ears/play               {"kind": "wake", "id"} or {"kind": "talk", "clip", "end_s"}
                                      plays back what woke him, through the speakers
+    POST /v1/ears/duck               {"on", "level"} the setting for turning other sound down
+                                     while he talks; {"keep_up": bool} keeps it up for this
+                                     conversation (voice/duck.py)
 
 POSTs need the header X-Diablo-Ears: 1. A web page cannot send a custom header to another
 origin without a preflight, which this server never answers. Requests whose Host is not
@@ -25,7 +28,7 @@ import time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import chime, wake
+from . import chime, duck, wake
 
 log = logging.getLogger("diablo.ears.api")
 
@@ -166,6 +169,7 @@ class Controller:
             },
             "wakes": live["wakes"],
             "session": self.session.snapshot() if self.session is not None else None,
+            "duck": duck.DUCK.status(),
             "places": [{k: p[k] for k in ("id", "label", "count", "intro")} for p in ears_train.PLACES],
         }
 
@@ -198,6 +202,21 @@ class Controller:
     def listen(self, body):
         self.set_listening(bool(body.get("on", True)))
         return 200, {"ok": True, "listening": self.listening()}
+
+    def duck(self, body):
+        if "keep_up" in body:
+            duck.DUCK.suspend(bool(body.get("keep_up")))
+        changes = {}
+        if isinstance(body.get("on"), bool):
+            changes["on"] = body["on"]
+        if body.get("level") is not None:
+            try:
+                changes["level"] = max(0, min(100, int(body["level"])))
+            except (TypeError, ValueError):
+                return 400, {"error": "level is a whole number from 0 to 100"}
+        if changes:
+            duck.DUCK.configure(changes)
+        return 200, {"ok": True, "duck": duck.DUCK.status()}
 
     def playing(self):
         """True while a clip plays back, so its own "Diablo" never wakes him."""
@@ -324,6 +343,8 @@ def handler_for(controller):
                     return self._send(*controller.listen(body))
                 if path == "/v1/ears/play":
                     return self._send(*controller.play(body))
+                if path == "/v1/ears/duck":
+                    return self._send(*controller.duck(body))
             except Exception as error:
                 log.exception("request failed")
                 return self._send(500, {"error": str(error)})

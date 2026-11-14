@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import wake
+from . import duck, wake
 
 log = logging.getLogger("diablo.speakers")
 
@@ -335,12 +335,14 @@ class SoundHold:
         self.taken = True
         media = self.media
         if media is None:
+            duck.DUCK.claim()
             if mode != "dim":
                 self.hush = Hush().__enter__()
             return
         try:
             rules = rules_for(media.load_settings()["media"], mode, dim_to)
-            self.ops = media.plan([src for src in media.discover(names=False) if not own(src)], rules)
+            ops = media.plan([src for src in media.discover(names=False) if not own(src)], rules)
+            self.ops = leave_to_duck(ops, duck.DUCK.claim())
             if self.ops:
                 _save_held(self.ops)
             media.apply(self.ops)
@@ -372,7 +374,17 @@ class SoundHold:
         HELD_FILE.unlink(missing_ok=True)
 
 
+def leave_to_duck(ops, ducked):
+    """The hold's ops without the dims the conversation duck (voice/duck.py) already owns: a
+    stream it turned down, or every stream while he asked for the sound to stay up. Two
+    owners of one volume would each give back the other's level and leave it quiet."""
+    if not ducked:
+        return ops
+    return [op for op in ops if op.get("op") != "dim" or (ducked != duck.ALL and op.get("stream") not in ducked)]
+
+
 _shared = SoundHold()
+duck.DUCK.foreign = lambda: {op.get("stream") for op in list(_shared.ops) if op.get("op") == "dim"}
 
 
 def shutdown():
