@@ -11,6 +11,17 @@ his own look by editing those files.
 
 Install once: `cp deploy/diablo-presence.service ~/.config/systemd/user/ && systemctl --user enable --now diablo-presence`.
 
+## He steps aside for what Marcus watches
+
+Once the pointer has rested for 2.5 seconds (`restMs`, about when a media player hides it) he
+gets out of the way: over a fullscreen window he fades out, and over anything else he drifts to
+the bottom right corner. The pointer moving brings him straight back beside it. He never steps
+aside while Marcus needs him: listening, thinking or speaking to him, a card or the central card
+up, or a passing moment, so a wake word or a reply arriving brings him back as well. Fullscreen
+is the cursor's monitor's workspace as Quickshell's Hyprland module reports it from Hyprland's
+event socket, so it costs no polling; the rest comes from the cursor ticks he already makes,
+slowed to ten a second while he is aside (`Place.restSpot`).
+
 ## Cards grow out of him
 
 A card is never placed at the cursor. It opens next to the orb, below it or above it when the

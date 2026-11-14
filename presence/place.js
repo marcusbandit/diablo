@@ -26,6 +26,16 @@ function cardRect(orb, card, screen, edge, gap) {
     };
 }
 
+// Where the orb goes once the pointer has rested a moment: "follow" stays beside it, "corner"
+// glides to the bottom right corner, out of the way of what is on screen, and "away" fades him
+// out over a fullscreen window, a video whose player has hidden the pointer. While Marcus needs
+// him (talking to him, a card or the central card up, a passing moment) he stays beside it.
+function restSpot(resting, needed, fullscreen) {
+    if (!resting || needed)
+        return "follow";
+    return fullscreen ? "away" : "corner";
+}
+
 // The central card: the middle of the monitor, a share of it, never past a sensible size.
 function panelRect(screen, edge) {
     edge = edge === undefined ? 12 : edge;

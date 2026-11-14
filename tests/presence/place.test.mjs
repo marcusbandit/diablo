@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const source = readFileSync(new URL("../../presence/place.js", import.meta.url), "utf8").replace(/^\.pragma library\s*$/m, "");
-const place = new Function(`${source}; return { cardRect, panelRect, reaching, parsePoint, nearestRect };`)();
+const place = new Function(`${source}; return { cardRect, panelRect, reaching, parsePoint, nearestRect, restSpot };`)();
 
 const screen = { w: 2560, h: 1440 };
 const card = { w: 300, h: 120 };
@@ -132,4 +132,22 @@ test("a point between monitors goes to the nearest one, not the first", () => {
     assert.equal(place.nearestRect({ x: 2600, y: 1300 }, rects), 0, "past the first monitor edge but nearer it than the shorter one");
     assert.equal(place.nearestRect({ x: 5000, y: -50 }, rects), 1, "past the right edge");
     assert.equal(place.nearestRect({ x: 1, y: 1 }, []), -1, "no screens");
+});
+
+test("a moving pointer keeps him beside it, fullscreen or not", () => {
+    assert.equal(place.restSpot(false, false, false), "follow");
+    assert.equal(place.restSpot(false, false, true), "follow");
+});
+
+test("a resting pointer over a fullscreen window fades him away", () => {
+    assert.equal(place.restSpot(true, false, true), "away");
+});
+
+test("a resting pointer over an ordinary window sends him to the corner", () => {
+    assert.equal(place.restSpot(true, false, false), "corner");
+});
+
+test("while Marcus needs him he stays beside the resting pointer", () => {
+    assert.equal(place.restSpot(true, true, true), "follow");
+    assert.equal(place.restSpot(true, true, false), "follow");
 });
