@@ -159,14 +159,11 @@ def _clients():
 
 
 def _focus(target):
-    clients, error = _clients()
-    if clients is None:
-        return None, error
-    hits = [c for field in ("class", "title") for c in clients if target.lower() in str(c.get(field) or "").lower()]
-    if not hits:
-        return None, f"no window matching {target}; open: " + ", ".join(sorted({str(c.get("class") or "?") for c in clients}))
-    ok, out = _dispatch(f'hl.dsp.focus({{ window = "address:{hits[0]["address"]}" }})')
-    return (hits[0], f"focused {hits[0].get('class')}") if ok else (None, out)
+    client, why = window.find(target)
+    if client is None:
+        return None, why
+    ok, out = window.bring(client["address"])
+    return (client, f"focused {client.get('class')}") if ok else (None, out)
 
 
 def list_windows(args, ctx):
@@ -178,10 +175,7 @@ def list_windows(args, ctx):
 
 
 def _verb(args, ctx, verb, did):
-    target = str(args.get("target") or "").strip()
-    if not target:
-        return False, "which window?"
-    client, why = window.find(target)
+    client, why = window.find(args.get("target"))
     if client is None:
         return False, why
     ok, why = getattr(window, verb)(client["address"])

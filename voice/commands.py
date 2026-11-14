@@ -382,13 +382,7 @@ def player_status():
 
 
 def _focus(address):
-    ok, out = apps._dispatch(f'hl.dsp.focus({{ window = "address:{address}" }})')
-    if not ok:
-        return False, out
-    ok, active = apps._query(["hyprctl", "-j", "activewindow"], as_json=True)
-    if not ok or (active or {}).get("address") != address:
-        return False, "that window would not come forward"
-    return True, ""
+    return window.bring(address)
 
 
 # The last HISTORY_MAX things Diablo did on the desktop, newest last, each with what undoes
@@ -559,6 +553,11 @@ def undo_last():
     action, before = entry.get("action"), entry.get("before") or {}
     if entry.get("closed"):
         return reopen(entry["closed"])
+    if action == "stage_window" and ADDRESS.match(str(before.get("stage") or "")):
+        ok, why = window.stage(before["stage"])
+        if ok and ADDRESS.match(str(before.get("address") or "")):
+            ok, why = window.focus(before["address"])
+        return (True, "put the stage back") if ok else (False, f"could not put the stage back: {why}")
     if action == "move_to_workspace" and before.get("workspace") and ADDRESS.match(str(before.get("address") or "")):
         ok, out = apps._dispatch(
             f'hl.dsp.window.move({{ workspace = {int(before["workspace"])}, window = "address:{before["address"]}" }})')
@@ -588,6 +587,8 @@ def run(act):
     if action == "volume_set":
         return set_volume(act.get("level") or 50)
     before = _active()
+    if action == "stage_window" and ADDRESS.match(str(act.get("window") or "")):
+        before["stage"] = window.holder(act["window"])
     closed = _closed_info(str(act.get("window") or "")) if action == "close_window" else None
     ok, why = _run_act(act)
     if ok:

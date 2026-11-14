@@ -33,14 +33,15 @@ class FakeHyprland:
             self.active = arg.split("address:")[1].split('"')[0]
         elif verb == "eval" and "put_on_stage" in arg:
             if not self.layout_on:
-                return self.done('error: [string "..."]:1: off', 1)
+                return self.done('error: [string "..."]:1: stage layout off', 1)
             old = next(c for c in self.clients if c["address"] == self.stage)
             new = next(c for c in self.clients if c["address"] == self.active)
             old["at"], new["at"], old["size"], new["size"] = new["at"], old["at"], new["size"], old["size"]
             self.stage = self.active
-        elif verb == "eval" and "not staged" in arg:
-            if f'address:{self.stage}"' not in arg:
-                return self.done('error: [string "..."]:1: not staged', 1)
+        elif verb == "eval" and "holder=" in arg:
+            return self.done(f'error: [string "..."]:1: holder={self.stage if self.layout_on else "nil"}', 1)
+        elif verb == "eval" and "put_on_stage" in arg:
+            pass
         return self.done("ok")
 
     @staticmethod
@@ -85,6 +86,32 @@ class TestVerbs(unittest.TestCase):
         self.assertEqual(window.find("zen")[0]["address"], "0x2")
         self.assertIsNone(window.find("discord")[0])
 
+    def test_it_means_the_focused_window(self):
+        self.assertEqual(window.find("it")[0]["address"], "0x2")
+        self.assertEqual(window.find("")[0]["address"], "0x2")
+        with mock.patch("builtins.print") as said:
+            self.assertEqual(window.main(["stage"]), 0)
+        self.assertEqual(self.hypr.stage, "0x2")
+
+    def test_a_failed_warp_still_reports_the_focus(self):
+        real = self.hypr.run
+
+        def no_cursor(cmd, **kwargs):
+            if "cursor.move" in " ".join(cmd):
+                return self.hypr.done("error: rejected", 1)
+            return real(cmd, **kwargs)
+
+        with mock.patch("voice.window.subprocess.run", side_effect=no_cursor):
+            self.assertEqual(window.focus("0x1"), (True, ""))
+
+    def test_undo_gives_the_stage_back(self):
+        with mock.patch.object(commands, "_save_history"), \
+                mock.patch.object(commands, "HISTORY", commands.collections.deque(maxlen=30)):
+            self.assertTrue(commands.run({"action": "stage_window", "window": "0x1", "name": "T3"})[0])
+            self.assertEqual(self.hypr.stage, "0x1")
+            self.assertEqual(commands.undo_last(), (True, "put the stage back"))
+        self.assertEqual((self.hypr.stage, self.hypr.active), ("0x2", "0x2"))
+
     def test_the_cli_prints_one_line(self):
         with mock.patch("builtins.print") as said:
             self.assertEqual(window.main(["stage", "T3", "Code"]), 0)
@@ -123,6 +150,9 @@ class TestRouteAndHub(unittest.TestCase):
 
     def test_the_hub_tools_run_the_verb_on_the_desktop(self):
         seen = {}
+        patch = mock.patch.object(mcp_server.settings, "get", return_value="")
+        patch.start()
+        self.addCleanup(patch.stop)
 
         def ssh(argv, **kwargs):
             seen["argv"] = argv
@@ -133,6 +163,12 @@ class TestRouteAndHub(unittest.TestCase):
         self.assertEqual(seen["argv"][0], "ssh")
         self.assertEqual(seen["argv"][-2], "desk")
         self.assertIn("-m voice.window stage 'T3 Code'", seen["argv"][-1])
+        with mock.patch("subprocess.run", side_effect=ssh), mock.patch.object(mcp_server.lockguard, "host", return_value="desk"), \
+                mock.patch.dict("os.environ", {"DIABLO_DESKTOP_REPO": "~/code/diablo"}):
+            mcp_server.window_verb("stage", {})
+        self.assertTrue(seen["argv"][-1].startswith("cd code/diablo && "))
+        self.assertTrue(seen["argv"][-1].endswith("-m voice.window stage ''"))
+        self.assertEqual(mcp_server.window_verb("focus", {}), "say which window to focus")
         names = {t["name"] for t in mcp_server.EXTRA}
         self.assertTrue({"focus_window", "stage_window"} <= names)
 

@@ -49,8 +49,8 @@ EXTRA = [
     },
     {
         "name": "stage_window",
-        "description": "Put a window on the stage on Marcus's desktop, the centerpiece of his layout, exactly as his Super+Shift+Enter does, when he says center or stage and an app (\"center T3 Code\", \"stage it\" for the focused one). It focuses the window and moves his cursor to it too.",
-        "inputSchema": {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]},
+        "description": "Put a window on the stage on Marcus's desktop, the centerpiece of his layout, exactly as his Super+Shift+Enter does, when he says center or stage and an app (\"center T3 Code\"). Leave target out for \"stage it\" or \"center this\": the focused window. It focuses the window and moves his cursor to it too.",
+        "inputSchema": {"type": "object", "properties": {"target": {"type": "string", "description": "app name or part of the title; leave out for the focused window"}}},
     },
     {
         "name": "notify",
@@ -373,11 +373,11 @@ def window_verb(verb, arguments):
     from . import localenv
 
     target = " ".join(str(arguments.get("target") or "").split())
-    if not target:
-        return "say which window"
-    repo = localenv.get("DIABLO_DESKTOP_REPO") or "Projects/diablo"
+    if verb == "focus" and not target:
+        return "say which window to focus"
+    repo = (localenv.get("DIABLO_DESKTOP_REPO") or "Projects/diablo").removeprefix("~/")
     command = f"cd {shlex.quote(repo)} && .venv-voice/bin/python -m voice.window {verb} {shlex.quote(target)}"
-    host = lockguard.host()
+    host = str(settings.get("desktop.host") or "").strip() or lockguard.host()
     try:
         done = subprocess.run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", host, command],
                               capture_output=True, text=True, timeout=30)

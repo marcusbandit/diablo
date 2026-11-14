@@ -177,19 +177,19 @@ class TestRun(unittest.TestCase):
     def test_close_focuses_checks_then_closes(self):
         calls = []
         with mock.patch.object(commands.apps, "_dispatch", side_effect=lambda lua: calls.append(lua) or (True, "ok")), \
-                mock.patch.object(commands.apps, "_query", return_value=(True, {"address": "0xbb"})):
+                mock.patch.object(commands.window, "bring", side_effect=lambda a: calls.append(a) or (True, "")):
             ok, _ = commands.run({"action": "close_window", "window": "0xbb", "name": "Spotify"})
         self.assertTrue(ok)
-        self.assertIn("address:0xbb", calls[0])
+        self.assertEqual(calls[0], "0xbb")
         self.assertEqual(calls[1], "hl.dsp.window.close()")
 
     def test_close_leaves_a_window_that_would_not_come_forward(self):
         calls = []
         with mock.patch.object(commands.apps, "_dispatch", side_effect=lambda lua: calls.append(lua) or (True, "ok")), \
-                mock.patch.object(commands.apps, "_query", return_value=(True, {"address": "0xaa"})):
+                mock.patch.object(commands.window, "bring", return_value=(False, "that window would not come forward")):
             ok, why = commands.run({"action": "close_window", "window": "0xbb", "name": "Spotify"})
         self.assertFalse(ok)
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls, [])
 
     def test_bad_input_is_refused(self):
         self.assertFalse(commands.run({"action": "close_window", "window": "0xbb; rm"})[0])
