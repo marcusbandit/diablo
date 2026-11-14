@@ -2,7 +2,9 @@
 
 Built from the watches (hub/watch.py) of the last half day: each is read from its
 environment, at most every FRESH_S seconds, and only while some app holds the event
-stream. A change to the list publishes {"kind": "t3"}.
+stream. A change to the list publishes {"kind": "t3"}. Only an open watch updates its task
+card: a thread he stopped watching is Marcus's own again, so its runs never put the card back
+to working.
 """
 import asyncio
 import logging
@@ -20,6 +22,7 @@ FRESH_S = 15
 MOST = 12
 WORKING = {"running", "queued", "pending", "starting", "requested", "preparing"}
 STOPPED = {"interrupted", "cancelled", "rolled_back"}
+OPEN = ("open", "asking")
 LINK = re.compile(r"^(?:t3-thread://v2/|https://app\.t3\.codes/threads/)([^/]+)/(.+)$")
 
 _rows = {}
@@ -104,10 +107,11 @@ async def one(watch):
         data = await asyncio.wait_for(asyncio.to_thread(read, watch), 20)
         if not isinstance(data, dict) or not isinstance(data.get("thread"), dict):
             raise ValueError(f"not a thread: {str(data)[:120]}")
-        try:
-            await asyncio.to_thread(tasks.observe, watch, data)
-        except Exception:
-            logger.exception("task card for %s failed", watch["thread_id"])
+        if watch.get("state") in OPEN:
+            try:
+                await asyncio.to_thread(tasks.observe, watch, data)
+            except Exception:
+                logger.exception("task card for %s failed", watch["thread_id"])
         return summarize(watch, data)
     except Exception as error:
         logger.info("thread %s on %s not readable: %s", watch["thread_id"], watch["env"], error)
@@ -120,7 +124,7 @@ def shape(rows):
 
 def chosen(watches):
     """The ones still open or asking first, so a thread waiting on Marcus is never cut."""
-    return sorted(watches, key=lambda w: (w["state"] not in ("open", "asking"), -w["created"]))[:MOST]
+    return sorted(watches, key=lambda w: (w["state"] not in OPEN, -w["created"]))[:MOST]
 
 
 async def refresh():

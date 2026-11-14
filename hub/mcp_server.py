@@ -51,6 +51,16 @@ EXTRA = [
         },
     },
     {
+        "name": "focus_window",
+        "description": "Focus a window on Marcus's desktop by its app name or part of its title, when he says focus, switch to or go to an app. It switches workspace if needed and moves his cursor to the window. It never stages, centers or resizes anything.",
+        "inputSchema": {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]},
+    },
+    {
+        "name": "stage_window",
+        "description": "Put a window on the stage on Marcus's desktop, the centerpiece of his layout, exactly as his Super+Shift+Enter does, when he says center or stage and an app (\"center T3 Code\"). Leave target out for \"stage it\" or \"center this\": the focused window. It focuses the window and moves his cursor to it too.",
+        "inputSchema": {"type": "object", "properties": {"target": {"type": "string", "description": "app name or part of the title; leave out for the focused window"}}},
+    },
+    {
         "name": "notify",
         "description": "Send Marcus a Telegram message right now, outside the current reply. For reports he should see on his phone when the reply itself goes elsewhere, like the web app.",
         "inputSchema": {
@@ -372,6 +382,28 @@ def keep_sound_up(arguments):
     return "the sound stays up for the rest of this conversation" if keep else "other sound is turned down again while you talk"
 
 
+def window_verb(verb, arguments):
+    """Runs voice/window.py on the desktop box over ssh: the one place focus and stage are done."""
+    import shlex
+    import subprocess
+
+    from . import localenv
+
+    target = " ".join(str(arguments.get("target") or "").split())
+    if verb == "focus" and not target:
+        return "say which window to focus"
+    repo = (localenv.get("DIABLO_DESKTOP_REPO") or "Projects/diablo").removeprefix("~/")
+    command = f"cd {shlex.quote(repo)} && .venv-voice/bin/python -m voice.window {verb} {shlex.quote(target)}"
+    host = str(settings.get("desktop.host") or "").strip() or lockguard.host()
+    try:
+        done = subprocess.run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", host, command],
+                              capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"could not reach {host}: {error}"
+    said = (done.stdout or done.stderr).strip().splitlines()
+    return (said[-1] if said else f"{verb} said nothing")[:300]
+
+
 def restart(arguments):
     token = str(get_config().get("hub_token") or "")
     body = {
@@ -456,6 +488,8 @@ def call(name, arguments):
         return open_settings(arguments)
     if name == "keep_sound_up":
         return keep_sound_up(arguments)
+    if name in ("focus_window", "stage_window"):
+        return window_verb(name.split("_")[0], arguments)
     if name == "send_voice":
         return send_voice(arguments.get("text"), arguments.get("language"))
     if name == "watch_t3_thread":

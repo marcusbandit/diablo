@@ -108,10 +108,12 @@ line boils, every 700 ms while he sleeps) on a small dark disc, tinted by what h
 | delighted / sorry / relieved, for under two seconds | it worked / it failed / he went back |
 | worried or resting, pink | the ears are untrained or off |
 
-The moons count what he has in flight: every running hub turn and every live task card
-(`GET /v1/tasks` and the `task` event, which `busy.py` follows beside the turns). Queued and
-working tasks keep him up beside the cursor with their moons, without the busy face while he
-holds out a card; a task waiting on Marcus gets a blue moon while anything else runs.
+Only his own running hub turns make him busy (`presence/busy.js`, tested in node by
+`tests/presence/busy.test.mjs`). The moons count what he has in flight while one runs: each
+turn, and each live task card (`GET /v1/tasks` and the `task` event, which `busy.py` follows
+beside the turns), a task waiting on Marcus in blue. A task card on its own never raises him,
+never gives him the busy face and never puts its title in his pill: a watched T3 thread is
+not him, and its step belongs on its card.
 They sit evenly around one orbit and turn together; one that ends fades where it was and the
 rest glide to even spacing, all in QML (`Orb.moons`).
 

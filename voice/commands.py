@@ -13,7 +13,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import apps, desktop
+from . import apps, desktop, window
 
 ADDRESS = re.compile(r"^0x[0-9a-fA-F]+$")
 PLAYER = re.compile(r"^[\w.\-]+$")
@@ -382,13 +382,7 @@ def player_status():
 
 
 def _focus(address):
-    ok, out = apps._dispatch(f'hl.dsp.focus({{ window = "address:{address}" }})')
-    if not ok:
-        return False, out
-    ok, active = apps._query(["hyprctl", "-j", "activewindow"], as_json=True)
-    if not ok or (active or {}).get("address") != address:
-        return False, "that window would not come forward"
-    return True, ""
+    return window.bring(address)
 
 
 # The last HISTORY_MAX things Diablo did on the desktop, newest last, each with what undoes
@@ -408,7 +402,7 @@ FLIP = {
 # Acts that send or close something: never run off half a sentence (see ears.early_sure).
 SURE_ONLY = ("close_window", "close_tab", "enter")
 # Moves that change where he is: undone by putting the focus back.
-MOVES = ("focus_window", "focus_left", "focus_right", "focus_up", "focus_down", "workspace", "open_thread",
+MOVES = ("focus_window", "stage_window", "focus_left", "focus_right", "focus_up", "focus_down", "workspace", "open_thread",
          "terminal", "new_window", "browser_tab")
 # Edits in the app: undone by the app's own undo.
 EDITS = ("type", "dictation", "paste", "cut", "delete_word", "backspace")
@@ -559,6 +553,11 @@ def undo_last():
     action, before = entry.get("action"), entry.get("before") or {}
     if entry.get("closed"):
         return reopen(entry["closed"])
+    if action == "stage_window" and ADDRESS.match(str(before.get("stage") or "")):
+        ok, why = window.stage(before["stage"])
+        if ok and ADDRESS.match(str(before.get("address") or "")):
+            ok, why = window.focus(before["address"])
+        return (True, "put the stage back") if ok else (False, f"could not put the stage back: {why}")
     if action == "move_to_workspace" and before.get("workspace") and ADDRESS.match(str(before.get("address") or "")):
         ok, out = apps._dispatch(
             f'hl.dsp.window.move({{ workspace = {int(before["workspace"])}, window = "address:{before["address"]}" }})')
@@ -588,6 +587,8 @@ def run(act):
     if action == "volume_set":
         return set_volume(act.get("level") or 50)
     before = _active()
+    if action == "stage_window" and ADDRESS.match(str(act.get("window") or "")):
+        before["stage"] = window.holder(act["window"])
     closed = _closed_info(str(act.get("window") or "")) if action == "close_window" else None
     ok, why = _run_act(act)
     if ok:
@@ -598,16 +599,17 @@ def run(act):
 
 def _run_act(act):
     action = str((act or {}).get("action") or "")
-    if action in ("close_window", "focus_window"):
+    if action in ("close_window", "focus_window", "stage_window"):
         address = str(act.get("window") or "")
         if not ADDRESS.match(address):
             return False, "I did not get a window to act on"
         name = act.get("name") or "the window"
+        if action != "close_window":
+            ok, why = (window.focus if action == "focus_window" else window.stage)(address)
+            return (True, "") if ok else (False, f"I could not {action.split('_')[0]} {name}: {why}")
         ok, why = _focus(address)
         if not ok:
             return False, f"I could not find {name}: {why}"
-        if action == "focus_window":
-            return True, ""
         ok, out = apps._dispatch("hl.dsp.window.close()")
         return (True, "") if ok else (False, f"closing {name} failed: {out}")
     if action == "open_thread":

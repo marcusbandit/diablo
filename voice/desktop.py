@@ -103,14 +103,3 @@ def list_windows():
                 f" | ws {client.get('workspace', {}).get('id', '?')}"
             )
     return "\n".join(lines) or "(no mapped windows)"
-
-
-def focus_window(title):
-    # Hyprland 0.56 only takes the Lua form; the old focuswindow syntax is rejected.
-    done = subprocess.run(
-        ["hyprctl", "dispatch", f'hl.dsp.focus({{ window = "title:{title}" }})'],
-        capture_output=True, text=True, timeout=10,
-    )
-    if done.returncode != 0 or done.stdout.strip() != "ok":
-        return f"no window matching title:{title}"
-    return "ok"

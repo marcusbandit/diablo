@@ -597,6 +597,13 @@ def recent_watches(since):
     return [dict(row) for row in rows]
 
 
+def watch_is_open(thread_id):
+    with _lock:
+        row = _conn.execute("SELECT 1 FROM t3_watches WHERE thread_id = ? AND state IN ('open', 'asking')",
+                            (thread_id,)).fetchone()
+    return row is not None
+
+
 def set_watch(thread_id, state):
     with _lock:
         _conn.execute(

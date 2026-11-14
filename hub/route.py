@@ -590,7 +590,7 @@ def apply_jev(decision, answer, images=False, recent_light=False, needs_context=
     return decision
 
 
-DESKTOP_WINDOW = ("close_window", "focus_window")
+DESKTOP_WINDOW = ("close_window", "focus_window", "stage_window")
 DESKTOP_WORKSPACE = ("workspace", "move_to_workspace")
 DESKTOP_MEDIA = ("play", "pause", "next", "previous")
 DESKTOP_SOUND = ("volume_up", "volume_down", "mute", "unmute")
@@ -663,7 +663,8 @@ def desktop_action(answer, text, desktop):
             return None
         name = str(window.get("class") or "the window")
         act.update(window=str(window.get("address") or ""), name=name)
-        act["did"] = f"closed {name}" if action == "close_window" else f"switched to {name}"
+        act["did"] = {"close_window": f"closed {name}", "focus_window": f"switched to {name}",
+                      "stage_window": f"put {name} on the stage"}[action]
         return act if act["window"] else None
     if action in DESKTOP_WORKSPACE:
         number = answer.get("workspace")

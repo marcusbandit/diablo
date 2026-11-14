@@ -4,7 +4,7 @@ import subprocess
 import time
 from datetime import datetime
 
-from . import activity, desktop, fleet, hue, hubclient
+from . import activity, apps, desktop, fleet, hue, hubclient
 from . import state as vstate
 from .llm import chat, LLMError
 
@@ -268,7 +268,19 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "focus_window",
-            "description": "Focus a window by title substring",
+            "description": "Focus a window by app name or title, for focus, switch to or go to. Moves the cursor there; never stages or resizes",
+            "parameters": {
+                "type": "object",
+                "properties": {"title": {"type": "string"}},
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stage_window",
+            "description": "Put a window on the stage, the centerpiece of his layout, as his Super+Shift+Enter does, for center or stage followed by an app",
             "parameters": {
                 "type": "object",
                 "properties": {"title": {"type": "string"}},
@@ -469,8 +481,8 @@ def _execute(name, args, cfg):
         return desktop.press_key(args.get("combo", ""))
     if name == "list_windows":
         return desktop.list_windows()
-    if name == "focus_window":
-        return desktop.focus_window(args.get("title", ""))
+    if name in ("focus_window", "stage_window"):
+        return getattr(apps, name)({"target": args.get("title", "")}, {})[1]
     if name == "hue_light":
         return hue.hue_light(args.get("action", "on"), args.get("target", "all"))
     if name == "fleet_run":

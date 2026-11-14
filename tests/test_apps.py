@@ -111,6 +111,8 @@ class TestWindows(unittest.TestCase):
         self.calls.append(cmd)
         if cmd[:3] == ["hyprctl", "-j", "clients"]:
             return done(json.dumps(CLIENTS))
+        if cmd[:3] == ["hyprctl", "-j", "activewindow"]:
+            return done(json.dumps({"address": "0x1"}))
         return done("ok\n")
 
     def setUp(self):
@@ -120,10 +122,10 @@ class TestWindows(unittest.TestCase):
 
     def test_focus_window_matches_class_and_dispatches_the_address(self):
         self.assertEqual(apps.focus_window({"target": "spotify"}, {}), (True, "focused Spotify"))
-        lua = self.calls[-1][2]
-        self.assertEqual(self.calls[-1][:2], ["hyprctl", "dispatch"])
-        self.assertIn("focus", lua)
-        self.assertIn("address:0x1", lua)
+        dispatched = [c[2] for c in self.calls if c[:2] == ["hyprctl", "dispatch"]]
+        self.assertIn("address:0x1", dispatched[0])
+        self.assertIn("cursor.move", dispatched[-1])
+        self.assertFalse(any("put_on_stage" in str(c) for c in self.calls))
 
     def test_focus_window_misses_list_open_classes(self):
         ok, text = apps.focus_window({"target": "ghost"}, {})
