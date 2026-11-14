@@ -16,16 +16,21 @@ Install once: `cp deploy/diablo-presence.service ~/.config/systemd/user/ && syst
 A card is never placed at the cursor. It opens next to the orb, below it or above it when the
 screen runs out, lined up with his side, and scales up from the point nearest him
 (`presence/place.js`, `cardRect`). While a card is up the orb is up too, holding it out with his
-proud face, and the two hold still while the cursor is within reach of them, so a card can be
-read and clicked. Once the cursor is well clear (`shouldRejoin`, 160 px) they glide after it.
+proud face, and he follows the cursor exactly as he does alone, the card swinging after him on a
+softer glide. The two hold still only while the pointer is on the card or heading into it
+(`reaching`: its last tenth of a second of travel points at the card, give or take 12 degrees,
+from within 360 px), so a card can be read and clicked; heading anywhere else lets them follow
+again. A page in a card is moved with it every frame while it glides.
 
 `node --test tests/presence/place.test.mjs` checks the placement; CI runs it.
 `scripts/presence-shots.sh` draws every scene into `captures/presence/`: by default offscreen
 (`presence/preview/render.py` runs the real components with Qt, no compositor, no window, so it
 works with the screen locked; CI runs it too and keeps the PNGs as an artifact). `--live` shoots
 on the real compositor instead: a throwaway Quickshell instance with its own state dir, a fixed
-cursor (`DIABLO_PRESENCE_CURSOR`) and no hub feed (`DIABLO_PRESENCE_TEST`), so it never moves the
-pointer or reads anything real. The components stay free of Quickshell imports so the offscreen
+cursor (`DIABLO_PRESENCE_CURSOR`, "x,y") and no hub feed (`DIABLO_PRESENCE_TEST`), so it never
+moves the pointer or reads anything real. `DIABLO_PRESENCE_CURSOR` may also be the path of a file
+holding "x,y", read again on every change, so a script can move a pretend cursor to record the
+orb following it. The components stay free of Quickshell imports so the offscreen
 preview can load them; what needs Quickshell lives in `shell.qml` or a file loaded on demand
 (`CardActions.qml`).
 
@@ -119,13 +124,6 @@ The moments come from `voice/feedback.py`, the same calls that play the ok, low 
 sounds. Hovering the face says the state in words.
 
 ## Cards
-
-A card opens beside the cursor on the cursor's monitor: 26 px above and to the right of it, to the
-left when the right side runs out of room, below it when there is no room above, and always inside
-the screen. While the orb is up the card sits on the far side of it, so the two never overlap. The
-spot is read once from Hyprland's socket when the first card goes up and kept until the last one
-goes away, so a card does not move while it is read. If Hyprland does not answer within 400 ms the
-card shows in the bottom right corner, as it used to.
 
 A card stays its `ttl` (10 s, a spoken reply as long as it takes to read), longer while the
 pointer is on it, and a click puts it away. Quick answers (`voice/quick.py`) make one with no

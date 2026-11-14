@@ -1,7 +1,8 @@
 // Diablo on the screen: an orb that shows what he is doing, and cards for what he answers.
-// A card grows out of the orb and stays with it (presence/place.js works out where): the orb is
-// up whenever a card is, and the two hold still while the cursor is near them, so a card can be
-// read and clicked, then catch up once it moves well away.
+// A card grows out of the orb and trails it (presence/place.js works out where): the orb is up
+// whenever a card is and follows the cursor as it does alone, the card a step behind. The two
+// hold still only while the pointer is on the card or heading into it, so it can be read and
+// clicked.
 // Asleep he is gone: no orb, nothing polls the cursor. Waking brings him up beside the cursor, and
 // he follows it from monitor to monitor while Marcus is talking to him (listening, thinking,
 // speaking, a voice loop, dictation) or a turn of his runs, then lingers there, sleepy, for
@@ -61,7 +62,26 @@ ShellRoot {
 
     // For scripts/presence-shots.sh: a fixed cursor ("x,y" in global coordinates) instead of
     // asking Hyprland, and no hub feed, so a test instance never moves or reads anything real.
+    // A path instead of "x,y" is a file holding "x,y", read again whenever it changes, so a
+    // script can move a pretend cursor without touching the real one.
     readonly property string fixedCursor: Quickshell.env("DIABLO_PRESENCE_CURSOR") ?? ""
+    readonly property bool cursorFromFile: root.fixedCursor.startsWith("/")
+
+    FileView {
+        id: cursorFile
+
+        path: root.cursorFromFile ? root.fixedCursor : ""
+        watchChanges: true
+        printErrors: false
+        onFileChanged: cursorFile.reload()
+        onLoaded: {
+            const xy = cursorFile.text().trim().split(",");
+            if (xy.length === 2 && isFinite(Number(xy[0])) && isFinite(Number(xy[1])) && xy[1] !== "") {
+                root.cursor = Qt.point(Number(xy[0]), Number(xy[1]));
+                root.answered();
+            }
+        }
+    }
     readonly property bool testRun: (Quickshell.env("DIABLO_PRESENCE_TEST") ?? "") !== ""
 
     // Awake is only what Marcus started by talking to him: a turn he is listening to, thinking
@@ -265,30 +285,34 @@ ShellRoot {
         return null;
     }
 
+    // Every 50 ms while a card could hold a page, and every frame while one glides, so the page
+    // keeps up with its card.
     Timer {
         interval: 50
         repeat: true
         running: root.cardsUp || root.panelOpen || root.webSent !== ""
-        onTriggered: {
-            const t = root.webTarget();
-            let msg = { page: "" };
-            if (t && t.item && t.item.width > 0) {
-                const p = t.item.mapToItem(null, 0, 0);
-                msg = { page: t.page, x: Math.round(p.x), y: Math.round(p.y), w: Math.round(t.item.width), h: Math.round(t.item.height),
-                    monitor: follow.screen?.name ?? "" };
-            }
-            const line = JSON.stringify(msg);
-            if (line === root.webSent || (msg.page === "" && root.webSent === ""))
-                return;
-            // Started on this tick, written on the next one, once it reads its stdin.
-            if (msg.page !== "" && !webview.running) {
-                webview.running = true;
-                return;
-            }
-            if (webview.running)
-                webview.write(line + "\n");
-            root.webSent = msg.page === "" ? "" : line;
+        onTriggered: root.sendWeb()
+    }
+
+    function sendWeb() {
+        const t = root.webTarget();
+        let msg = { page: "" };
+        if (t && t.item && t.item.width > 0) {
+            const p = t.item.mapToItem(null, 0, 0);
+            msg = { page: t.page, x: Math.round(p.x), y: Math.round(p.y), w: Math.round(t.item.width), h: Math.round(t.item.height),
+                monitor: follow.screen?.name ?? "" };
         }
+        const line = JSON.stringify(msg);
+        if (line === root.webSent || (msg.page === "" && root.webSent === ""))
+            return;
+        // Started on this tick, written on the next one, once it reads its stdin.
+        if (msg.page !== "" && !webview.running) {
+            webview.running = true;
+            return;
+        }
+        if (webview.running)
+            webview.write(line + "\n");
+        root.webSent = msg.page === "" ? "" : line;
     }
 
     FileView {
@@ -463,6 +487,8 @@ ShellRoot {
         triggeredOnStart: true
         running: root.up
         onTriggered: {
+            if (root.cursorFromFile)
+                return;
             if (root.fixedCursor !== "") {
                 const xy = root.fixedCursor.split(",");
                 root.cursor = Qt.point(Number(xy[0]), Number(xy[1]));
@@ -480,9 +506,12 @@ ShellRoot {
     PanelWindow {
         id: follow
 
-        // The point the orb sits beside: the cursor, except while cards are up, when it holds
-        // where it was until the cursor is well clear of the orb and its cards.
+        // The point the orb sits beside: the cursor, except while the pointer reaches for a card.
         property point anchor: Qt.point(-1, -1)
+        // The pointer is on a card or heading into it: the orb and the card hold still.
+        property bool held: false
+        // The cursor's last tenth of a second, for which way it is heading.
+        property var trail: []
 
         screen: root.screenAt(follow.anchor)
         visible: root.up || group.opacity > 0.01
@@ -524,8 +553,11 @@ ShellRoot {
         // orb last was.
         function snap() {
             follow.anchor = root.cursor;
+            follow.held = false;
             group.x = follow.targetX;
             group.y = follow.targetY;
+            cards.x = cards.spot.x;
+            cards.y = cards.spot.y;
         }
 
         Connections {
@@ -534,6 +566,7 @@ ShellRoot {
             // The last card gone: back beside the cursor, even if it has not moved since.
             // Not while he fades out: he goes where the card was.
             function onCardsUpChanged() {
+                follow.held = false;
                 if (!root.cardsUp && root.up)
                     follow.anchor = root.cursor;
             }
@@ -549,20 +582,27 @@ ShellRoot {
             }
         }
 
-        // Catch up with the cursor, unless the central card is open or the cursor is near the
-        // cards he holds.
+        // Catch up with the cursor, unless the central card is open or the pointer is reaching
+        // for a card he holds.
         function chase() {
+            const t = Date.now();
+            const trail = follow.trail.filter(p => t - p.t <= 120);
+            trail.push({ t: t, x: root.cursor.x, y: root.cursor.y });
+            follow.trail = trail;
             if (root.panelOpen)
                 return;
-            if (!root.cardsUp) {
+            if (!cards.showing) {
+                follow.held = false;
                 follow.anchor = root.cursor;
                 return;
             }
             const sx = follow.screen?.x ?? 0, sy = follow.screen?.y ?? 0;
             const here = { x: root.cursor.x - sx, y: root.cursor.y - sy };
-            const rects = [{ x: group.x, y: group.y, w: group.width, h: group.height },
-                { x: cards.x, y: cards.y, w: cards.width, h: cards.height }];
-            if (Place.shouldRejoin(here, rects))
+            const from = { x: trail[0].x - sx, y: trail[0].y - sy };
+            const reach = Place.reaching(here, from, { x: cards.x, y: cards.y, w: cards.width, h: cards.height });
+            if (reach !== null)
+                follow.held = reach;
+            if (!follow.held)
                 follow.anchor = root.cursor;
         }
 
@@ -581,13 +621,29 @@ ShellRoot {
         }
 
         // The glide: each frame closes a share of the distance, so the orb trails the cursor
-        // smoothly and settles in about a fifth of a second. It stops once there.
+        // smoothly and settles in about a fifth of a second, and the cards trail the orb a little
+        // softer, so they swing after him. It stops once there. A card on its way out stays put.
+        readonly property bool cardsAway: cards.showing && (Math.abs(cards.x - cards.spot.x) > 0.5 || Math.abs(cards.y - cards.spot.y) > 0.5)
+
         FrameAnimation {
-            running: follow.visible && (Math.abs(group.x - follow.targetX) > 0.5 || Math.abs(group.y - follow.targetY) > 0.5)
+            running: follow.visible && (Math.abs(group.x - follow.targetX) > 0.5 || Math.abs(group.y - follow.targetY) > 0.5 || follow.cardsAway)
             onTriggered: {
                 const k = 1 - Math.exp(-frameTime * 16);
                 group.x += (follow.targetX - group.x) * k;
                 group.y += (follow.targetY - group.y) * k;
+                if (cards.showing) {
+                    const kc = 1 - Math.exp(-frameTime * 10);
+                    cards.x += (cards.spot.x - cards.x) * kc;
+                    cards.y += (cards.spot.y - cards.y) * kc;
+                    // Moving towards the cards, he pushes them ahead instead of sliding under them.
+                    const below = cards.y + cards.height / 2 > group.y + group.height / 2;
+                    if (cards.spot.below && below)
+                        cards.y = Math.max(cards.y, Math.min(group.y + group.height + 10, cards.spot.y));
+                    else if (!cards.spot.below && !below)
+                        cards.y = Math.min(cards.y, Math.max(group.y - 10 - cards.height, cards.spot.y));
+                }
+                if (root.webSent !== "")
+                    root.sendWeb();
             }
         }
 
@@ -776,8 +832,9 @@ ShellRoot {
             }
         }
 
-        // The cards, grown out of the orb: placed by Place.cardRect from where the orb is now,
-        // scaled up from the point nearest it, and carried along when the orb moves.
+        // The cards, grown out of the orb: their spot is worked out by Place.cardRect from where
+        // the orb is now, they scale up from the point nearest him, and the glide above carries
+        // them after him.
         Item {
             id: cards
 
@@ -785,11 +842,17 @@ ShellRoot {
                 { w: cards.width, h: Math.max(1, cardColumn.implicitHeight) }, { w: follow.width, h: follow.height },
                 follow.edge, 10)
 
-            x: cards.spot.x
-            y: cards.spot.y
             width: 300
             height: cardColumn.implicitHeight
             readonly property bool showing: root.cardsUp && !root.panelOpen
+
+            // A stack that appears starts on its spot and grows out of him from there.
+            onShowingChanged: {
+                if (cards.showing && grow.xScale < 0.2) {
+                    cards.x = cards.spot.x;
+                    cards.y = cards.spot.y;
+                }
+            }
 
             visible: cards.showing || grow.xScale > 0.05
             opacity: cards.showing ? 1 : 0
