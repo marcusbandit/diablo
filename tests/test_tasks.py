@@ -326,6 +326,72 @@ class TestT3ThreadsKeepCards(DbCase):
         self.assertEqual(db.get_task("t7")["state"], "working")
 
 
+    def test_a_closed_watch_never_puts_its_card_back_to_working(self):
+        db.add_watch("t20", "box-a", "Open AniBeam", "main")
+        tasks.save("t20", {"title": "Open AniBeam", "state": "done", "source": "t3:t20"})
+        db.set_watch("t20", "done")
+        call = fake_t3(ANIBEAM, run_status="running", active="r")
+        with mock.patch.object(t3threads.t3link, "call_tool", side_effect=call):
+            row = asyncio.run(t3threads.one(db.recent_watches(0)[0]))
+        self.assertEqual(row["state"], "working")
+        self.assertEqual(db.get_task("t20")["state"], "done")
+
+
+class TestSweep(DbCase):
+    def test_a_thread_card_without_an_open_watch_is_finished(self):
+        db.add_watch("t21", "box-a", "Open AniBeam", "main")
+        tasks.save("t21", {"title": "Open AniBeam", "state": "working", "source": "t3:t21"}, now=time.time() - 600)
+        db.set_watch("t21", "done")
+        finished = tasks.sweep()
+        self.assertEqual([t["id"] for t in finished], ["t21"])
+        card = db.get_task("t21")
+        self.assertEqual((card["state"], card["step"]), ("done", tasks.UNWATCHED_STEP))
+
+    def test_watched_and_fresh_cards_stay(self):
+        db.add_watch("t22", "box-b", "Watched", "main")
+        tasks.save("t22", {"title": "Watched", "state": "working", "source": "t3:t22"}, now=time.time() - 600)
+        tasks.save("task-a", {"title": "Drafting", "state": "working"}, now=time.time() - 60)
+        self.assertEqual(tasks.sweep(), [])
+        self.assertEqual({db.get_task(i)["state"] for i in ("t22", "task-a")}, {"working"})
+
+    def test_a_tool_card_left_alone_for_hours_is_finished(self):
+        tasks.save("task-b", {"title": "Drafting", "state": "queued"}, now=time.time() - tasks.UNTRACKED_S - 1)
+        tasks.sweep()
+        card = db.get_task("task-b")
+        self.assertEqual((card["state"], card["step"]), ("done", tasks.UNTRACKED_STEP))
+
+    def test_the_watch_loop_sweeps_even_with_nothing_watched(self):
+        tasks.save("t24", {"title": "Old", "state": "working", "source": "t3:t24"}, now=time.time() - 600)
+        with mock.patch.object(watch.brains, "ask", mock.AsyncMock()) as ask:
+            asyncio.run(watch.check_once(mock.AsyncMock()))
+        ask.assert_not_called()
+        self.assertEqual(db.get_task("t24")["state"], "done")
+
+    def test_a_rewatch_on_an_old_run_stays_open_and_working(self):
+        db.add_watch("t25", "box-b", "Again", "main")
+        old_run = fake_t3(DIABLO, completed=time.time() - 30, started=time.time() - 3600)
+        with mock.patch("hub.t3link.call_tool", side_effect=old_run), \
+                mock.patch.object(watch.brains, "ask", mock.AsyncMock()) as ask:
+            tasks.save("t25", {"title": "Again", "state": "working", "source": "t3:t25"})
+            asyncio.run(watch.check_once(mock.AsyncMock()))
+        ask.assert_not_called()
+        self.assertTrue(db.watch_is_open("t25"))
+        self.assertEqual(db.get_task("t25")["state"], "working")
+
+    def test_a_waiting_card_is_left_waiting(self):
+        tasks.save("t26", {"title": "Asks", "state": "waiting", "source": "t3:t26"})
+        tasks.save("task-c", {"title": "Asks too", "state": "waiting"}, now=time.time() - tasks.UNTRACKED_S - 1)
+        self.assertEqual(tasks.sweep(), [])
+        self.assertEqual({db.get_task(i)["state"] for i in ("t26", "task-c")}, {"waiting"})
+
+    def test_an_old_card_keeps_its_old_finish_time(self):
+        long_ago = time.time() - 5 * 86400
+        tasks.save("task-d", {"title": "Ancient", "state": "working"}, now=long_ago)
+        tasks.sweep()
+        self.assertEqual(db.get_task("task-d")["finished_at"], long_ago)
+        self.assertNotIn("task-d", [t["id"] for t in tasks.listing()])
+
+
 class TestMcpTools(DbCase):
     def setUp(self):
         super().setUp()

@@ -33,6 +33,9 @@ REWATCH_S = 300
 REWATCH_GRACE_S = 120
 UNREADABLE_RETRY_S = 600
 PRUNE_EVERY_S = 3600
+UNTRACKED_S = 6 * 3600
+UNWATCHED_STEP = "No longer watched"
+UNTRACKED_STEP = "No update in a while"
 
 _write = threading.Lock()
 _pruned = [0.0]
@@ -210,6 +213,36 @@ def prune(now=None):
     if now - _pruned[0] >= PRUNE_EVERY_S:
         _pruned[0] = now
         db.prune_tasks(now - PRUNE_S)
+
+
+RUNNING = ("queued", "working")
+
+
+def sweep(now=None):
+    """Finishes the running cards nothing keeps up to date any more, so none stays working
+    forever: a T3 thread's card whose watch is closed, and a card made with update_task that has
+    had no update for UNTRACKED_S. A card waiting on Marcus is left as it is. Each card is read
+    again under the write lock, so one rewritten meanwhile (a new watch, a fresh update) stays.
+    Its finish time is its last update, so an old card does not show as just finished.
+    Returns the finished cards."""
+    now = time.time() if now is None else now
+    finished = []
+    for listed in db.list_tasks(RUNNING, limit=500):
+        with _write:
+            task = db.get_task(listed["id"])
+            if not task or task.get("state") not in RUNNING or task.get("updated_at") != listed.get("updated_at"):
+                continue
+            last = float(task.get("updated_at") or now)
+            if str(task.get("source") or "").startswith("t3:"):
+                if db.watch_is_open(task["id"]):
+                    continue
+                step = UNWATCHED_STEP
+            elif now - last >= UNTRACKED_S:
+                step = UNTRACKED_STEP
+            else:
+                continue
+            finished.append(_save(task["id"], {"state": "done", "step": step, "finished_at": min(last, now)}, now))
+    return finished
 
 
 def thread_state(thread, run):
