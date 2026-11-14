@@ -10,6 +10,9 @@ The live task cards ride along the same way: GET /v1/tasks at the start and with
 then each `task` event, printed as {"tasks": [{"id", "state", "title"}]} with only the active ones
 (queued, working, waiting), so the orb can carry one moon for each.
 
+Before each connection it prints {"hub": {"url", "token"}} from config.toml, so History in the
+central card reads the hub with the same pair.
+
 Standard library only: the system python runs it, no venv.
 
 It also carries what the brain shows on screen (`screen` events from POST /v1/screen): a small
@@ -244,8 +247,10 @@ def follow(cfg):
 
 def main():
     while True:
+        cfg = config()
+        say({"hub": {"url": cfg["hub_url"], "token": cfg["hub_token"]}})
         try:
-            follow(config())
+            follow(cfg)
         except Exception as error:
             sys.stderr.write(f"busy feed: {error}\n")
         with TASKS_LOCK:

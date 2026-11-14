@@ -289,6 +289,10 @@ Rectangle {
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
+        WheelStep {
+            flick: settingsPage
+        }
+
         Column {
             id: settingsColumn
 

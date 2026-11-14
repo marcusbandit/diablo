@@ -18,14 +18,22 @@ Item {
     property bool loading: false
     property string error: ""
     property bool loaded: false
+    property bool behind: false
+    property bool polling: false
     property int generation: 0
     property int oldest: 0
     property int newest: 0
 
     readonly property var names: ({ voice: "Voice", telegram: "Telegram", desktop: "Desktop", phone: "Phone", fleet: "Fleet",
         api: "Web", schedule: "Reminders", system: "System" })
-    readonly property var channelList: Object.keys(history.channels).filter(c => history.channels[c] > 0)
-        .sort((a, b) => history.channels[b] - history.channels[a])
+    readonly property var order: ["voice", "telegram", "desktop", "phone", "fleet", "api", "schedule", "system"]
+    readonly property var channelList: Object.keys(history.channels).filter(c => c !== "" && history.channels[c] > 0)
+        .sort((a, b) => history.rank(a) - history.rank(b) || a.localeCompare(b))
+
+    function rank(channel: string): int {
+        const at = history.order.indexOf(channel);
+        return at < 0 ? history.order.length : at;
+    }
 
     function nameOf(channel: string): string {
         return history.names[channel] ?? (channel ? channel.charAt(0).toUpperCase() + channel.slice(1) : "Unknown");
@@ -50,14 +58,14 @@ Item {
         return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
-    // The text with every searched word lit, as rich text; plain text needs none of this.
+    // The text with every searched word lit, as rich text; plain text needs none of this. The
+    // words are found in the raw text and each piece escaped after, so a match never splits an entity.
     function marked(text: string): string {
         const words = history.query.split(/\s+/).filter(w => w.length > 0)
             .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-        let html = history.escaped(text);
-        if (words.length)
-            html = html.replace(new RegExp(`(${words.map(w => history.escaped(w)).join("|")})`, "gi"),
-                `<span style="background-color:${history.style.dictating}; color:${history.style.base};">$1</span>`);
+        const lit = `<span style="background-color:${history.style.dictating}; color:${history.style.base};">`;
+        const pieces = words.length ? text.split(new RegExp(`(${words.join("|")})`, "gi")) : [text];
+        const html = pieces.map((piece, i) => i % 2 ? `${lit}${history.escaped(piece)}</span>` : history.escaped(piece)).join("");
         return `<div style="white-space: pre-wrap;">${html}</div>`;
     }
 
@@ -87,6 +95,9 @@ Item {
             } else {
                 history.error = xhr.status === 0 ? "The hub cannot be reached." : `The hub answered ${xhr.status}.`;
                 history.loading = false;
+                history.polling = false;
+                if (history.loaded && params.before > 0)
+                    history.behind = true;
             }
         };
         xhr.open("GET", history.url(params));
@@ -107,6 +118,8 @@ Item {
         history.newest = 0;
         history.more = true;
         history.loading = false;
+        history.polling = false;
+        history.behind = false;
         history.loaded = false;
         history.older();
     }
@@ -115,6 +128,7 @@ Item {
         if (history.loading || !history.more)
             return;
         history.loading = true;
+        history.behind = false;
         history.fetch({ before: history.oldest, q: history.query, channel: history.channel }, reply => {
             const got = reply.messages ?? [];
             for (let i = got.length - 1; i >= 0; i--)
@@ -130,25 +144,30 @@ Item {
         });
     }
 
-    // New lines while it is open go in at the bottom. Too many at once and it starts over.
+    // New lines while it is open go in at the bottom, asked for by the newest id shown.
     function newer() {
-        if (history.loading || !history.loaded)
+        if (history.loading || history.polling || !history.loaded)
             return;
-        history.fetch({ q: history.query, channel: history.channel }, reply => {
+        history.polling = true;
+        history.fetch({ after: history.newest, q: history.query, channel: history.channel }, reply => {
+            history.polling = false;
             const got = (reply.messages ?? []).filter(m => m.id > history.newest);
-            history.channels = reply.channels ?? history.channels;
             if (!got.length)
                 return;
-            if (got.length === (reply.messages ?? []).length && reply.more && history.newest > 0)
-                return history.reload();
             const atBottom = list.atYEnd;
-            for (const m of got)
+            const counts = Object.assign({}, history.channels);
+            for (const m of got) {
                 rows.insert(0, history.row(m));
+                counts[m.channel] = (counts[m.channel] ?? 0) + 1;
+            }
+            history.channels = counts;
             history.newest = got[got.length - 1].id;
             if (history.oldest === 0)
                 history.oldest = got[0].id;
             if (atBottom)
                 list.positionViewAtBeginning();
+            if (reply.more)
+                Qt.callLater(history.newer);
         });
     }
 
@@ -193,11 +212,21 @@ Item {
         }
     }
 
+    // Every 4 s while open: new lines, and a page that failed to load asked for again.
     Timer {
         interval: 4000
         repeat: true
-        running: history.active && history.loaded
-        onTriggered: history.newer()
+        running: history.active
+        onTriggered: {
+            if (!history.loaded) {
+                if (!history.loading)
+                    history.reload();
+                return;
+            }
+            if (history.behind)
+                history.older();
+            history.newer();
+        }
     }
 
     ListModel {

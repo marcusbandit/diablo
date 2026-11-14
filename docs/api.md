@@ -76,13 +76,15 @@ mark each message with its threads, filter to one thread and correct the filing.
 - `GET /v1/search?q=<words>&limit=200&thread=<id>`: main conversation messages that hold every
   word of `q`, in any case, newest first, as `{"messages": [...], "now"}` with `threads` on each.
   `thread` keeps one thread's. Clients rank and mark the hits themselves.
-- `GET /v1/history?before=<id>&limit=60&q=<words>&channel=<sources>`: everything on every channel,
+- `GET /v1/history?before=<id>&after=<id>&limit=60&q=<words>&channel=<sources>`: everything on every channel,
   every section, Marcus's lines and every reply, for History in the central card. One page oldest
   first, as `{"messages", "more", "channels", "now"}`; pass the first message's id as `before` for
   the page above it. Each message has `id`, `ts`, `role`, `text`, `channel` (its source: `voice`,
   `telegram`, `desktop`, `phone`, `fleet`, `api`...), `spoken` (said aloud: the voice loop or a
   Telegram voice note) and `section`. `q` keeps lines holding every word in any case, `channel` a
-  comma list of sources; `channels` counts each source. Lines an edit withdrew stay out.
+  comma list of sources; `channels` counts each source. `after` asks only for lines newer than
+  that id, oldest of them first, with `more` when still newer ones remain and no `channels`. Lines
+  an edit withdrew and lines of deleted sections stay out.
 
 `POST /v1/chat` answers with `threads: [{"id", "title"}]`, where the turn was filed, so a client can
 say so and offer an undo (a `tag` call back). The events stream sends `{"kind": "threads"}` when

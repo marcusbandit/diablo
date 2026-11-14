@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient
 
-from hub import db, devices, server, standby
+from hub import db, devices, sections, server, standby
 
 TOKEN = "test-token"
 HEADERS = {"X-Diablo-Token": TOKEN}
@@ -91,6 +91,29 @@ class TestHistory(unittest.TestCase):
         db.supersede([old], new)
         self.assertEqual(self.texts(), ["Book a table for four"])
         self.assertEqual(self.page()["channels"], {"telegram": 1})
+
+    def test_after_brings_only_newer_lines_without_counts(self):
+        first = db.add_message("voice", "user", "first", None)
+        for n in range(5):
+            db.add_message("telegram", "user", f"new {n}", None)
+        body = self.page(after=first, limit=3)
+        self.assertEqual([m["text"] for m in body["messages"]], ["new 0", "new 1", "new 2"])
+        self.assertTrue(body["more"])
+        self.assertNotIn("channels", body)
+        rest = self.page(after=body["messages"][-1]["id"], limit=3)
+        self.assertEqual([m["text"] for m in rest["messages"]], ["new 3", "new 4"])
+        self.assertFalse(rest["more"])
+        self.assertEqual(self.texts(after=rest["messages"][-1]["id"]), [])
+
+    def test_deleted_sections_stay_out(self):
+        db.add_message("desktop", "user", "Squats on Friday", {"section": "workout"})
+        db.add_message("desktop", "user", "Lamp at ten", {"section": "diablo"})
+        db.add_message("voice", "user", "No section here", None)
+        gone = [{"id": "workout", "deleted": True}, {"id": "diablo", "deleted": False}]
+        with mock.patch.object(sections, "all_sections", return_value=gone):
+            body = self.page()
+        self.assertEqual([m["text"] for m in body["messages"]], ["Lamp at ten", "No section here"])
+        self.assertEqual(body["channels"], {"desktop": 1, "voice": 1})
 
     def test_limit_is_kept_in_range(self):
         for n in range(3):

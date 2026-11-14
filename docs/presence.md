@@ -37,9 +37,10 @@ close button or a click anywhere outside puts him back. Three pages:
 
 - **Now**: a card shown big. "Enlarge this" moves the newest card here.
 - **History**: everything Marcus said to him on every channel, marked spoken or typed, and every
-  reply, newest at the bottom (`History.qml`). It reads `GET /v1/history` with `hub_url` and
-  `hub_token` from `config.toml`, the pair `busy.py` uses; scrolling up loads the page above, new
-  lines come in every 4 s while it is open, and a search field and one chip per channel narrow it.
+  reply, newest at the bottom (`History.qml`). It reads `GET /v1/history` with the `hub_url` and
+  `hub_token` that `busy.py` reads from `config.toml` and prints to the shell; scrolling up loads
+  the page above, new lines come in every 4 s while it is open (`after`, so a quiet poll is empty),
+  a page that failed is asked for again, and a search field and one chip per channel narrow it.
   The wheel and the keys scroll through `WheelStep.qml`, 100 px a notch, the touchpad 1:1.
 - **Settings**: whether he follows the cursor (kept in `presence-settings.json`), whether the
   ears listen for his name, live meters for the microphone and the wake score, how well he knows

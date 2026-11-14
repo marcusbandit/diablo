@@ -96,6 +96,17 @@ class TestTool(unittest.TestCase):
         self.assertIn("show_on_screen", lockguard.SAFE_HOUSE)
 
 
+class TestHubPair(unittest.TestCase):
+    def test_the_hub_pair_goes_out_before_each_connection(self):
+        said = []
+        cfg = {"hub_url": "http://100.64.0.9:8755", "hub_token": "pair-token"}
+        with mock.patch.object(busy, "config", return_value=cfg), mock.patch.object(busy, "say", side_effect=said.append), \
+                mock.patch.object(busy, "follow", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                busy.main()
+        self.assertEqual(said, [{"hub": {"url": "http://100.64.0.9:8755", "token": "pair-token"}}])
+
+
 if __name__ == "__main__":
     unittest.main()
 

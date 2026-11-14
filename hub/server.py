@@ -895,15 +895,21 @@ def history_out(m):
 
 
 @app.get("/v1/history")
-def history(before: int = 0, limit: int = HISTORY_PAGE, q: str = "", channel: str = "", _: None = Depends(require_token)):
+def history(before: int = 0, after: int = 0, limit: int = HISTORY_PAGE, q: str = "", channel: str = "",
+            _: None = Depends(require_token)):
     """Everything he said on every channel and every reply, one page at a time, oldest first
-    within the page. `before` is the oldest id already shown; `more` says older ones remain."""
+    within the page. `before` is the oldest id already shown, `more` says older ones remain.
+    `after` is the newest id shown: only newer lines come back, and no channel counts."""
     limit = max(1, min(limit, 200))
     sources = tuple(dict.fromkeys(x.strip() for x in channel.split(",") if x.strip()))[:12]
-    rows = db.history(max(0, before), limit + 1, q.split()[:12], sources)
+    hidden = tuple(s["id"] for s in sections.all_sections() if s.get("deleted"))
+    rows = db.history(max(0, before), limit + 1, q.split()[:12], sources, after=max(0, after), hidden_sections=hidden)
     more = len(rows) > limit
-    return {"messages": [history_out(m) for m in reversed(rows[:limit])], "more": more,
-            "channels": db.history_channels(), "now": time.time()}
+    rows = rows[1:] if more and after > 0 else rows[:limit]
+    body = {"messages": [history_out(m) for m in reversed(rows)], "more": more, "now": time.time()}
+    if after <= 0:
+        body["channels"] = db.history_channels(hidden)
+    return body
 
 
 @app.post("/v1/threads")

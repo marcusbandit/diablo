@@ -56,12 +56,13 @@ ROWS = build()
 
 def page(query):
     before = int((query.get("before") or ["0"])[0] or 0)
+    after = int((query.get("after") or ["0"])[0] or 0)
     limit = max(1, min(int((query.get("limit") or ["60"])[0] or 60), 200))
     words = [w.casefold() for w in (query.get("q") or [""])[0].split()]
     channels = [c for c in (query.get("channel") or [""])[0].split(",") if c]
-    hits = [r for r in ROWS if (before <= 0 or r["id"] < before) and all(w in r["text"].casefold() for w in words)
+    hits = [r for r in ROWS if (before <= 0 or r["id"] < before) and r["id"] > after and all(w in r["text"].casefold() for w in words)
             and (not channels or r["channel"] in channels)]
-    shown = hits[-limit:]
+    shown = hits[:limit] if after > 0 else hits[-limit:]
     counts = {}
     for r in ROWS:
         counts[r["channel"]] = counts.get(r["channel"], 0) + 1
