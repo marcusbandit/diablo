@@ -79,6 +79,10 @@ Typed, or on any channel the quick actions do not catch, the brain does the same
 as a `screen` event with `open`, and `busy.py` writes it into `panel.json`, the same road
 `show_on_screen` takes.
 
+A `duck` event (the brain's `keep_sound_up`, `POST /v1/ears/duck` on the hub) is not drawn: `busy.py`
+hands it to the ears' control panel on 127.0.0.1:8758, which keep other sound up for the rest of the
+conversation or turn it down again (docs/ears.md, "Other sound goes quiet while he talks").
+
 ## What it reads
 
 | File | Written by | Holds |

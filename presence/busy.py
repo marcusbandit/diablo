@@ -19,6 +19,9 @@ It also carries what the brain shows on screen (`screen` events from POST /v1/sc
 card goes into presence.json beside the ears' own cards, a large one opens the central card
 through panel.json, and an HTML page is saved under pages/ for the web view to load. An `open`
 event (POST /v1/screen/open) opens the central card on Settings at its page.
+
+A `duck` event (POST /v1/ears/duck, the brain's keep_sound_up) goes to the ears on this machine
+at 127.0.0.1:8758, which keep other sound up for the rest of the conversation or turn it down again.
 """
 
 import json
@@ -37,6 +40,7 @@ KEEP_PAGES = 20
 PING_S = 10
 RETRY_S = 3
 RECHECK_S = 30
+EARS_URL = "http://127.0.0.1:8758"
 
 
 def config():
@@ -203,6 +207,15 @@ def show(event, now=None):
     return "small"
 
 
+def duck(event, opener=urllib.request.urlopen):
+    """A `duck` event to the ears' control panel. True when the ears took it."""
+    body = json.dumps({"keep_up": bool(event.get("keep_up", True))}).encode()
+    request = urllib.request.Request(f"{EARS_URL}/v1/ears/duck", data=body, method="POST",
+                                     headers={"Content-Type": "application/json", "X-Diablo-Ears": "1"})
+    with opener(request, timeout=5) as reply:
+        return reply.status == 200
+
+
 def ask(base, headers):
     with urllib.request.urlopen(urllib.request.Request(f"{base}/v1/busy", headers=headers), timeout=10) as reply:
         say(shown(json.loads(reply.read())))
@@ -256,6 +269,11 @@ def follow(cfg):
                             show(event)
                         except Exception as error:  # a bad card never cuts the busy feed
                             sys.stderr.write(f"screen: {error}\n")
+                    elif isinstance(event, dict) and event.get("kind") == "duck":
+                        try:
+                            duck(event)
+                        except Exception as error:
+                            sys.stderr.write(f"duck: {error}\n")
     finally:
         done.set()
 

@@ -409,6 +409,45 @@ Rectangle {
                 onToggled: on => panel.act("/v1/ears/listen", { on: on })
             }
 
+            SwitchRow {
+                label: "Turn other sound down while you talk to him"
+                on: panel.ears?.duck?.on ?? true
+                enabled: panel.ears !== null
+                onToggled: on => panel.act("/v1/ears/duck", { on: on })
+            }
+
+            Item {
+                width: settingsColumn.width
+                implicitHeight: 40
+                visible: panel.ears?.duck?.on ?? false
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Down to"
+                    color: panel.style.text
+                    font.family: panel.style.family
+                    font.pixelSize: panel.style.normal + 1
+                }
+
+                Row {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+
+                    Repeater {
+                        model: panel.ears?.duck?.levels ?? []
+
+                        PillButton {
+                            required property int modelData
+
+                            text: `${modelData}%`
+                            accent: modelData === (panel.ears?.duck?.level ?? -1)
+                            onClicked: panel.act("/v1/ears/duck", { level: modelData })
+                        }
+                    }
+                }
+            }
+
             // The meters: the microphone, and how sure he is that he just heard his name.
             Meter {
                 label: "Microphone"

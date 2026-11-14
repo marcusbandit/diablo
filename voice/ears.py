@@ -32,7 +32,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from . import burst, chime, commands, ears_api, endturn, feedback, hubclient, jevfast, mouth, panel, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake
+from . import burst, chime, commands, duck, ears_api, endturn, feedback, hubclient, jevfast, mouth, panel, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake
 from . import state as vstate
 from .config import load_config
 
@@ -139,6 +139,9 @@ def set_state(state, **extra):
         _set_state(state, **extra)
 
 
+TALKING = ("listening", "thinking", "speaking")
+
+
 def _set_state(state, **extra):
     global _last_state
     if LIVE is not None:
@@ -149,6 +152,7 @@ def _set_state(state, **extra):
             value = extra.pop(key)
             changed = changed or STICKY[key] != value
             STICKY[key] = value
+    duck.DUCK.update(state in TALKING or bool(STICKY["loop"]) or bool(STICKY["dictation"]))
     if state == _last_state and not extra and not changed:
         return
     _last_state = state
@@ -807,6 +811,13 @@ def local_line(mic, settings, vad, text, tl, speaker=None):
             return ""
         feedback.failed(why)
         return f"That didn't work: {why}."
+    if duck.wants_sound_up(text):
+        duck.DUCK.suspend(True)
+        if duck.only_sound_up(text):
+            tl.mark("act_done")
+            tl.note(act="sound up", outcome="other sound left up for this conversation")
+            feedback.done()
+            return "I'll leave the sound up."
     if commands.wants_dictation(text):
         return dictate(mic, settings, vad, tl, speaker)
     if commands.wants_animation(text):
@@ -1616,6 +1627,8 @@ def run():
     speaker._gap = lambda: 0.0
     LIVE = live = ears_api.Live()
     speakers.Hold.recover()
+    duck.DUCK.start()
+    atexit.register(duck.DUCK.stop)
     atexit.register(speakers.shutdown)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     with Mic(cfg) as mic:

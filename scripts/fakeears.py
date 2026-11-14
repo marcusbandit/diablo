@@ -71,7 +71,8 @@ def status():
     out = {"state": "asleep", "listening": True, "trained": False, "model": None,
            "samples": {"pos": 0, "speech": 0, "room": 0},
            "live": {"mic": mic, "speakers": 0.0, "score": 0.0, "peak": 0.0, "threshold": None, "voice_min": None},
-           "wakes": [], "session": None, "places": PLACES}
+           "wakes": [], "session": None, "places": PLACES,
+           "duck": {"on": True, "level": 20, "levels": [10, 15, 20, 30], "active": False, "suspended": False, "held": 0}}
     if SCENE == "untrained":
         out["state"] = "untrained"
     elif SCENE == "names":

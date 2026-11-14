@@ -234,6 +234,10 @@ to ~/.local/state/diablo/autoship.jsonl. A manual ship of a branch stays until t
 (`asleep`, `waking`, `listening`, `thinking`, `speaking`, `untrained`, `training`, `off`), every 15 s and
 on each change, and `off` when they stop.
 
+`POST /v1/ears/duck {"keep_up": bool}` (hub token only) keeps other sound up on the desktop for the
+rest of the spoken conversation, or turns it down again. It goes out as a `duck` event that
+`presence/busy.py` hands to the ears (docs/ears.md, "Other sound goes quiet while he talks").
+
 ## Panels
 
 A section's `panels` lists module ids. `GET /v1/sections/{id}/panel` returns what to show above the

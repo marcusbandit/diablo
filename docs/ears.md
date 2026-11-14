@@ -247,6 +247,39 @@ to the default sink's monitor, the exact audio going out, through `parec`.
 - The setup pauses the players, and throws out any take while the computer played sound,
   asking for it to be paused.
 
+## Other sound goes quiet while he talks
+
+`voice/duck.py` turns every other app's stream down while a conversation is on: from the
+listening chime through thinking and the reply, the whole of speech control and dictation to
+Diablo, and `linger_s` (5 s) after, so a quick next "Diablo" finds it still down. It works per
+stream (PipeWire sink inputs through `pactl`), so his master volume is never touched, and it
+looks again every 0.25 s, so a video or song that starts mid-conversation goes down too.
+Diablo's own voice and chimes (`Diablo`, `pw-play`, `diablo-voice`) are never touched, and
+neither is an app his gvoice rules mark "nothing".
+
+- Afterwards each stream gets back the exact volume it had, only where nobody moved it: a
+  volume he changed meanwhile stays where he put it, also when the level changes mid-conversation.
+- WirePlumber saves each app's last volume. A stream that closes while down leaves its app
+  saved low, so that app is kept as an orphan, and its next stream that starts at the low level
+  is lifted back, which mends the saved volume too. A new stream of an app that is down and
+  opens mid-conversation at the low level is taken as down already, not lowered twice.
+- What is down, and the orphans, are in `~/.local/state/diablo/ducked.json`: a crash gives it
+  all back on the next start, a stop gives it back on the way out, and a `pactl` that does not
+  answer keeps the list to try again. The ears own it, so a hub restart cannot strand anything.
+- The holds above leave the dims to it: a stream it turned down is never dimmed by a hold as
+  well, since two owners of one volume would each give back the other's level. Pauses still
+  happen as before.
+- Settings, in `~/.config/diablo/duck.json` (`{"on": true, "level": 20}`), on the central card's
+  Settings under Ears: the switch and the level (10, 15, 20 or 30 percent of each stream's own
+  volume). `POST /v1/ears/duck` on 127.0.0.1:8758 takes `{"on", "level"}`.
+- "Don't turn it down", "stop ducking", "keep the music up", "leave the sound alone" keep the
+  sound up for the rest of that conversation: no duck, and the holds take nothing either, no
+  pause, no dim, no mute. The ears handle it with no model; a line that asks for more than that
+  keeps the sound up and still goes on to the brain. The brain's
+  `keep_sound_up` tool does the same from any channel (`on` false turns it down again): the hub's
+  `POST /v1/ears/duck` sends a `duck` event, and `presence/busy.py` hands it to the ears. Asked
+  between conversations, it holds for the next one if that starts within 10 minutes.
+
 ## Setup, in the desktop app
 
 `deploy/ears-install.sh` installs openWakeWord into `.venv-voice`, the `diablo-ears` command

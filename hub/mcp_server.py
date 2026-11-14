@@ -43,6 +43,14 @@ EXTRA = [
         },
     },
     {
+        "name": "keep_sound_up",
+        "description": "While Marcus talks with you by voice at his desk, other sound (a video, music) is turned down so you can hear him. Call this when he says not to turn it down, or that he wants to hear the video or music while you talk: it keeps the sound up for the rest of this spoken conversation. on false turns it down again.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"on": {"type": "boolean", "description": "true keeps the sound up (the default), false turns it down again"}},
+        },
+    },
+    {
         "name": "focus_window",
         "description": "Focus a window on Marcus's desktop by its app name or part of its title, when he says focus, switch to or go to an app. It switches workspace if needed and moves his cursor to the window. It never stages, centers or resizes anything.",
         "inputSchema": {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]},
@@ -365,6 +373,15 @@ def open_settings(arguments):
     return "opened Settings at Your voice" if page == "voice" else "opened your Settings"
 
 
+def keep_sound_up(arguments):
+    keep = arguments.get("on")
+    keep = True if keep is None else bool(keep)
+    failed = screen_post("/v1/ears/duck", {"keep_up": keep})
+    if failed:
+        return failed if failed.startswith("could not") else f"not changed: {failed}"
+    return "the sound stays up for the rest of this conversation" if keep else "other sound is turned down again while you talk"
+
+
 def window_verb(verb, arguments):
     """Runs voice/window.py on the desktop box over ssh: the one place focus and stage are done."""
     import shlex
@@ -469,6 +486,8 @@ def call(name, arguments):
         return show_on_screen(arguments)
     if name == "open_settings":
         return open_settings(arguments)
+    if name == "keep_sound_up":
+        return keep_sound_up(arguments)
     if name in ("focus_window", "stage_window"):
         return window_verb(name.split("_")[0], arguments)
     if name == "send_voice":
