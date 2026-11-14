@@ -67,7 +67,7 @@ class DeskFallbackTest(unittest.TestCase):
         self.assertEqual(self.posts[0]["url"], "http://hub.example.com:8755/v1/stt")
         self.assertEqual(self.posts[0]["headers"]["X-Stt-Skip"], "local")
         self.assertEqual(self.posts[0]["content"], b"RIFF0000WAVE")
-        self.assertIn("stt served by hub cloud", logs.output[0])
+        self.assertIn("stt served by hub cloud", logs.output[-1])
         self.assertIn("ConnectError", logs.output[0])
 
     def test_a_hung_gvoice_falls_back(self):
@@ -81,6 +81,30 @@ class DeskFallbackTest(unittest.TestCase):
     def test_a_gvoice_error_falls_back(self):
         self.local = lambda url: answer(500, url)
         self.assertEqual(self.run_it()[1], "hub cloud")
+
+    def test_one_error_answer_does_not_back_off_but_two_do(self):
+        self.local = lambda url: answer(500, url)
+        self.run_it()
+        self.assertFalse(stt._local_down())
+        self.run_it()
+        self.assertTrue(stt._local_down())
+
+    def test_the_timeout_grows_with_the_clip(self):
+        import wave
+        with wave.open(str(self.wav), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(16000)
+            handle.writeframes(b"\0\0" * 16000 * 60)
+        self.run_it()
+        self.assertAlmostEqual(self.gets[0]["timeout"].read, stt.LOCAL_TIMEOUT_S + 6.0)
+
+    def test_the_local_failure_is_logged_even_when_the_hub_fails(self):
+        self.local = self.down
+        self.hub = lambda url: answer(503, url)
+        with self.assertLogs("diablo.stt", "WARNING") as logs, self.assertRaises(httpx.HTTPStatusError):
+            self.run_it()
+        self.assertIn("ConnectError", logs.output[0])
 
     def test_a_missing_token_falls_back(self):
         self.cfg["gvoice_token_path"] = str(Path(self.tmp.name) / "none")

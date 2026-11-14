@@ -17,14 +17,16 @@ Every path that turns Diablo's audio into words, and where its model runs.
 ## The desk's fallback (voice/stt.py)
 
 On a box with `stt_via = "gvoice"`, the default, the request's words come from gvoice, with a
-1 s connect and a 5 s read timeout (`stt_local_timeout_s` in config.toml). Over 372 clips gvoice
-took 0.20 s at the median, 1.65 s at p99 and 3.42 s at worst. A refused connection, a timeout, an
+1 s connect and a read timeout of 5 s (`stt_local_timeout_s` in config.toml) plus a second for every
+10 s of audio. Over 372 clips gvoice took 0.20 s at the median, 1.65 s at p99 and 3.42 s at worst. A refused connection, a timeout, an
 error status, a missing token or a bad answer sends the same wav to the hub's `POST /v1/stt` with
-`X-Stt-Skip: local`, so the hub hands it to Groq with its own key and model rather than to
-diablo-stt on the same GPU. A busy daemon (409 or 503, he is dictating) is asked again twice, 1.2 s
-apart, before the clip goes to the hub. After a failure gvoice is skipped for 30 s, doubling to 5
-minutes while it keeps failing; one served clip resets it. End-of-turn checks, early reads,
-dictation checks and `diablo-ears recheck` never fall back, so they never pay for a cloud call.
+`X-Stt-Skip: local`, so the hub hands it to Groq with its own key and model before diablo-stt on
+the same GPU, which it tries only when Groq fails. A busy daemon (409 or 503, he is dictating) is asked again twice, 1.2 s
+apart, before the clip goes to the hub. A refused connection, a timeout or a missing token skips
+gvoice for 30 s, doubling to 5 minutes while it keeps failing; an error answer or a bad body does
+the same only the second time in a row. One served clip resets it. End-of-turn checks, early reads,
+spoken dictation, voice training, dictation checks and `diablo-ears recheck` never fall back, so
+they never pay for a cloud call.
 
 Each request logs one line from `diablo.stt`: `stt served by local in 0.24s`, or as a warning
 `stt served by hub cloud in 0.62s, local failed (ConnectError: ...)`. The turn's timeline in
@@ -51,8 +53,8 @@ in the background so neither waits on a sleeping banditbox; `healthy` is null un
 check. The POST connects within 2 s, so a box that fell asleep inside the cache window is skipped
 quickly.
 
-`POST /v1/stt` takes `X-Stt-Skip`, a comma list of backend names to leave out for that clip, only
-while another backend remains.
+`POST /v1/stt` takes `X-Stt-Skip`, a comma list of backend names to try last for that clip, and
+answers with the backend that served it.
 
 A new tier, such as a smaller model on nemurenai, is settings only: add its name to
 `transcription.backends` and set its keys.

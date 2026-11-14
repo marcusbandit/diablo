@@ -196,13 +196,18 @@ def _post(b, data, filename):
     return str(body.get("text", "")).strip(), _language(body.get("language")), model
 
 
-def transcribe(data, filename, skip=()):
-    """skip names backends the caller already knows are out, the desk's own Whisper after gvoice
-    failed; they are left out only while another backend remains."""
+def transcribe(data, filename):
+    text, language, _ = transcribe_from(data, filename)
+    return text, language
+
+
+def transcribe_from(data, filename, skip=()):
+    """(text, language, backend). skip names backends the caller already knows are likely out,
+    the desk's own Whisper after gvoice failed; they are tried last instead of first."""
     skipped = []
     empty = None
     backends = configured()
-    backends = [b for b in backends if b["name"] not in skip] or backends
+    backends = [b for b in backends if b["name"] not in skip] + [b for b in backends if b["name"] in skip]
     for b in backends:
         if not healthy(b):
             skipped.append(f"{b['name']} unhealthy")
@@ -236,7 +241,7 @@ def _done(b, text, language, model, took, skipped):
         _last.update(backend=b["name"], at=time.time())
     note = f", after {'; '.join(skipped)}" if skipped else ""
     log.info("stt served by %s (%s) in %.2fs%s", b["name"], model, took, note)
-    return text, language
+    return text, language, b["name"]
 
 
 def _known(b):
@@ -272,11 +277,6 @@ def _view(wait):
             for b in backends]
     first = next((row["name"] for row in rows if row["healthy"]), "")
     return rows, first, order(values)
-
-
-def last_backend():
-    with _lock:
-        return _last["backend"]
 
 
 def active():

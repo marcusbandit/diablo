@@ -52,21 +52,22 @@ def transcribe_file(path, cfg, fallback=True):
 def transcribe(path, cfg, fallback=True):
     """(words, path) for a wav. stt_via gvoice asks the dictation daemon on this box, and when it
     fails, with fallback, sends the clip to the hub with local skipped, so Groq takes it. stt_via
-    hub always sends it to the hub, which tries diablo-stt and then Groq. path names
-    who transcribed it: local, or hub plus the hub's backend."""
+    hub always sends it to the hub, which tries diablo-stt and then Groq. path names who
+    transcribed it: local, or hub plus the hub's backend."""
     if str(cfg.get("stt_via") or "gvoice").strip().lower() == "hub":
-        text, backend = transcribe_via_hub(path, cfg, with_backend=True)
-        return text, f"hub {backend or 'unknown'}"
+        text, backend = transcribe_via_hub(path, cfg)
+        return text, f"hub {backend}"
     started = time.monotonic()
-    skipped = _local_down()
-    if skipped and not fallback:
-        raise httpx.ConnectError("gvoice is backed off after a failure")
-    if not skipped:
+    if _local_down():
+        if not fallback:
+            raise httpx.ConnectError("gvoice is backed off after failing")
+        reason = "local backed off"
+    else:
         try:
             text = _gvoice(path, cfg)
         except (httpx.HTTPError, OSError, ValueError) as error:
             if not isinstance(error, Busy):
-                _local_failed()
+                _local_failed(not isinstance(error, (httpx.HTTPStatusError, ValueError)))
             if not fallback:
                 raise
             reason = f"local failed ({type(error).__name__}: {error})"
@@ -75,28 +76,35 @@ def transcribe(path, cfg, fallback=True):
             if fallback:
                 log.info("stt served by local in %.2fs", time.monotonic() - started)
             return text, "local"
-    else:
-        reason = "local backed off"
-    text, backend = transcribe_via_hub(path, cfg, with_backend=True, skip="local")
-    log.warning("stt served by hub %s in %.2fs, %s", backend or "unknown", time.monotonic() - started, reason)
-    return text, f"hub {backend or 'unknown'}"
+    log.warning("stt %s, asking the hub", reason)
+    text, backend = transcribe_via_hub(path, cfg, skip="local")
+    log.warning("stt served by hub %s in %.2fs, %s", backend, time.monotonic() - started, reason)
+    return text, f"hub {backend}"
+
+
+def local_timeout(path, cfg):
+    """The read timeout for gvoice: stt_local_timeout_s plus a second for every 10 s of audio,
+    so a long clip is not cut off. gvoice runs 13 to 70 times faster than real time."""
+    try:
+        base = float(cfg.get("stt_local_timeout_s") or LOCAL_TIMEOUT_S)
+    except (TypeError, ValueError):
+        base = LOCAL_TIMEOUT_S
+    try:
+        with wave.open(str(path), "rb") as handle:
+            seconds = handle.getnframes() / float(handle.getframerate() or 1)
+    except (OSError, EOFError, wave.Error):
+        seconds = 0.0
+    return base + seconds / 10.0
 
 
 def _gvoice(path, cfg):
     token = Path(cfg["gvoice_token_path"]).read_text().strip()
     base = cfg["gvoice_base"].rstrip("/")
-    try:
-        read_s = float(cfg.get("stt_local_timeout_s") or LOCAL_TIMEOUT_S)
-    except (TypeError, ValueError):
-        read_s = LOCAL_TIMEOUT_S
+    timeout = httpx.Timeout(local_timeout(path, cfg), connect=LOCAL_CONNECT_S)
     last_error = None
     for attempt in range(3):
         try:
-            response = httpx.get(
-                f"{base}/file/{path}",
-                headers={"X-Gvoice-Token": token},
-                timeout=httpx.Timeout(read_s, connect=LOCAL_CONNECT_S),
-            )
+            response = httpx.get(f"{base}/file/{path}", headers={"X-Gvoice-Token": token}, timeout=timeout)
             if response.status_code in BUSY:
                 raise Busy(f"daemon busy: {response.status_code}")
             response.raise_for_status()
@@ -114,11 +122,14 @@ def _local_down():
         return time.monotonic() < _down["until"]
 
 
-def _local_failed():
+def _local_failed(hard):
+    """A refused connection, a timeout or a missing token backs gvoice off at once; an error
+    answer or a bad body only when it happens twice in a row, so one bad clip does not."""
     with _down_lock:
         _down["fails"] += 1
-        wait = min(BACKOFF_START_S * 2 ** (_down["fails"] - 1), BACKOFF_MAX_S)
-        _down["until"] = time.monotonic() + wait
+        if hard or _down["fails"] >= 2:
+            wait = min(BACKOFF_START_S * 2 ** (_down["fails"] - 1), BACKOFF_MAX_S)
+            _down["until"] = time.monotonic() + wait
 
 
 def _local_served():
@@ -126,7 +137,8 @@ def _local_served():
         _down.update(until=0.0, fails=0)
 
 
-def transcribe_via_hub(path, cfg, with_backend=False, skip=""):
+def transcribe_via_hub(path, cfg, skip=""):
+    """(words, backend) from the hub's POST /v1/stt. skip names backends for the hub to try last."""
     data = Path(path).read_bytes()
     headers = {"X-Diablo-Token": cfg.get("hub_token", ""), "Content-Type": "audio/wav",
                "X-Filename": Path(path).name}
@@ -147,8 +159,7 @@ def transcribe_via_hub(path, cfg, with_backend=False, skip=""):
             continue
         response.raise_for_status()
         body = response.json()
-        text = str(body.get("text", "")).strip()
-        return (text, str(body.get("backend") or "")) if with_backend else text
+        return str(body.get("text", "")).strip(), str(body.get("backend") or "unknown")
 
 
 def dictation_status(cfg, timeout=1.0):
