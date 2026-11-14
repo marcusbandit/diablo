@@ -62,7 +62,7 @@ ShellRoot {
 
     // For scripts/presence-shots.sh: a fixed cursor ("x,y" in global coordinates) instead of
     // asking Hyprland, and no hub feed, so a test instance never moves or reads anything real.
-    // A path instead of "x,y" is a file holding "x,y", read again whenever it changes, so a
+    // A path instead of "x,y" is a file holding "x,y", read on every tick while he is up, so a
     // script can move a pretend cursor without touching the real one.
     readonly property string fixedCursor: Quickshell.env("DIABLO_PRESENCE_CURSOR") ?? ""
     readonly property bool cursorFromFile: root.fixedCursor.startsWith("/")
@@ -75,11 +75,8 @@ ShellRoot {
         printErrors: false
         onFileChanged: cursorFile.reload()
         onLoaded: {
-            const xy = cursorFile.text().trim().split(",");
-            if (xy.length === 2 && isFinite(Number(xy[0])) && isFinite(Number(xy[1])) && xy[1] !== "") {
-                root.cursor = Qt.point(Number(xy[0]), Number(xy[1]));
-                root.answered();
-            }
+            if (root.up)
+                root.fixCursor(cursorFile.text());
         }
     }
     readonly property bool testRun: (Quickshell.env("DIABLO_PRESENCE_TEST") ?? "") !== ""
@@ -465,6 +462,15 @@ ShellRoot {
         }
     }
 
+    // A test's cursor, "x,y"; anything else is ignored.
+    function fixCursor(text: string) {
+        const p = Place.parsePoint(text);
+        if (!p)
+            return;
+        root.cursor = Qt.point(p.x, p.y);
+        root.answered();
+    }
+
     // A fresh cursor: the first one after appearing is where he starts.
     function answered() {
         if (root.freshWake) {
@@ -487,12 +493,12 @@ ShellRoot {
         triggeredOnStart: true
         running: root.up
         onTriggered: {
-            if (root.cursorFromFile)
+            if (root.cursorFromFile) {
+                cursorFile.reload();
                 return;
+            }
             if (root.fixedCursor !== "") {
-                const xy = root.fixedCursor.split(",");
-                root.cursor = Qt.point(Number(xy[0]), Number(xy[1]));
-                root.answered();
+                root.fixCursor(root.fixedCursor);
                 return;
             }
             if (!hypr.connected)
@@ -510,7 +516,7 @@ ShellRoot {
         property point anchor: Qt.point(-1, -1)
         // The pointer is on a card or heading into it: the orb and the card hold still.
         property bool held: false
-        // The cursor's last tenth of a second, for which way it is heading.
+        // The cursor's last 120 ms, for which way and how fast it is heading.
         property var trail: []
 
         screen: root.screenAt(follow.anchor)
@@ -599,7 +605,7 @@ ShellRoot {
             const sx = follow.screen?.x ?? 0, sy = follow.screen?.y ?? 0;
             const here = { x: root.cursor.x - sx, y: root.cursor.y - sy };
             const from = { x: trail[0].x - sx, y: trail[0].y - sy };
-            const reach = Place.reaching(here, from, { x: cards.x, y: cards.y, w: cards.width, h: cards.height });
+            const reach = Place.reaching(here, from, t - trail[0].t, { x: cards.x, y: cards.y, w: cards.width, h: cards.height });
             if (reach !== null)
                 follow.held = reach;
             if (!follow.held)
@@ -837,6 +843,9 @@ ShellRoot {
         // them after him.
         Item {
             id: cards
+
+            // Behind him, so a card swinging round to his other side passes behind the orb.
+            z: -0.5
 
             readonly property var spot: Place.cardRect({ x: group.x, y: group.y, w: group.width, h: group.height },
                 { w: cards.width, h: Math.max(1, cardColumn.implicitHeight) }, { w: follow.width, h: follow.height },

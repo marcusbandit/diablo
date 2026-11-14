@@ -34,13 +34,16 @@ function panelRect(screen, edge) {
     return { x: Math.round((screen.w - w) / 2), y: Math.round((screen.h - h) / 2), w: Math.round(w), h: Math.round(h) };
 }
 
-// Whether the pointer is reaching for a card: on it (or within `margin` of it), or travelling
-// towards it from close by, its last stretch of travel (from `from` to `cursor`) pointing into
-// it give or take 12 degrees. true holds the card and orb still so the card can be read and
-// clicked; false lets them follow; null, for a pointer at rest, keeps whatever they were doing.
-function reaching(cursor, from, rect, margin, range) {
+// Whether the pointer is reaching for a card: on it (or within `margin` of it), or closing in on
+// it, its last stretch of travel (from `from` to `cursor`, over `ms` milliseconds) pointing into
+// it give or take 12 degrees, from within `range`, and slower than `fast` px/s. A quicker stroke
+// is the pointer going somewhere, not homing in on a card beside it. true holds the card and
+// orb still so the card can be read and clicked; false lets them follow; null, for a pointer
+// at rest, keeps whatever they were doing.
+function reaching(cursor, from, ms, rect, margin, range, fast) {
     margin = margin === undefined ? 16 : margin;
     range = range === undefined ? 360 : range;
+    fast = fast === undefined ? 900 : fast;
     if (!rect || rect.w <= 0 || rect.h <= 0)
         return false;
     const r = { x: rect.x - margin, y: rect.y - margin, w: rect.w + 2 * margin, h: rect.h + 2 * margin };
@@ -48,8 +51,10 @@ function reaching(cursor, from, rect, margin, range) {
         return true;
     const dx = cursor.x - from.x, dy = cursor.y - from.y;
     const len = Math.sqrt(dx * dx + dy * dy);
-    if (len < 4)
+    if (len < 3)
         return null;
+    if (ms > 0 && len / ms * 1000 > fast)
+        return false;
     const spread = 12 * Math.PI / 180;
     const angles = [0, -spread, spread];
     for (let i = 0; i < angles.length; i++) {
@@ -59,6 +64,15 @@ function reaching(cursor, from, rect, margin, range) {
             return true;
     }
     return false;
+}
+
+// "x,y" as a point, or null for anything else.
+function parsePoint(text) {
+    const parts = String(text).trim().split(",");
+    if (parts.length !== 2 || parts[0].trim() === "" || parts[1].trim() === "")
+        return null;
+    const x = Number(parts[0]), y = Number(parts[1]);
+    return isFinite(x) && isFinite(y) ? { x: x, y: y } : null;
 }
 
 // How far along a ray from p in direction d it meets the rect; null when it misses.

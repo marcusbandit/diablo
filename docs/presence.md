@@ -17,10 +17,10 @@ A card is never placed at the cursor. It opens next to the orb, below it or abov
 screen runs out, lined up with his side, and scales up from the point nearest him
 (`presence/place.js`, `cardRect`). While a card is up the orb is up too, holding it out with his
 proud face, and he follows the cursor exactly as he does alone, the card swinging after him on a
-softer glide. The two hold still only while the pointer is on the card or heading into it
-(`reaching`: its last tenth of a second of travel points at the card, give or take 12 degrees,
-from within 360 px), so a card can be read and clicked; heading anywhere else lets them follow
-again. A page in a card is moved with it every frame while it glides.
+softer glide. The two hold still only while the pointer is on the card or closing in on it
+(`reaching`: its last 120 ms of travel points at the card, give or take 12 degrees, from within
+360 px, slower than 900 px/s), so a card can be read and clicked. A quicker stroke, or one
+heading anywhere else, lets them follow. A page in a card is moved with it every frame while it glides.
 
 `node --test tests/presence/place.test.mjs` checks the placement; CI runs it.
 `scripts/presence-shots.sh` draws every scene into `captures/presence/`: by default offscreen
@@ -29,7 +29,7 @@ works with the screen locked; CI runs it too and keeps the PNGs as an artifact).
 on the real compositor instead: a throwaway Quickshell instance with its own state dir, a fixed
 cursor (`DIABLO_PRESENCE_CURSOR`, "x,y") and no hub feed (`DIABLO_PRESENCE_TEST`), so it never
 moves the pointer or reads anything real. `DIABLO_PRESENCE_CURSOR` may also be the path of a file
-holding "x,y", read again on every change, so a script can move a pretend cursor to record the
+holding "x,y", read on every tick while he is up, so a script can move a pretend cursor to record the
 orb following it. The components stay free of Quickshell imports so the offscreen
 preview can load them; what needs Quickshell lives in `shell.qml` or a file loaded on demand
 (`CardActions.qml`).

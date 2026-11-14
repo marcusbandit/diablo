@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const source = readFileSync(new URL("../../presence/place.js", import.meta.url), "utf8").replace(/^\.pragma library\s*$/m, "");
-const place = new Function(`${source}; return { cardRect, panelRect, reaching, nearestRect };`)();
+const place = new Function(`${source}; return { cardRect, panelRect, reaching, parsePoint, nearestRect };`)();
 
 const screen = { w: 2560, h: 1440 };
 const card = { w: 300, h: 120 };
@@ -64,41 +64,63 @@ test("the central card sits in the middle and fits the screen", () => {
     assert.ok(small.w <= 776 && small.h <= 476);
 });
 
+// A stroke of `d` over 120 ms: 20 px is about 170 px/s, a slow approach.
+const T = 120;
+
 test("a pointer on its card is reaching for it", () => {
     const card = { x: 826, y: 536, w: 300, h: 120 };
-    assert.equal(place.reaching({ x: 900, y: 560 }, { x: 900, y: 560 }, card), true, "resting on it");
-    assert.equal(place.reaching({ x: 815, y: 530 }, { x: 815, y: 530 }, card), true, "just off its corner");
+    assert.equal(place.reaching({ x: 900, y: 560 }, { x: 900, y: 560 }, T, card), true, "resting on it");
+    assert.equal(place.reaching({ x: 815, y: 530 }, { x: 815, y: 530 }, T, card), true, "just off its corner");
+    assert.equal(place.reaching({ x: 900, y: 560 }, { x: 600, y: 560 }, T, card), true, "even passing over it fast");
 });
 
 test("a pointer at rest beside the card changes nothing", () => {
     const card = { x: 826, y: 536, w: 300, h: 120 };
-    assert.equal(place.reaching({ x: 800, y: 400 }, { x: 800, y: 400 }, card), null);
-    assert.equal(place.reaching({ x: 800, y: 400 }, { x: 801, y: 402 }, card), null, "a jitter of a pixel or two");
+    assert.equal(place.reaching({ x: 800, y: 400 }, { x: 800, y: 400 }, T, card), null);
+    assert.equal(place.reaching({ x: 800, y: 400 }, { x: 801, y: 402 }, T, card), null, "a jitter of a pixel or two");
 });
 
-test("heading into the card holds it, heading anywhere else lets it follow", () => {
+test("closing in on the card holds it, heading anywhere else lets it follow", () => {
     const card = { x: 826, y: 536, w: 300, h: 120 };
     const at = { x: 800, y: 400 };
     const from = (dx, dy) => ({ x: at.x - dx, y: at.y - dy });
-    assert.equal(place.reaching(at, from(0, 20), card), true, "straight down lands on its near corner, give or take the margin");
-    assert.equal(place.reaching({ x: 700, y: 400 }, { x: 700, y: 380 }, card), false, "straight down well left of it misses");
-    assert.equal(place.reaching(at, from(10, 20), card), true, "down and to the right, into it");
-    assert.equal(place.reaching(at, from(20, 10), card), true, "a shallower line still lands on it");
-    assert.equal(place.reaching(at, from(20, 0), card), false, "straight right passes over it");
-    assert.equal(place.reaching(at, from(0, -20), card), false, "up, away from it");
-    assert.equal(place.reaching(at, from(-20, 0), card), false, "left, away from it");
-    assert.equal(place.reaching(at, from(-10, 20), card), false, "down and to the left, past it");
+    assert.equal(place.reaching(at, from(10, 20), T, card), true, "down and to the right, into it");
+    assert.equal(place.reaching(at, from(20, 10), T, card), true, "a shallower line still lands on it");
+    assert.equal(place.reaching(at, from(0, 20), T, card), true, "slowly straight down lands on its near corner");
+    assert.equal(place.reaching({ x: 700, y: 400 }, { x: 700, y: 380 }, T, card), false, "straight down well left of it misses");
+    assert.equal(place.reaching(at, from(20, 0), T, card), false, "straight right passes over it");
+    assert.equal(place.reaching(at, from(0, -20), T, card), false, "up, away from it");
+    assert.equal(place.reaching(at, from(-20, 0), T, card), false, "left, away from it");
+    assert.equal(place.reaching(at, from(-10, 20), T, card), false, "down and to the left, past it");
+});
+
+test("a quick stroke towards the card is going somewhere else, so they follow", () => {
+    const card = { x: 826, y: 536, w: 300, h: 120 };
+    const at = { x: 800, y: 400 };
+    assert.equal(place.reaching(at, { x: 800, y: 260 }, T, card), false, "straight down at over 1000 px/s");
+    assert.equal(place.reaching(at, { x: 740, y: 280 }, T, card), false, "down and right, fast");
+    assert.equal(place.reaching(at, { x: 770, y: 340 }, T, card), true, "the same line slowing down");
 });
 
 test("a card too far down the line is not being reached for", () => {
     const card = { x: 826, y: 1200, w: 300, h: 120 };
-    assert.equal(place.reaching({ x: 900, y: 400 }, { x: 900, y: 380 }, card), false);
-    assert.equal(place.reaching({ x: 900, y: 900 }, { x: 900, y: 880 }, card), true);
+    assert.equal(place.reaching({ x: 900, y: 400 }, { x: 900, y: 380 }, T, card), false);
+    assert.equal(place.reaching({ x: 900, y: 900 }, { x: 900, y: 880 }, T, card), true);
 });
 
 test("a pointer past the card and leaving it lets it follow", () => {
     const card = { x: 826, y: 536, w: 300, h: 120 };
-    assert.equal(place.reaching({ x: 900, y: 700 }, { x: 900, y: 680 }, card), false);
+    assert.equal(place.reaching({ x: 900, y: 700 }, { x: 900, y: 680 }, T, card), false);
+});
+
+test("a cursor written as x,y reads only when both halves are numbers", () => {
+    assert.deepEqual(place.parsePoint("1200, 340"), { x: 1200, y: 340 });
+    assert.deepEqual(place.parsePoint("-5,7.5\n"), { x: -5, y: 7.5 });
+    assert.equal(place.parsePoint(",500"), null);
+    assert.equal(place.parsePoint("500,"), null);
+    assert.equal(place.parsePoint("foo"), null);
+    assert.equal(place.parsePoint("1,2,3"), null);
+    assert.equal(place.parsePoint("a,b"), null);
 });
 
 test("a point between monitors goes to the nearest one, not the first", () => {
