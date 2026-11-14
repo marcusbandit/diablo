@@ -885,6 +885,27 @@ def search(q: str = "", limit: int = 200, thread: str = "", _: None = Depends(re
     return {"messages": [message_out(m) for m in rows], "now": time.time()}
 
 
+HISTORY_PAGE = 60
+
+
+def history_out(m):
+    meta = m["meta"] if isinstance(m["meta"], dict) else {}
+    return {"id": m["id"], "ts": m["ts"], "role": m["role"], "text": m["text"], "channel": m["source"] or "",
+            "spoken": m["source"] == "voice" or bool(meta.get("voice")), "section": meta.get("section") or ""}
+
+
+@app.get("/v1/history")
+def history(before: int = 0, limit: int = HISTORY_PAGE, q: str = "", channel: str = "", _: None = Depends(require_token)):
+    """Everything he said on every channel and every reply, one page at a time, oldest first
+    within the page. `before` is the oldest id already shown; `more` says older ones remain."""
+    limit = max(1, min(limit, 200))
+    sources = tuple(dict.fromkeys(x.strip() for x in channel.split(",") if x.strip()))[:12]
+    rows = db.history(max(0, before), limit + 1, q.split()[:12], sources)
+    more = len(rows) > limit
+    return {"messages": [history_out(m) for m in reversed(rows[:limit])], "more": more,
+            "channels": db.history_channels(), "now": time.time()}
+
+
 @app.post("/v1/threads")
 def new_thread(body: ThreadIn, _: None = Depends(require_token)):
     if body.split_from:

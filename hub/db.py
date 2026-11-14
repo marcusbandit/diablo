@@ -918,16 +918,49 @@ def find_messages(words, limit=200, main_sources=(), thread=None):
     if thread:
         where += f" AND json_valid(meta) AND {IN_THREAD}"
         args.append(thread)
-    global _folding
     with _lock:
-        if _folding is not _conn:
-            _conn.create_function("hub_fold", 1, _fold, deterministic=True)
-            _folding = _conn
+        _folded()
         rows = _conn.execute(
             f"SELECT id, ts, source, role, text, meta FROM messages WHERE {where} ORDER BY id DESC LIMIT ?",
             (*args, limit),
         ).fetchall()
     return _message_rows(rows)
+
+
+def _folded():
+    """hub_fold on the open connection, registered once per connection. Call it under _lock."""
+    global _folding
+    if _folding is not _conn:
+        _conn.create_function("hub_fold", 1, _fold, deterministic=True)
+        _folding = _conn
+
+
+NOT_WITHDRAWN = "(meta IS NULL OR NOT json_valid(meta) OR json_extract(meta, '$.superseded_by') IS NULL)"
+
+
+def history(before=0, limit=60, words=(), sources=()):
+    """Every message on every channel, newest first, below id `before` (0 means the newest).
+    Lines an edit withdrew stay out. `words` must all appear, any case; `sources` keeps those channels."""
+    words = [w.casefold() for w in words if w.strip()]
+    where = NOT_WITHDRAWN + " AND (? <= 0 OR id < ?)" + "".join(" AND instr(hub_fold(text), ?) > 0" for _ in words)
+    args = [before, before, *words]
+    if sources:
+        where += f" AND source IN ({','.join('?' for _ in sources)})"
+        args.extend(sources)
+    with _lock:
+        _folded()
+        rows = _conn.execute(
+            f"SELECT id, ts, source, role, text, meta FROM messages WHERE {where} ORDER BY id DESC LIMIT ?",
+            (*args, limit),
+        ).fetchall()
+    return _message_rows(rows)
+
+
+def history_channels():
+    """How many messages each channel holds, the withdrawn ones left out."""
+    with _lock:
+        rows = _conn.execute(f"SELECT source, COUNT(*) FROM messages WHERE {NOT_WITHDRAWN} GROUP BY source").fetchall()
+    return {row[0] or "": row[1] for row in rows}
 
 
 def main_messages(after=0, limit=40, main_sources=(), untagged=False, before=0):

@@ -18,6 +18,16 @@ class TestIntent(unittest.TestCase):
                      "Could you come to the middle?", "go big"):
             self.assertEqual(panel.intent(line, SHUT, []), "open", line)
 
+    def test_opening_the_history(self):
+        for line in ("Show my history", "Diablo, open the history.", "open history please", "Can you show me our conversation history?",
+                     "pull up the chat history", "show me everything I've said", "Open the whole history", "go to history"):
+            self.assertEqual(panel.intent(line, SHUT, []), "history", line)
+            self.assertEqual(panel.intent(line, OPEN, [CARD]), "history", line)
+
+    def test_other_histories_are_left_alone(self):
+        for line in ("Show my browser history", "open the history of Rome", "clear my history", "show the history tab in Firefox"):
+            self.assertIsNone(panel.intent(line, SHUT, []), line)
+
     def test_enlarging_a_card_needs_one(self):
         for line in ("Enlarge this", "Can you enlarge it?", "make it bigger", "Expand this.", "zoom in on that", "show it big please"):
             self.assertEqual(panel.intent(line, SHUT, [CARD]), "enlarge", line)
@@ -51,6 +61,11 @@ class TestApply(unittest.TestCase):
         state = json.loads(panel.FILE.read_text())
         self.assertTrue(state["open"])
         self.assertEqual(state["view"], "settings")
+
+    def test_history_opens_on_its_page(self):
+        self.assertEqual(panel.apply("history"), "")
+        state = panel.read()
+        self.assertEqual((state["open"], state["view"]), (True, "history"))
 
     def test_enlarge_moves_the_newest_card_in(self):
         presence.show("Weather", "7°", ["cloudy"], ttl=60)

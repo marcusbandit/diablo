@@ -1,8 +1,8 @@
 """The central card: Diablo opened up in the middle of the screen (presence/Panel.qml).
 
-Quick actions, no model turn: "open up" or "show your settings" opens it on Settings, "enlarge
-this" moves the newest card into it, "close" or "make it small again" puts him back by the
-cursor. presence/shell.qml reads panel.json and writes it back when the card is closed there.
+Quick actions, no model turn: "open up" or "show your settings" opens it on Settings, "show my
+history" on History, "enlarge this" moves the newest card into it, "close" or "make it small
+again" puts him back by the cursor. presence/shell.qml reads panel.json and writes it back when the card is closed there.
 """
 
 import json
@@ -20,6 +20,13 @@ OPEN = re.compile(
     r"|show\s+(?:me\s+)?(?:your|the)\s+settings|come\s+to\s+the\s+(?:middle|centre|center)|go\s+big)" + _TAIL,
     re.I,
 )
+HISTORY = re.compile(
+    _LEAD + r"(?:(?:open|show|bring\s+up|pull\s+up|go\s+to)\s+(?:me\s+)?(?:up\s+)?(?:my|our|the|your)?\s*"
+    r"(?:(?:whole|full|chat|conversation|message)\s+)?(?:history|chat\s+log|conversation\s+log)"
+    r"|(?:open|show)\s+(?:me\s+)?(?:everything|all)\s+(?:i(?:'ve|\s+have)?|we(?:'ve|\s+have)?)\s+(?:said|talked\s+about))"
+    r"(?:\s+(?:with\s+you|with\s+diablo|to\s+you))?" + _TAIL,
+    re.I,
+)
 ENLARGE = re.compile(
     _LEAD + r"(?:enlarge|expand|zoom\s+in\s+on|blow\s+up|make\s+(?:it|this|that)\s+(?:big|bigger|larger)"
     r"|show\s+(?:it|this|that)\s+(?:big|bigger|larger))(?:\s+(?:it|this|that|the\s+card))?" + _TAIL,
@@ -33,12 +40,14 @@ CLOSE = re.compile(
 
 
 def intent(text, state=None, cards=None):
-    """open, enlarge or close for a line that asks for one, else None. "Close it" and "make it
-    bigger" mean the window to every other command, so they only count here while the central
-    card is open or a card is on screen. "Expand" alone opens him up; "expand it" enlarges."""
+    """open, history, enlarge or close for a line that asks for one, else None. "Close it" and
+    "make it bigger" mean the window to every other command, so they only count here while the
+    central card is open or a card is on screen. "Expand" alone opens him up; "expand it" enlarges."""
     text = str(text or "")
     state = read() if state is None else state
     cards = presence._read() if cards is None else cards
+    if HISTORY.match(text):
+        return "history"
     if ENLARGE.match(text) and not re.search(r"\bexpand(?:\s+yourself)?\W*$", text, re.I):
         return "enlarge" if cards or state.get("card") else None
     if OPEN.match(text):
@@ -77,6 +86,9 @@ def apply(kind):
     """Does it and returns his words: short, the screen shows the rest."""
     if kind == "open":
         write(open=True, view="settings")
+        return ""
+    if kind == "history":
+        write(open=True, view="history")
         return ""
     if kind == "enlarge":
         card = newest_card()

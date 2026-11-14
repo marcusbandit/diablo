@@ -6,7 +6,7 @@ import "../place.js" as Place
 // Diablo's pieces drawn offscreen, for scripts/presence-shots.sh: no compositor, no layer
 // shell, no real state. Each scene lays the orb, cards and central card out the way shell.qml
 // does (the same Place geometry), grabs the window to a PNG and quits.
-//     QT_QPA_PLATFORM=offscreen qml presence/preview/Preview.qml -- SCENE OUT.png FACES_DIR [EARS_URL]
+//     QT_QPA_PLATFORM=offscreen qml presence/preview/Preview.qml -- SCENE OUT.png FACES_DIR [EARS_URL] [HUB_URL]
 Window {
     id: win
 
@@ -15,6 +15,7 @@ Window {
     readonly property string out: args[1] ?? "preview.png"
     readonly property string faces: args[2] ?? ""
     readonly property string ears: args[3] ?? "http://127.0.0.1:18758"
+    readonly property string hub: args[4] ?? "http://127.0.0.1:18755"
 
     readonly property bool panelScene: scene.startsWith("panel")
     width: panelScene ? 1280 : 760
@@ -45,6 +46,8 @@ Window {
             { id: "b", title: "Diablo", big: "", lines: ["Here is the weather for today, sir."] }] },
         "panel-settings": { mood: "asleep", panel: { view: "settings" } },
         "panel-training": { mood: "listening", panel: { view: "settings" } },
+        "panel-history": { mood: "asleep", panel: { view: "history" } },
+        "panel-history-search": { mood: "asleep", panel: { view: "history", query: "basil" } },
         "panel-now": { mood: "asleep", panel: { view: "now", card: { title: "Weather", big: "7°", lines: ["Cloudy, feels like 4°. Rain from 16:00.", "Tomorrow 4 to 8 degrees, light rain."] } } }
     })
     readonly property var s: scenes[scene] ?? scenes["card-below"]
@@ -160,6 +163,10 @@ Window {
         view: win.s.panel?.view ?? "settings"
         card: win.s.panel?.card ?? null
         earsUrl: win.ears
+        hubUrl: win.hub
+        hubToken: "preview-token"
+        Component.onCompleted: if (win.s.panel?.query)
+            historySearch(win.s.panel.query)
     }
 
     Timer {

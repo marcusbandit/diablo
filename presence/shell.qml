@@ -32,6 +32,10 @@ ShellRoot {
     // How far his mouth runs behind his voice, tuned by eye in presence/tuner.qml.
     readonly property string configDir: (Quickshell.env("XDG_CONFIG_HOME") || `${Quickshell.env("HOME")}/.config`) + "/diablo"
     property int mouthDelayMs: 0
+    // The hub, for History in the central card: hub_url and hub_token from config.toml, the same
+    // pair busy.py uses. DIABLO_HUB_URL and DIABLO_HUB_TOKEN stand in for them on a test run.
+    property string hubUrl: Quickshell.env("DIABLO_HUB_URL") ?? ""
+    property string hubToken: Quickshell.env("DIABLO_HUB_TOKEN") ?? ""
     property var cards: []
     property real now: Date.now() / 1000
     property var dismissed: ({})
@@ -371,6 +375,24 @@ ShellRoot {
             lipsyncFile.seen = true;
             const ms = Number(root.parse(lipsyncFile.text(), { delay_ms: 0 }).delay_ms);
             root.mouthDelayMs = isFinite(ms) ? Math.max(-400, Math.min(400, Math.round(ms))) : 0;
+        }
+    }
+
+    FileView {
+        id: configFile
+
+        function value(key: string): string {
+            const found = configFile.text().match(new RegExp(`^\\s*${key}\\s*=\\s*["']([^"'\\n]*)["']`, "m"));
+            return found ? found[1] : "";
+        }
+
+        path: root.testRun ? "" : root.configDir + "/config.toml"
+        watchChanges: true
+        printErrors: false
+        onFileChanged: configFile.reload()
+        onLoaded: {
+            root.hubUrl = Quickshell.env("DIABLO_HUB_URL") || configFile.value("hub_url") || "http://diablo-pi:8755";
+            root.hubToken = Quickshell.env("DIABLO_HUB_TOKEN") || configFile.value("hub_token");
         }
     }
 
@@ -778,6 +800,8 @@ ShellRoot {
             card: root.panelState.card ?? null
             followCursor: root.followCursor
             earsUrl: Quickshell.env("DIABLO_EARS_URL") || "http://127.0.0.1:8758"
+            hubUrl: root.hubUrl
+            hubToken: root.hubToken
             focus: root.panelOpen
             Keys.onEscapePressed: root.setPanel({ open: false })
             onCloseRequested: root.setPanel({ open: false })
