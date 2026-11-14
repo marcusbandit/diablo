@@ -15,6 +15,8 @@ WheelHandler {
     readonly property real bottom: Math.max(root.top, root.flick.originY + root.flick.contentHeight - root.flick.height)
     readonly property bool scrolls: root.flick.contentHeight > root.flick.height
     readonly property real target: root.glide.running ? root.glide.to : root.flick.contentY
+    // A wheel or a touchpad moved the content by hand: anything else steering it lets go.
+    signal began
 
     function bound(y: real): real {
         return Math.max(root.top, Math.min(y, root.bottom));
@@ -43,6 +45,7 @@ WheelHandler {
             event.accepted = false;
             return;
         }
+        root.began();
         if (event.phase === Qt.NoScrollPhase) {
             const notches = event.angleDelta.y !== 0 ? event.angleDelta.y / 120 : event.pixelDelta.y / 15;
             root.scrollTo(root.target - notches * root.notch);

@@ -14,8 +14,7 @@ CARD = {"id": "a", "title": "Weather", "big": "7°", "lines": ["cloudy"], "at": 
 
 class TestIntent(unittest.TestCase):
     def test_opening_him_up(self):
-        for line in ("Open up", "Diablo, expand yourself.", "Expand", "Show me your settings", "open your settings please",
-                     "Could you come to the middle?", "go big"):
+        for line in ("Open up", "Diablo, expand yourself.", "Expand", "Could you come to the middle?", "go big"):
             self.assertEqual(panel.intent(line, SHUT, []), "open", line)
 
     def test_opening_the_history(self):
@@ -27,6 +26,18 @@ class TestIntent(unittest.TestCase):
     def test_other_histories_are_left_alone(self):
         for line in ("Show my browser history", "open the history of Rome", "clear my history", "show the history tab in Firefox"):
             self.assertIsNone(panel.intent(line, SHUT, []), line)
+
+    def test_asking_for_his_settings(self):
+        for line in ("Show me your settings", "open your settings please", "Go to your settings.", "Diablo, go to your settings",
+                     "I want to go to your settings", "take me to your settings", "open the settings", "pull up your settings", "open settings",
+                     "Can you bring up your settings?"):
+            self.assertEqual(panel.intent(line, SHUT, []), "settings", line)
+            self.assertEqual(panel.intent(line, OPEN, [CARD]), "settings", line)
+
+    def test_training_his_voice(self):
+        for line in ("Train your voice", "Diablo, teach you my voice.", "retrain your ears", "train your ears again",
+                     "Can you learn my voice?", "teach yourself my voice please", "train the wake word", "retrain you on my voice"):
+            self.assertEqual(panel.intent(line, SHUT, []), "voice", line)
 
     def test_enlarging_a_card_needs_one(self):
         for line in ("Enlarge this", "Can you enlarge it?", "make it bigger", "Expand this.", "zoom in on that", "show it big please"):
@@ -41,7 +52,9 @@ class TestIntent(unittest.TestCase):
 
     def test_other_lines_are_left_alone(self):
         for line in ("Open Spotify", "close the window", "What is the weather?", "enlarge the font in my editor",
-                     "Open up the terminal", "expand the folder"):
+                     "Open up the terminal", "expand the folder", "open the settings in firefox", "go to the settings page of spotify",
+                     "train your voice on this podcast", "teach me your voice", "open my settings", "go to settings",
+                     "go to the settings", "train my voice", "pull up the settings"):
             self.assertIsNone(panel.intent(line, OPEN, [CARD]), line)
 
 
@@ -66,6 +79,18 @@ class TestApply(unittest.TestCase):
         self.assertEqual(panel.apply("history"), "")
         state = panel.read()
         self.assertEqual((state["open"], state["view"]), (True, "history"))
+
+    def test_settings_and_voice_name_the_page(self):
+        presence.show("Weather", "7°", ["cloudy"], ttl=60)
+        panel.apply("enlarge")
+        self.assertEqual(panel.apply("settings"), "")
+        state = panel.read()
+        self.assertEqual((state["open"], state["view"], state["page"]), (True, "settings", "settings"))
+        self.assertEqual(state["card"]["title"], "Weather")
+        panel.apply("voice")
+        self.assertEqual((panel.read()["view"], panel.read()["page"]), ("settings", "voice"))
+        panel.apply("enlarge")
+        self.assertEqual((panel.read()["view"], panel.read()["page"]), ("now", ""))
 
     def test_enlarge_moves_the_newest_card_in(self):
         presence.show("Weather", "7°", ["cloudy"], ttl=60)

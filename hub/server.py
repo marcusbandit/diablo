@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from . import agent, autoship, brains, busy, db, devices, events, files, jev, llm, hue, lockguard, modules, questions, releases, route, sections, selfrestart, standby, stt, t3link, t3threads, tasks, threads, usage, watch
+from . import agent, autoship, brains, busy, db, devices, events, files, jev, llm, hue, lockguard, modules, questions, releases, route, sections, selfrestart, standby, stt, t3link, t3threads, tasks, threads, usage, voicemerge, watch
 from . import settings as app_settings
 from .config import get_config
 
@@ -158,6 +158,10 @@ class ScreenIn(BaseModel):
     html: str = ""
     size: str = "small"
     ttl: float = 0
+
+
+class ScreenOpenIn(BaseModel):
+    page: str = "settings"
 
 
 class EarsReportIn(BaseModel):
@@ -1441,6 +1445,23 @@ async def screen(body: ScreenIn, caller: dict = Depends(require_token)):
     return {"ok": True, "id": card["id"]}
 
 
+SCREEN_PAGES = ("settings", "voice", "history")
+
+
+@app.post("/v1/screen/open")
+async def screen_open(body: ScreenOpenIn, caller: dict = Depends(require_token)):
+    """Opens the central card on Marcus's desktop at one of its pages: "settings", the Settings
+    tab from the top, "voice", Settings at Your voice where he teaches him his voice, or "history",
+    everything said between them. It goes
+    out as a `screen` event with `open`, which presence/busy.py writes into panel.json."""
+    if not caller.get("master"):
+        raise HTTPException(status_code=403, detail="only the hub token may open things on screen")
+    if body.page not in SCREEN_PAGES:
+        raise HTTPException(status_code=400, detail=f"page is one of {', '.join(SCREEN_PAGES)}")
+    publish({"kind": "screen", "open": body.page})
+    return {"ok": True, "page": body.page}
+
+
 def screen_card(body):
     """The card as the desktop gets it, or the reason it cannot be shown."""
     import uuid
@@ -1503,6 +1524,17 @@ async def voice_control(body: ControlIn, caller: dict = Depends(require_token)):
         act = None
     return {"act": act, "jev_ms": (answer or {}).get("ms"), "hub_ms": round((time.time() - started) * 1000),
             "choice": (answer or {}).get("desktop"), "confidence": (answer or {}).get("desktop_confidence")}
+
+
+class MergeIn(BaseModel):
+    turns: list[dict] = []
+
+
+@app.post("/v1/voice/merge")
+async def voice_merge(body: MergeIn, caller: dict = Depends(require_token)):
+    """One spoken reply for a burst of spoken turns: {"turns": [{"heard", "reply"}], oldest first}
+    gives {"say", "via", "ms"}. An empty say means the merge failed; the ears then make their own."""
+    return await voicemerge.merge(body.turns)
 
 
 @app.post("/v1/ears/report")

@@ -17,7 +17,8 @@ Standard library only: the system python runs it, no venv.
 
 It also carries what the brain shows on screen (`screen` events from POST /v1/screen): a small
 card goes into presence.json beside the ears' own cards, a large one opens the central card
-through panel.json, and an HTML page is saved under pages/ for the web view to load.
+through panel.json, and an HTML page is saved under pages/ for the web view to load. An `open`
+event (POST /v1/screen/open) opens the central card on Settings at its page.
 """
 
 import json
@@ -166,19 +167,33 @@ def locked():
     return handle
 
 
+PAGES = ("settings", "voice", "history")
+
+
 def show(event, now=None):
-    """A `screen` event onto the desktop: small into presence.json, large into panel.json."""
+    """A `screen` event onto the desktop: small into presence.json, large into panel.json, an
+    `open` one into panel.json as the Settings page it names, or the History tab."""
+    now = time.time() if now is None else now
+    if event.get("open") is not None:
+        page = event.get("open")
+        if page not in PAGES:
+            return None
+        panel = read_json(STATE / "panel.json", {})
+        if page == "history":
+            write_json(STATE / "panel.json", {**panel, "open": True, "view": "history", "page": "", "at": now})
+        else:
+            write_json(STATE / "panel.json", {**panel, "open": True, "view": "settings", "page": page, "page_at": now, "at": now})
+        return page
     card = dict(event.get("card") or {})
     if not card.get("id"):
         return None
-    now = time.time() if now is None else now
     html = card.pop("html", "") or ""
     if html:
         card["page"] = save_page(str(card["id"]), html)
     card["at"] = now
     if event.get("size") == "large":
         panel = read_json(STATE / "panel.json", {})
-        write_json(STATE / "panel.json", {**panel, "open": True, "view": "now", "card": card, "at": now})
+        write_json(STATE / "panel.json", {**panel, "open": True, "view": "now", "card": card, "page": "", "at": now})
         return "large"
     with locked():
         body = read_json(STATE / "presence.json", {"cards": []})

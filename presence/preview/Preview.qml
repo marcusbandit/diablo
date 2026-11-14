@@ -45,6 +45,7 @@ Window {
         "two-cards": { mood: "speaking", at: [240, 100], cards: [{ id: "a", title: "Weather", big: "7°", lines: ["cloudy, feels like 4°"] },
             { id: "b", title: "Diablo", big: "", lines: ["Here is the weather for today, sir."] }] },
         "panel-settings": { mood: "asleep", panel: { view: "settings" } },
+        "panel-voice": { mood: "asleep", panel: { view: "settings", page: "voice", short: true } },
         "panel-training": { mood: "listening", panel: { view: "settings" } },
         "panel-history": { mood: "asleep", panel: { view: "history" } },
         "panel-history-search": { mood: "asleep", panel: { view: "history", query: "basil" } },
@@ -158,10 +159,12 @@ Window {
         x: win.panelSpot.x
         y: win.panelSpot.y
         width: win.panelSpot.w
-        height: win.panelSpot.h
         style: theme
         view: win.s.panel?.view ?? "settings"
         card: win.s.panel?.card ?? null
+        page: win.s.panel?.page ?? ""
+        pageAt: (win.s.panel?.page ?? "") !== "" ? 1 : 0
+        height: win.s.panel?.short ? 520 : win.panelSpot.h
         earsUrl: win.ears
         hubUrl: win.hub
         hubToken: "preview-token"

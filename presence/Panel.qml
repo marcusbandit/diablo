@@ -11,6 +11,10 @@ Rectangle {
     required property var style
     property string view: "settings"       // "now", "history" or "settings"
     property var card: null                // what "Now" shows: {title, big, lines, page?}
+    // A Settings page asked for from outside: "settings" scrolls to the top, "voice" to Your
+    // voice. pageAt is when it was asked (panel.json's page_at), so asking twice moves it again.
+    property string page: ""
+    property real pageAt: 0
     property bool followCursor: true
     property string earsUrl: "http://127.0.0.1:8758"
     property string hubUrl: ""
@@ -102,6 +106,53 @@ Rectangle {
             if (status === 200)
                 panel.live = reply;
         })
+    }
+
+    function showPage() {
+        if (panel.view !== "settings" || panel.page === "")
+            return;
+        const top = panel.page === "voice" ? voiceTitle.y : 0;
+        const target = Math.max(0, Math.min(top, settingsPage.contentHeight - settingsPage.height));
+        if (Math.abs(target - settingsPage.contentY) < 1)
+            return;
+        pageGlide.stop();
+        pageGlide.to = target;
+        pageGlide.start();
+    }
+
+    // The page is found again while what is above and below it is still arriving from the ears.
+    onPageAtChanged: {
+        if (panel.pageAt <= 0)
+            return;
+        pageSettle.restart();
+        pageHold.restart();
+    }
+    // Scrolling by hand ends it at once: no glide, nothing queued, no settling after.
+    function letGo() {
+        pageHold.stop();
+        pageSettle.stop();
+        pageGlide.stop();
+    }
+    Timer {
+        id: pageSettle
+
+        interval: 60
+        onTriggered: panel.showPage()
+    }
+
+    Timer {
+        id: pageHold
+
+        interval: 2000
+    }
+
+    NumberAnimation {
+        id: pageGlide
+
+        target: settingsPage
+        property: "contentY"
+        duration: 220
+        easing.type: Easing.OutCubic
     }
 
     // Header: his name, the two pages, and a way out.
@@ -286,11 +337,14 @@ Rectangle {
         height: parent.height - y - 20
         visible: panel.view === "settings"
         contentHeight: settingsColumn.implicitHeight + 20
+        onContentHeightChanged: if (pageHold.running) pageSettle.restart()
+        onMovementStarted: panel.letGo()
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
         WheelStep {
             flick: settingsPage
+            onBegan: panel.letGo()
         }
 
         Column {
@@ -369,7 +423,11 @@ Rectangle {
                 hue: panel.style.speaking
             }
 
-            SectionTitle { text: "Your voice" }
+            SectionTitle {
+                id: voiceTitle
+
+                text: "Your voice"
+            }
 
             // How well he knows it, in plain words.
             Text {

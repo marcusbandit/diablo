@@ -16,16 +16,21 @@ Install once: `cp deploy/diablo-presence.service ~/.config/systemd/user/ && syst
 A card is never placed at the cursor. It opens next to the orb, below it or above it when the
 screen runs out, lined up with his side, and scales up from the point nearest him
 (`presence/place.js`, `cardRect`). While a card is up the orb is up too, holding it out with his
-proud face, and the two hold still while the cursor is within reach of them, so a card can be
-read and clicked. Once the cursor is well clear (`shouldRejoin`, 160 px) they glide after it.
+proud face, and he follows the cursor exactly as he does alone, the card swinging after him on a
+softer glide. The two hold still only while the pointer is on the card or closing in on it
+(`reaching`: its last 120 ms of travel points at the card, give or take 12 degrees, from within
+360 px, slower than 900 px/s), so a card can be read and clicked. A quicker stroke, or one
+heading anywhere else, lets them follow. A page in a card is moved with it every frame while it glides.
 
 `node --test tests/presence/place.test.mjs` checks the placement; CI runs it.
 `scripts/presence-shots.sh` draws every scene into `captures/presence/`: by default offscreen
 (`presence/preview/render.py` runs the real components with Qt, no compositor, no window, so it
 works with the screen locked; CI runs it too and keeps the PNGs as an artifact). `--live` shoots
 on the real compositor instead: a throwaway Quickshell instance with its own state dir, a fixed
-cursor (`DIABLO_PRESENCE_CURSOR`) and no hub feed (`DIABLO_PRESENCE_TEST`), so it never moves the
-pointer or reads anything real. The components stay free of Quickshell imports so the offscreen
+cursor (`DIABLO_PRESENCE_CURSOR`, "x,y") and no hub feed (`DIABLO_PRESENCE_TEST`), so it never
+moves the pointer or reads anything real. `DIABLO_PRESENCE_CURSOR` may also be the path of a file
+holding "x,y", read on every tick while he is up, so a script can move a pretend cursor to record the
+orb following it. The components stay free of Quickshell imports so the offscreen
 preview can load them; what needs Quickshell lives in `shell.qml` or a file loaded on demand
 (`CardActions.qml`).
 
@@ -47,11 +52,21 @@ close button or a click anywhere outside puts him back. Three pages:
   your voice, and the voice setup itself, driven through the ears' control panel on
   `127.0.0.1:8758` (`voice/ears_api.py`).
 
-The spoken quick actions (`voice/panel.py`, no model turn): "open up", "expand", "show your
-settings" open it; "show my history", "open the history" open it on History; "enlarge this", "make it bigger" enlarge the newest card; "close", "shrink",
-"make it small again" close it. "Close it" and "make it bigger" also mean a window, so they only
-count while the central card is open or a card is on screen. The state is `panel.json`
-(`{open, view, card, at}`) in the same state dir; the ears and `shell.qml` both write it.
+The spoken quick actions (`voice/panel.py`, no model turn): "open up", "expand" open it;
+"go to your settings", "open your settings", "take me to your settings" open it on Settings;
+"train your voice", "teach you my voice", "retrain your ears" open it on Settings at Your voice;
+"show my history", "open the history" open it on History;
+"enlarge this", "make it bigger" enlarge the newest card; "close", "shrink", "make it small
+again" close it. "Close it" and "make it bigger" also mean a window, so they only count while the
+central card is open or a card is on screen. The state is `panel.json` (`{open, view, card,
+page, page_at, at}`) in the same state dir; the ears, `busy.py` and `shell.qml` all write it.
+`page` asks Settings to glide to the top (`settings`) or to Your voice (`voice`), once for each
+`page_at` stamp, so asking again moves it again; scrolling by hand stops it at once.
+
+Typed, or on any channel the quick actions do not catch, the brain does the same with the
+`open_settings` tool (`page` settings, voice or history). It posts to `POST /v1/screen/open`, which goes out
+as a `screen` event with `open`, and `busy.py` writes it into `panel.json`, the same road
+`show_on_screen` takes.
 
 ## What it reads
 
@@ -132,13 +147,6 @@ The moments come from `voice/feedback.py`, the same calls that play the ok, low 
 sounds. Hovering the face says the state in words.
 
 ## Cards
-
-A card opens beside the cursor on the cursor's monitor: 26 px above and to the right of it, to the
-left when the right side runs out of room, below it when there is no room above, and always inside
-the screen. While the orb is up the card sits on the far side of it, so the two never overlap. The
-spot is read once from Hyprland's socket when the first card goes up and kept until the last one
-goes away, so a card does not move while it is read. If Hyprland does not answer within 400 ms the
-card shows in the bottom right corner, as it used to.
 
 A card stays its `ttl` (10 s, a spoken reply as long as it takes to read), longer while the
 pointer is on it, and a click puts it away. Quick answers (`voice/quick.py`) make one with no

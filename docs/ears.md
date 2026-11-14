@@ -140,6 +140,23 @@ waits its turn or runs at once beside the first:
 
 `voice.parallel` set to 0 makes every second request wait, as before.
 
+## Several things in a row, one reply
+
+He often says several things in a row. A turn that starts while an earlier one is still thinking,
+or its answer is still unsaid, joins that turn's burst (`voice/burst.py`). Each turn still goes to
+the hub on its own and its reply lands in the chat, but nothing of the burst is spoken while it
+grows: no first lines past the first turn's, no answers in order. Once the newest turn is in and he
+has been quiet for `ears.burst_quiet_s` (2 s), the ears send every answer, oldest first, to
+`POST /v1/voice/merge`, and Haiku (`hub/voicemerge.py`) folds them into one short spoken reply,
+the newest order first and the rest briefly. The merge runs while the ears listen; a turn that
+starts meanwhile puts the burst back and joins it. When the hub cannot merge, the ears say the
+newest answer whole and the first sentence of each earlier one.
+
+A turn alone is as before: a quick answer is spoken at once, a slow one says its first line while
+it works and its answer when it lands. A reply he cuts off with the name stops and is never said
+again; only an answer still waiting behind a cut first line joins the next burst. A turn of the
+burst still thinking once nothing started or landed for 6 s is left behind: the answers that are in are spoken, and it speaks alone when it lands.
+
 ## Where the time goes
 
 Every turn keeps a timeline from the moment his name ended: the wake word firing, the checks, the
