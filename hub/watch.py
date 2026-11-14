@@ -39,6 +39,9 @@ def judge(watch, data):
     if status in ACTIVE:
         return None, None
     finished = parse_time(latest.get("completedAt"))
+    began = parse_time(latest.get("startedAt") or latest.get("requestedAt"))
+    if began and began < watch["created"] - tasks.REWATCH_GRACE_S and time.time() - watch["created"] < tasks.REWATCH_S:
+        return None, None
     if finished and finished >= watch["created"] - GRACE_SECONDS:
         return "done", f"its run ended with status {status or 'unknown'}"
     return None, None
@@ -105,7 +108,10 @@ async def check_once(deliver):
     try:
         await _check_watches(deliver)
     finally:
-        tasks.sweep()
+        try:
+            await asyncio.to_thread(tasks.sweep)
+        except Exception:
+            logger.exception("task sweep failed")
 
 
 async def _check_watches(deliver):

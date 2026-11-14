@@ -210,7 +210,7 @@ ShellRoot {
     Timer {
         interval: 2000
         repeat: true
-        running: root.busy || root.hubTasks.length > 0
+        running: root.busy
         onTriggered: {
             root.clock = Date.now();
             if (root.clock - root.hubSeen > root.hubStaleMs) {

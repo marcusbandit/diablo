@@ -367,14 +367,30 @@ class TestSweep(DbCase):
         ask.assert_not_called()
         self.assertEqual(db.get_task("t24")["state"], "done")
 
-    def test_a_watch_closed_on_an_old_run_does_not_leave_its_card_working(self):
+    def test_a_rewatch_on_an_old_run_stays_open_and_working(self):
         db.add_watch("t25", "box-b", "Again", "main")
-        tasks.save("t25", {"title": "Again", "state": "working", "source": "t3:t25"}, now=time.time() - 600)
-        with mock.patch("hub.t3link.call_tool",
-                        side_effect=fake_t3(DIABLO, completed=time.time() - 30, started=time.time() - 3600)), \
-                mock.patch.object(watch.brains, "ask", mock.AsyncMock()):
+        old_run = fake_t3(DIABLO, completed=time.time() - 30, started=time.time() - 3600)
+        with mock.patch("hub.t3link.call_tool", side_effect=old_run), \
+                mock.patch.object(watch.brains, "ask", mock.AsyncMock()) as ask:
+            tasks.save("t25", {"title": "Again", "state": "working", "source": "t3:t25"})
             asyncio.run(watch.check_once(mock.AsyncMock()))
-        self.assertNotIn(db.get_task("t25")["state"], tasks.ACTIVE)
+        ask.assert_not_called()
+        self.assertTrue(db.watch_is_open("t25"))
+        self.assertEqual(db.get_task("t25")["state"], "working")
+
+    def test_a_waiting_card_is_left_waiting(self):
+        tasks.save("t26", {"title": "Asks", "state": "waiting", "source": "t3:t26"})
+        tasks.save("task-c", {"title": "Asks too", "state": "waiting"}, now=time.time() - tasks.UNTRACKED_S - 1)
+        self.assertEqual(tasks.sweep(), [])
+        self.assertEqual({db.get_task(i)["state"] for i in ("t26", "task-c")}, {"waiting"})
+
+    def test_an_old_card_keeps_its_old_finish_time(self):
+        long_ago = time.time() - 5 * 86400
+        tasks.save("task-d", {"title": "Ancient", "state": "working"}, now=long_ago)
+        tasks.sweep()
+        self.assertEqual(db.get_task("task-d")["finished_at"], long_ago)
+        self.assertNotIn("task-d", [t["id"] for t in tasks.listing()])
+
 
 class TestMcpTools(DbCase):
     def setUp(self):

@@ -215,26 +215,33 @@ def prune(now=None):
         db.prune_tasks(now - PRUNE_S)
 
 
+RUNNING = ("queued", "working")
+
+
 def sweep(now=None):
-    """Finishes the cards nothing keeps up to date any more, so none stays working forever: a
-    T3 thread's card whose watch is closed, and a card made with update_task that has had no
-    update for UNTRACKED_S. The watches are read after the cards, and watch_t3_thread opens its
-    watch before it makes the card, so a card made meanwhile is never taken for an orphan.
+    """Finishes the running cards nothing keeps up to date any more, so none stays working
+    forever: a T3 thread's card whose watch is closed, and a card made with update_task that has
+    had no update for UNTRACKED_S. A card waiting on Marcus is left as it is. Each card is read
+    again under the write lock, so one rewritten meanwhile (a new watch, a fresh update) stays.
+    Its finish time is its last update, so an old card does not show as just finished.
     Returns the finished cards."""
     now = time.time() if now is None else now
-    active = db.list_tasks(ACTIVE, limit=500)
-    watched = {w["thread_id"] for w in db.open_watches()}
     finished = []
-    for task in active:
-        if str(task.get("source") or "").startswith("t3:"):
-            if task["id"] in watched:
+    for listed in db.list_tasks(RUNNING, limit=500):
+        with _write:
+            task = db.get_task(listed["id"])
+            if not task or task.get("state") not in RUNNING or task.get("updated_at") != listed.get("updated_at"):
                 continue
-            step = UNWATCHED_STEP
-        elif now - float(task.get("updated_at") or 0) >= UNTRACKED_S:
-            step = UNTRACKED_STEP
-        else:
-            continue
-        finished.append(save(task["id"], {"state": "done", "step": step}, now))
+            last = float(task.get("updated_at") or now)
+            if str(task.get("source") or "").startswith("t3:"):
+                if db.watch_is_open(task["id"]):
+                    continue
+                step = UNWATCHED_STEP
+            elif now - last >= UNTRACKED_S:
+                step = UNTRACKED_STEP
+            else:
+                continue
+            finished.append(_save(task["id"], {"state": "done", "step": step, "finished_at": min(last, now)}, now))
     return finished
 
 
