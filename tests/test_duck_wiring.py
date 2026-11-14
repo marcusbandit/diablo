@@ -112,6 +112,16 @@ class TestEars(unittest.TestCase):
         self.assertEqual(words, "I'll leave the sound up.")
         fake.suspend.assert_called_once_with(True)
 
+    def test_a_longer_request_keeps_it_up_and_still_goes_on(self):
+        from voice import ears, timeline
+
+        with mock.patch.object(duck, "DUCK") as fake, mock.patch.object(ears.quick, "answer", return_value=None), \
+                mock.patch.object(ears.panel, "intent", return_value=None):
+            words = ears.local_line(None, mock.Mock(get=mock.Mock(return_value={})), None,
+                                    "Leave the music alone and add milk to my list.", timeline.Timeline())
+        self.assertIsNone(words)
+        fake.suspend.assert_called_once_with(True)
+
     def test_the_state_drives_the_duck(self):
         from voice import ears
 

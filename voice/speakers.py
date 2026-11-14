@@ -335,8 +335,7 @@ class SoundHold:
         self.taken = True
         media = self.media
         if media is None:
-            duck.DUCK.claim()
-            if mode != "dim":
+            if duck.DUCK.claim() != duck.ALL and mode != "dim":
                 self.hush = Hush().__enter__()
             return
         try:
@@ -375,16 +374,31 @@ class SoundHold:
 
 
 def leave_to_duck(ops, ducked):
-    """The hold's ops without the dims the conversation duck (voice/duck.py) already owns: a
-    stream it turned down, or every stream while he asked for the sound to stay up. Two
-    owners of one volume would each give back the other's level and leave it quiet."""
+    """The hold's ops without the dims the conversation duck (voice/duck.py) already owns, since
+    two owners of one volume would each give back the other's level and leave it quiet. While he
+    asked for the sound to stay up, the hold takes nothing at all: no dim, no pause, no mute."""
+    if ducked == duck.ALL:
+        return []
     if not ducked:
         return ops
-    return [op for op in ops if op.get("op") != "dim" or (ducked != duck.ALL and op.get("stream") not in ducked)]
+    return [op for op in ops if op.get("op") != "dim" or op.get("stream") not in ducked]
+
+
+def kept_playing():
+    """The apps his gvoice rules mark "nothing": the duck leaves them playing as they are."""
+    media = gvoice_media()
+    if media is None:
+        return []
+    try:
+        apps = media.load_settings()["media"].get("apps", [])
+    except Exception:
+        return []
+    return [str(rule.get("match") or "").lower() for rule in apps if rule.get("action") == "nothing"]
 
 
 _shared = SoundHold()
 duck.DUCK.foreign = lambda: {op.get("stream") for op in list(_shared.ops) if op.get("op") == "dim"}
+duck.DUCK.exempt = kept_playing
 
 
 def shutdown():

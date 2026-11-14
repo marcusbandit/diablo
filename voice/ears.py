@@ -139,7 +139,6 @@ def set_state(state, **extra):
         _set_state(state, **extra)
 
 
-# Other sound is turned down (voice/duck.py) while one of these is on, and a few seconds after.
 TALKING = ("listening", "thinking", "speaking")
 
 
@@ -808,10 +807,11 @@ def local_line(mic, settings, vad, text, tl, speaker=None):
         return f"That didn't work: {why}."
     if duck.wants_sound_up(text):
         duck.DUCK.suspend(True)
-        tl.mark("act_done")
-        tl.note(act="sound up", outcome="other sound left up for this conversation")
-        feedback.done()
-        return "I'll leave the sound up."
+        if duck.only_sound_up(text):
+            tl.mark("act_done")
+            tl.note(act="sound up", outcome="other sound left up for this conversation")
+            feedback.done()
+            return "I'll leave the sound up."
     if commands.wants_dictation(text):
         return dictate(mic, settings, vad, tl, speaker)
     if commands.wants_animation(text):

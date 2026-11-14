@@ -272,7 +272,7 @@ def follow(cfg):
                     elif isinstance(event, dict) and event.get("kind") == "duck":
                         try:
                             duck(event)
-                        except Exception as error:  # ears that are down never cut the busy feed
+                        except Exception as error:
                             sys.stderr.write(f"duck: {error}\n")
     finally:
         done.set()

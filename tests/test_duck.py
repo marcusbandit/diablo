@@ -149,7 +149,7 @@ class DuckTest(unittest.TestCase):
         self.assertEqual(self.desk.vol(7), 18000)
         self.end()
         self.assertEqual(self.desk.vol(7), 60000)
-        self.assertEqual(json.loads(self.config.read_text()), {"on": True, "level": 30})
+        self.assertEqual(json.loads(self.config.read_text()), {"on": True, "level": 30, "linger_s": 5.0})
 
     def test_switching_it_off_mid_conversation_gives_back_at_once(self):
         self.desk.add(7, "Zen")
@@ -256,6 +256,49 @@ class DuckTest(unittest.TestCase):
         self.duck.suspend(True)
         self.assertEqual(self.duck.claim(), duck.ALL)
 
+    def test_two_streams_of_one_app_each_keep_their_own_volume(self):
+        self.desk.add(7, "Firefox", FULL)
+        self.desk.add(8, "Firefox", round(FULL * 0.2))
+        self.talk()
+        self.assertEqual((self.desk.vol(7), self.desk.vol(8)), (round(FULL * 0.2), round(FULL * 0.04)))
+        self.end()
+        self.assertEqual((self.desk.vol(7), self.desk.vol(8)), (FULL, round(FULL * 0.2)))
+
+    def test_an_app_his_gvoice_rules_keep_playing_is_left_alone(self):
+        self.duck.exempt = lambda: ["vesktop"]
+        self.desk.add(7, "vesktop")
+        self.desk.add(8, "Zen")
+        self.talk()
+        self.assertEqual((self.desk.vol(7), self.desk.vol(8)), (FULL, round(FULL * 0.2)))
+
+    def test_a_new_level_leaves_a_volume_he_moved(self):
+        self.desk.add(7, "Zen")
+        self.desk.add(8, "Spotify")
+        self.talk()
+        self.desk.set_volume(7, [40000, 40000])
+        self.duck.configure({"level": 10})
+        self.assertEqual((self.desk.vol(7), self.desk.vol(8)), (40000, round(FULL * 0.1)))
+        self.end()
+        self.assertEqual((self.desk.vol(7), self.desk.vol(8)), (40000, FULL))
+
+    def test_keep_up_counts_with_the_switch_off_too(self):
+        duck.save_settings({"on": False}, self.config)
+        self.duck = self.make()
+        self.duck.suspend(True)
+        self.assertEqual(self.duck.claim(), duck.ALL)
+
+    def test_settings_keep_a_hand_set_linger(self):
+        self.config.write_text('{"on": true, "level": 20, "linger_s": 15}')
+        duck.save_settings({"level": 30}, self.config)
+        self.assertEqual(duck.settings(self.config)["linger_s"], 15.0)
+
+    def test_pactl_failing_reads_as_unknown_not_as_no_streams(self):
+        failed = mock.Mock(returncode=1, stdout="")
+        with mock.patch.object(duck.subprocess, "run", return_value=failed):
+            self.assertIsNone(duck.Pactl().streams())
+        with mock.patch.object(duck.subprocess, "run", side_effect=OSError):
+            self.assertIsNone(duck.Pactl().streams())
+
     def test_claim_before_start_does_nothing(self):
         self.desk.add(7, "Zen")
         self.duck.started = False
@@ -269,8 +312,8 @@ class HoldLeavesTheDuckTest(unittest.TestCase):
     def test_dims_of_ducked_streams_are_dropped(self):
         self.assertEqual(speakers.leave_to_duck(self.OPS, {7}), self.OPS[1:])
 
-    def test_keep_up_drops_every_dim_but_keeps_pauses(self):
-        self.assertEqual(speakers.leave_to_duck(self.OPS, duck.ALL), self.OPS[2:])
+    def test_keep_up_leaves_the_hold_nothing_to_take(self):
+        self.assertEqual(speakers.leave_to_duck(self.OPS, duck.ALL), [])
 
     def test_no_duck_keeps_the_hold_as_it_was(self):
         self.assertEqual(speakers.leave_to_duck(self.OPS, set()), self.OPS)
@@ -282,6 +325,12 @@ class KeepUpWordsTest(unittest.TestCase):
                      "don't turn down the video", "keep the volume up", "leave the sound alone",
                      "stop lowering the music", "dont duck the audio"):
             self.assertTrue(duck.wants_sound_up(text), text)
+
+    def test_a_longer_request_is_not_only_that(self):
+        self.assertTrue(duck.only_sound_up("Diablo, don't turn it down please."))
+        self.assertTrue(duck.only_sound_up("Okay, just keep the music up for now"))
+        self.assertFalse(duck.only_sound_up("keep the music on and set a timer for ten minutes"))
+        self.assertFalse(duck.only_sound_up("leave the music alone and add milk to my list"))
 
     def test_other_lines_are_not_it(self):
         for text in ("turn it down", "turn the music down", "keep it up", "don't dim the lights",

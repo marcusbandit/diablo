@@ -40,13 +40,10 @@ DEFAULTS = {"on": True, "level": 20, "linger_s": 5.0}
 LEVELS = (10, 15, 20, 30)
 POLL_S = 0.25
 IDLE_POLL_S = 2.0
-# PipeWire rounds volumes a little on the way through; gvoice's media.py uses the same slack.
 SLACK = 700
 DUCK_STEPS, DUCK_SECONDS = 3, 0.09
 RESTORE_STEPS, RESTORE_SECONDS = 6, 0.3
-# A suspension asked for between conversations holds for the next one, if it starts this soon.
 SUSPEND_IDLE_S = 600.0
-# An orphan nobody reopened in this long is let go.
 ORPHAN_DAYS = 14
 OWN = ("diablo", "pw-play")
 ALL = "all"
@@ -82,7 +79,7 @@ def save_settings(changes, path=None):
         current["level"] = changes["level"]
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"on": current["on"], "level": current["level"]}) + "\n")
+    tmp.write_text(json.dumps(current) + "\n")
     tmp.replace(path)
     return settings(path)
 
@@ -93,13 +90,19 @@ class Pactl:
     @staticmethod
     def _run(cmd):
         try:
-            return subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout
+            done = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
         except (OSError, subprocess.SubprocessError):
-            return ""
+            return None
+        return done.stdout if done.returncode == 0 else None
 
     def streams(self):
+        """The sink inputs, or None when pactl did not answer: an empty list would read as every
+        stream gone."""
+        out = self._run(["pactl", "-f", "json", "list", "sink-inputs"])
+        if out is None:
+            return None
         try:
-            raw = json.loads(self._run(["pactl", "-f", "json", "list", "sink-inputs"]) or "[]")
+            raw = json.loads(out or "[]")
         except ValueError:
             return None
         out = []
@@ -137,7 +140,6 @@ def lowered(volume, level):
     return [int(round(v * level / 100)) for v in volume]
 
 
-# "Don't turn it down", "stop ducking", "keep the music up", "leave the sound alone".
 _SOUND = r"(?:the\s+)?(?:sound|volume|music|video|audio|song|stream)"
 _ANY = rf"(?:it|that|this|{_SOUND})"
 _NOT = r"(?:don'?t|do\s+not|stop|quit|no\s+more)"
@@ -152,8 +154,19 @@ KEEP_UP = re.compile(
 )
 
 
+FILLER = re.compile(r"\b(?:diablo|please|just|now|ok(?:ay)?|and|so|hey|for\s+now|this\s+time|while\s+we\s+talk|thanks?|thank\s+you)\b", re.I)
+
+
 def wants_sound_up(text):
+    """"Don't turn it down", "stop ducking", "keep the music up", "leave the sound alone"."""
     return bool(KEEP_UP.search(text or ""))
+
+
+def only_sound_up(text):
+    """True when asking for the sound to stay up is all the line says, so nothing else in it
+    needs the brain."""
+    rest = FILLER.sub(" ", KEEP_UP.sub(" ", text or ""))
+    return not re.sub(r"[^\w]+", "", rest)
 
 
 class Ducker:
@@ -178,6 +191,9 @@ class Ducker:
         self.apps = {}
         self.orphans = {}
         self.foreign = lambda: set()
+        self.exempt = lambda: []
+        self.first = None
+        self.his = set()
         self.cfg = settings(self.config_file)
 
     def start(self):
@@ -199,12 +215,14 @@ class Ducker:
         self.wake.set()
 
     def update(self, active):
-        with self.lock:
-            if active == self.active:
-                return
-            self.active = bool(active)
-            if not active:
-                self.until = self.clock() + self.cfg["linger_s"]
+        """The ears' state writer calls this, so it never waits on the lock the thread holds
+        while pactl runs."""
+        active = bool(active)
+        if active == self.active:
+            return
+        if not active:
+            self.until = self.clock() + self.cfg["linger_s"]
+        self.active = active
         self.wake.set()
 
     def suspend(self, on=True):
@@ -234,20 +252,20 @@ class Ducker:
         and returns the streams the hold must leave alone: those turned down here, or ALL while
         he asked for the sound to stay up."""
         with self.lock:
-            if not self.started or not self.cfg["on"]:
+            if not self.started:
                 return set()
             if self.suspended:
                 return ALL
+            if not self.cfg["on"]:
+                return set()
             self.until = max(self.until, self.clock() + self.cfg["linger_s"])
             self._tick()
             return set(self.held)
 
     def status(self):
-        with self.lock:
-            return {"on": self.cfg["on"], "level": self.cfg["level"], "levels": list(LEVELS),
-                    "active": self.engaged, "suspended": self.suspended, "held": len(self.held)}
-
-    # ---- the thread -----------------------------------------------------------------------
+        cfg = self.cfg
+        return {"on": cfg["on"], "level": cfg["level"], "levels": list(LEVELS),
+                "active": self.engaged, "suspended": self.suspended, "held": len(self.held)}
 
     def _wanted(self):
         return self.active or self.clock() < self.until
@@ -277,6 +295,8 @@ class Ducker:
             self.suspended = False
         if wanted and not self.engaged:
             self.engaged = True
+            self.first = None
+            self.his = set()
             self.cfg = settings(self.config_file)
         if wanted and self.cfg["on"] and not self.suspended:
             self._sweep()
@@ -294,15 +314,21 @@ class Ducker:
             if not any(e["app"] == entry["app"] for e in self.held.values()):
                 self.orphans[entry["app"]] = {"from": entry["from"], "to": entry["to"], "at": self.wall()}
             changed = True
+        if self.first is None:
+            self.first = max((s["index"] for s in streams), default=-1)
         foreign = self.foreign() or set()
+        exempt = [m for m in self.exempt() or [] if m]
         moves = []
         for stream in streams:
             index, volume = stream["index"], stream["volume"]
-            if index in self.held or index in foreign or own(stream) or not volume:
+            if index in self.held or index in self.his or index in foreign or own(stream) or not volume:
+                continue
+            names = (stream["app"].lower(), stream["binary"].lower())
+            if any(m in n for m in exempt for n in names if n):
                 continue
             key = app_key(stream)
             known = self.apps.get(key) or self.orphans.get(key)
-            if known and near(volume, known["to"]) and len(known["from"]) == len(volume):
+            if index > self.first and known and near(volume, known["to"]) and len(known["from"]) == len(volume):
                 start, low = known["from"], volume
             else:
                 start, low = volume, lowered(volume, self.cfg["level"])
@@ -319,12 +345,24 @@ class Ducker:
             log.info("turned down %s", ", ".join(self.held[i]["name"] or str(i) for i, _, _ in moves))
 
     def _relevel(self):
-        """A new level while turned down: the streams move to it from their old volume."""
+        """A new level while turned down: the streams move to it from their old volume, except
+        one he moved meanwhile, which is his and left where he put it."""
+        streams = self.backend.streams()
+        if streams is None:
+            return
+        live = {s["index"]: s for s in streams}
         moves = []
-        for index, entry in self.held.items():
+        for index, entry in list(self.held.items()):
+            stream = live.get(index)
+            if stream is None:
+                continue
+            if not near(stream["volume"], entry["to"]):
+                self.held.pop(index)
+                self.his.add(index)
+                continue
             low = lowered(entry["from"], self.cfg["level"])
             if low != entry["to"]:
-                moves.append((index, entry["to"], low))
+                moves.append((index, stream["volume"], low))
                 entry["to"] = low
         for key, known in self.apps.items():
             known["to"] = lowered(known["from"], self.cfg["level"])
@@ -338,7 +376,6 @@ class Ducker:
             return
         streams = self.backend.streams()
         if streams is None:
-            # pactl did not answer: keep the list, so the next tick or the next start tries again.
             return
         live = {s["index"]: s for s in streams}
         moves, given = [], []
@@ -395,8 +432,6 @@ class Ducker:
                 self.backend.set_volume(index, [a + (b - a) * t for a, b in zip(start, end)])
             if step < steps and seconds:
                 time.sleep(seconds / steps)
-
-    # ---- the crash file -------------------------------------------------------------------
 
     def _save(self):
         try:
