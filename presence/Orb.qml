@@ -364,12 +364,55 @@ Item {
         }
     }
 
-    // Thinking in the background: one slow moon circles him while he is free to talk.
+    // What he works on in the background, one moon each: {id, waiting}. Left unset, one moon
+    // stands for thinkingBehind, as the preview and the tuner use it.
+    property var moons: null
+    readonly property int mostMoons: 8
+    readonly property var shownMoons: (orb.moons ?? (orb.thinkingBehind ? [{ id: "behind" }] : [])).slice(0, orb.mostMoons)
+    onShownMoonsChanged: orb.syncMoons()
+    Component.onCompleted: orb.syncMoons()
+
+    // The moons as a model, so one that ends fades out where it was and a new one fades in,
+    // while the rest glide to even spacing.
+    ListModel {
+        id: moonList
+    }
+    function syncMoons() {
+        const wanted = orb.shownMoons.map(m => String(m.id));
+        const known = [];
+        for (let i = 0; i < moonList.count; i++)
+            known.push(moonList.get(i).key);
+        orb.moonsStaying = wanted.length;
+        let slot = 0;
+        for (let i = 0; i < moonList.count; i++) {
+            const at = wanted.indexOf(known[i]);
+            moonList.setProperty(i, "leaving", at < 0);
+            if (at >= 0) {
+                moonList.setProperty(i, "waiting", !!orb.shownMoons[at].waiting);
+                moonList.setProperty(i, "slot", slot++);
+            }
+        }
+        for (const m of orb.shownMoons) {
+            if (!known.includes(String(m.id)))
+                moonList.append({ key: String(m.id), waiting: !!m.waiting, leaving: false, slot: slot++ });
+        }
+    }
+    function dropMoon(key) {
+        for (let i = 0; i < moonList.count; i++) {
+            if (moonList.get(i).key === key && moonList.get(i).leaving) {
+                moonList.remove(i);
+                return;
+            }
+        }
+    }
+    property int moonsStaying: 0
+
+    // Working in the background: the moons circle him while he is free to talk.
     Item {
         id: moon
 
         anchors.fill: parent
-        visible: orb.thinkingBehind && orb.mood !== "thinking"
+        visible: moonList.count > 0 && orb.mood !== "thinking"
 
         // Not the `on rotation` form: that one starts itself and keeps the whole scene rendering
         // at the monitor's rate (10% of a core) even while the moon is hidden.
@@ -383,13 +426,42 @@ Item {
             loops: Animation.Infinite
         }
 
-        Rectangle {
-            width: 6
-            height: 6
-            radius: 3
-            color: orb.style.thinking
-            x: parent.width / 2 - 3 + 32
-            y: parent.height / 2 - 3
+        Repeater {
+            model: moonList
+
+            Rectangle {
+                id: dot
+
+                required property string key
+                required property bool waiting
+                required property bool leaving
+                required property int slot
+
+                // one that is leaving stays where it was while it fades
+                readonly property real target: orb.moonsStaying > 0 ? dot.slot * 2 * Math.PI / orb.moonsStaying : 0
+                property real angle: 0
+                property bool born: false
+                onTargetChanged: if (!dot.leaving) dot.angle = dot.target
+
+                width: 6
+                height: 6
+                radius: 3
+                color: dot.waiting ? orb.style.listening : orb.style.thinking
+                x: moon.width / 2 - 3 + 32 * Math.cos(dot.angle)
+                y: moon.height / 2 - 3 + 32 * Math.sin(dot.angle)
+                opacity: dot.born && !dot.leaving ? 1 : 0
+                scale: dot.born && !dot.leaving ? 1 : 0.4
+                Component.onCompleted: {
+                    dot.angle = dot.target;
+                    dot.born = true;
+                }
+                onOpacityChanged: if (dot.leaving && dot.opacity === 0) orb.dropMoon(dot.key)
+
+                Behavior on angle { enabled: dot.born; NumberAnimation { duration: 450; easing.type: Easing.InOutCubic } }
+                Behavior on opacity { NumberAnimation { duration: 300 } }
+                Behavior on scale { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+                Behavior on color { ColorAnimation { duration: 200 } }
+            }
         }
     }
 }

@@ -4,7 +4,11 @@ shell.qml runs this and reads its stdout. It opens /v1/events, asks GET /v1/busy
 every `busy` event as {"turns": [...]}, asking /v1/busy again every half minute so a missed end
 can not hold the orb up; a keepalive from the hub prints {"alive": true},
 so the orb can tell a quiet hub from a lost one. When the hub cannot be reached it prints
-{"turns": [], "lost": true} and tries again, so a dropped link never leaves the orb busy.
+{"turns": [], "tasks": [], "lost": true} and tries again, so a dropped link never leaves the orb busy.
+
+The live task cards ride along the same way: GET /v1/tasks at the start and with every recheck,
+then each `task` event, printed as {"tasks": [{"id", "state", "title"}]} with only the active ones
+(queued, working, waiting), so the orb can carry one moon for each.
 
 Standard library only: the system python runs it, no venv.
 
@@ -54,6 +58,43 @@ def say(body):
 def shown(event):
     return {"turns": [{"words": turn.get("words") or "thinking", "origin": turn.get("origin", ""), "since": turn.get("since", 0)}
                       for turn in event.get("turns") or [] if isinstance(turn, dict)]}
+
+
+ACTIVE = ("queued", "working", "waiting")
+TASKS = {}
+TASKS_LOCK = threading.Lock()
+
+
+def task_shown(task):
+    return {"id": str(task.get("id") or ""), "state": task.get("state") or "working",
+            "title": " ".join(str(task.get("title") or "").split())[:60]}
+
+
+def tasks_line():
+    with TASKS_LOCK:
+        rows = sorted(TASKS.values(), key=lambda t: (t["started_at"], t["id"]))
+    return {"tasks": [{k: v for k, v in row.items() if k != "started_at"} for row in rows]}
+
+
+def track(task):
+    """One task event into the set of active ones. True when the set changed."""
+    if not isinstance(task, dict) or not task.get("id"):
+        return False
+    key = str(task["id"])
+    if task.get("state") in ACTIVE:
+        entry = {**task_shown(task), "started_at": float(task.get("started_at") or 0)}
+        changed = TASKS.get(key) != entry
+        TASKS[key] = entry
+        return changed
+    return TASKS.pop(key, None) is not None
+
+
+def replace_tasks(listing):
+    with TASKS_LOCK:
+        TASKS.clear()
+        for task in listing:
+            if isinstance(task, dict) and task.get("id") and task.get("state") in ACTIVE:
+                TASKS[str(task["id"])] = {**task_shown(task), "started_at": float(task.get("started_at") or 0)}
 
 
 def write_json(path, body):
@@ -127,6 +168,14 @@ def show(event, now=None):
 def ask(base, headers):
     with urllib.request.urlopen(urllib.request.Request(f"{base}/v1/busy", headers=headers), timeout=10) as reply:
         say(shown(json.loads(reply.read())))
+    url = f"{base}/v1/tasks?state={','.join(ACTIVE)}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=10) as reply:
+            replace_tasks(json.loads(reply.read()).get("tasks") or [])
+    except Exception as error:  # the turns still count when the task list can not be read
+        sys.stderr.write(f"tasks feed: {error}\n")
+        return
+    say(tasks_line())
 
 
 def recheck(base, headers, done):
@@ -157,6 +206,11 @@ def follow(cfg):
                         continue
                     if isinstance(event, dict) and event.get("kind") == "busy":
                         say(shown(event))
+                    elif isinstance(event, dict) and event.get("kind") == "task":
+                        with TASKS_LOCK:
+                            changed = track(event.get("task"))
+                        if changed:
+                            say(tasks_line())
                     elif isinstance(event, dict) and event.get("kind") == "screen":
                         try:
                             show(event)
@@ -172,7 +226,9 @@ def main():
             follow(config())
         except Exception as error:
             sys.stderr.write(f"busy feed: {error}\n")
-        say({"turns": [], "lost": True})
+        with TASKS_LOCK:
+            TASKS.clear()
+        say({"turns": [], "tasks": [], "lost": True})
         time.sleep(RETRY_S)
 
 
