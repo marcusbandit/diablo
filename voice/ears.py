@@ -559,13 +559,19 @@ def _start_early(clip, probe, early):
     return job
 
 
-def transcribe(audio, cfg):
+def transcribe(audio, cfg, tl=None, fallback=False):
+    """The words in audio. fallback lets a failed gvoice hand the clip to Groq through the hub;
+    only a request's final words ask for it, so checks, dictation and training never pay for a
+    cloud call. tl gets stt_via."""
     TMP.mkdir(exist_ok=True)
     with tempfile.NamedTemporaryFile(suffix=".wav", dir=TMP, delete=False) as handle:
         path = handle.name
     try:
         stt.write_wav(audio, wake.RATE, path)
-        return stt.transcribe_file(path, cfg)
+        text, via = stt.transcribe(path, cfg, fallback)
+        if tl is not None:
+            tl.note(stt_via=via)
+        return text
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -1267,7 +1273,7 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
     try:
         # The end-of-turn check already has the words when nothing was said after it.
         started = time.monotonic()
-        text = heard.text if heard.text is not None else transcribe(audio, cfg)
+        text = heard.text if heard.text is not None else transcribe(audio, cfg, tl, fallback=True)
         tl.note(stt_ms=round((time.monotonic() - started) * 1000), stt_reused=heard.text is not None)
     except Exception as error:
         log.warning("speech to text failed: %s", error)
@@ -1382,7 +1388,7 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
     set_state("thinking", loop=True, **({} if heard.text is not None else {"step": "transcribing"}))
     try:
         started = time.monotonic()
-        text = heard.text if heard.text is not None else transcribe(audio, cfg)
+        text = heard.text if heard.text is not None else transcribe(audio, cfg, tl, fallback=True)
         tl.note(stt_ms=round((time.monotonic() - started) * 1000), stt_reused=heard.text is not None)
     except Exception as error:
         log.warning("loop: speech to text failed: %s", error)
@@ -1915,7 +1921,7 @@ def recheck_cli(clip):
     print(f"recording  {found}")
     print(f"the turn heard  {meta.get('text', '')!r}" + ("  (Jev ended it early)" if meta.get("early") else ""))
     try:
-        print(f"gvoice now      {stt.transcribe_file(str(found), load_config())!r}")
+        print(f"gvoice now      {stt.transcribe_file(str(found), load_config(), fallback=False)!r}")
     except Exception as error:
         print(f"gvoice failed: {error}")
         return 1

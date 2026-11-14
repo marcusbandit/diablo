@@ -27,7 +27,8 @@ Both read cached health; `wait=true` checks first. docs/stt.md.
 
 `POST /v1/stt` with a token takes a clip as the raw body (a wav, or name it in `X-Filename`) and
 answers `{"text", "language", "backend"}`, transcribed the way voice notes are. Every backend down
-is a 503. Ears on a box without a GPU use it (`stt_via = "hub"`).
+is a 503. Ears on a box without a GPU use it (`stt_via = "hub"`), and the desk's ears send a clip
+here with `X-Stt-Skip: local` when gvoice failed, so Groq transcribes it.
 
 Spoken turns carry `host` in `POST /v1/chat` and `POST /v1/voice/control`, the box whose ears heard
 them. Left out or `banditbox`, the origin stays his desk; any other box is named in the origin, and the

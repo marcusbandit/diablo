@@ -65,7 +65,7 @@ class AnimateFlowTest(unittest.TestCase):
 
         captured = {}
         with mock.patch.object(ears, "record", side_effect=lambda *a, **k: next(heard)), \
-                mock.patch.object(ears, "transcribe", side_effect=lambda *a: next(texts)), \
+                mock.patch.object(ears, "transcribe", side_effect=lambda *a, **k: next(texts)), \
                 mock.patch.object(ears, "listening", return_value=True), \
                 mock.patch.object(ears, "set_state"), mock.patch.object(ears, "feedback"), \
                 mock.patch.object(ears, "_cut_before", side_effect=cut), \

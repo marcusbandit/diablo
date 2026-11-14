@@ -281,7 +281,7 @@ class TestDictate(unittest.TestCase):
         typed = []
         with mock.patch.object(ears, "record", return_value=heard), \
                 mock.patch.object(ears, "talk_ok", return_value=(True, 0.9)), \
-                mock.patch.object(ears, "transcribe", side_effect=lambda audio, cfg: next(pieces)), \
+                mock.patch.object(ears, "transcribe", side_effect=lambda audio, cfg, *_, **__: next(pieces)), \
                 mock.patch.object(ears, "listening", return_value=True), \
                 mock.patch.object(ears, "set_state"), mock.patch.object(ears.chime, "play"), \
                 mock.patch.object(commands, "desktop_state", return_value=DESKTOP), \
