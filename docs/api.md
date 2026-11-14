@@ -35,6 +35,10 @@ lock guard asks that box whether its screen is locked. `POST /v1/ears/report` ca
 banditbox's ears fill the slot the restart check always read, ears elsewhere count only while their
 last report is under a minute old.
 
+`POST /v1/voice/merge` folds the replies of several spoken turns in a row into one spoken reply:
+`{"turns": [{"heard", "reply"}]}`, oldest first, gives `{"say", "via", "ms"}`. Haiku writes it through
+the claude CLI, newest order first; nothing is stored. An empty `say` means it failed. docs/ears.md.
+
 ## One memory, many sections
 
 Sections are places to talk, each with a focus: Diablo, Workout, Projects, Home. They share one
