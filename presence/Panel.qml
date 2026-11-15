@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "place.js" as Place
 
 // The central card: Diablo opened up in the middle of the screen. Three pages: Now, a card he was
 // asked to show big; History, everything said to him and everything he answered (History.qml,
@@ -10,7 +11,7 @@ Rectangle {
 
     required property var style
     property string view: "settings"       // "now", "history" or "settings"
-    property var card: null                // what "Now" shows: {title, big, lines, page?}
+    property var card: null                // what "Now" shows: {title, big, lines, page?, sections?}
     // A Settings page asked for from outside: "settings" scrolls to the top, "voice" to Your
     // voice. pageAt is when it was asked (panel.json's page_at), so asking twice moves it again.
     property string page: ""
@@ -21,6 +22,17 @@ Rectangle {
     property string hubToken: ""
     // Where an HTML page goes: shell.qml hands this rect to the web view so it sits over it.
     readonly property alias pageArea: pageArea
+    // Its usual size and the most of the screen it may take (Place.panelRect, Place.panelRoom).
+    // A list asks for what it needs between the two in `want`, which shell.qml sizes it by.
+    property var base: ({ w: 980, h: 720 })
+    property var room: ({ w: 980, h: 720 })
+    readonly property bool listing: (panel.card?.sections ?? []).length > 0
+    // Now's margins, which a list's size is worked out from: its sides, and above and below it.
+    readonly property int nowSide: 32
+    readonly property real chrome: nowPage.y + nowPage.foot
+    readonly property var want: panel.listing && panel.view === "now"
+        ? { w: listGrid.implicitWidth + 2 * panel.nowSide, h: panel.chrome + nowPage.below + listGrid.implicitHeight } : null
+    signal itemToggled(int section, int item, bool done)
     signal closeRequested
     signal viewRequested(string view)
     signal followChanged(bool on)
@@ -37,12 +49,26 @@ Rectangle {
         historyPage.searchFor(text);
     }
 
-    function historyKey(event: var) {
+    function pageKey(event: var) {
         if (panel.view === "history")
             historyPage.key(event);
+        else if (panel.view === "now" && panel.listing)
+            panel.listKey(event);
     }
 
-    Keys.onPressed: event => panel.historyKey(event)
+    function listKey(event: var) {
+        const page = listView.height * 0.9;
+        const keys = { [Qt.Key_Up]: -listWheel.notch, [Qt.Key_Down]: listWheel.notch, [Qt.Key_PageUp]: -page, [Qt.Key_PageDown]: page };
+        if (event.key in keys) {
+            listWheel.scrollBy(keys[event.key]);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_Home || event.key === Qt.Key_End) {
+            listWheel.scrollTo(event.key === Qt.Key_Home ? listWheel.top : listWheel.bottom);
+            event.accepted = true;
+        }
+    }
+
+    Keys.onPressed: event => panel.pageKey(event)
 
     // The ears, read while Settings is open: the whole status each second, the meters faster.
     property var ears: null
@@ -236,10 +262,14 @@ Rectangle {
     Item {
         id: nowPage
 
-        x: 32
+        // Where the list or the page starts: under the text, if there is any.
+        readonly property real below: nowText.hasText ? nowText.implicitHeight + 16 : 0
+        readonly property int foot: 28
+
+        x: panel.nowSide
         y: 96
-        width: parent.width - 64
-        height: parent.height - y - 28
+        width: parent.width - 2 * panel.nowSide
+        height: parent.height - y - nowPage.foot
         visible: panel.view === "now"
 
         Column {
@@ -247,7 +277,9 @@ Rectangle {
 
             readonly property bool hasText: !!(panel.card?.title || panel.card?.big || (panel.card?.lines ?? []).length)
 
-            width: parent.width
+            // Over a list it keeps the card's usual width, so the lines wrap the same however
+            // wide the list makes the card.
+            width: panel.listing ? panel.base.w - 2 * panel.nowSide : parent.width
             spacing: 8
             visible: panel.card !== null
 
@@ -278,7 +310,7 @@ Rectangle {
                 Text {
                     required property string modelData
 
-                    width: nowPage.width
+                    width: nowText.width
                     text: modelData
                     color: panel.style.text
                     font.family: panel.style.family
@@ -288,13 +320,46 @@ Rectangle {
             }
         }
 
+        // A list, in columns: it stands whole when the card has room, else it scrolls.
+        Flickable {
+            id: listView
+
+            y: nowPage.below
+            width: parent.width
+            height: parent.height - y
+            visible: panel.listing
+            contentWidth: width
+            contentHeight: listGrid.implicitHeight
+            interactive: contentHeight > height
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            WheelStep {
+                id: listWheel
+
+                flick: listView
+            }
+
+            ListGrid {
+                id: listGrid
+
+                style: panel.style
+                sections: panel.listing ? panel.card.sections : []
+                minColumns: Place.columnsIn(panel.base.w - 2 * panel.nowSide, listGrid.columnWidth, listGrid.columnGap)
+                maxColumns: Place.columnsIn(panel.room.w - 2 * panel.nowSide, listGrid.columnWidth, listGrid.columnGap)
+                baseHeight: panel.base.h - panel.chrome - nowPage.below
+                roomHeight: panel.room.h - panel.chrome - nowPage.below
+                onToggled: (section, item, done) => panel.itemToggled(section, item, done)
+            }
+        }
+
         // An HTML page fills what is left; the web view is drawn over this spot.
         Rectangle {
             id: pageArea
 
             readonly property bool wanted: panel.view === "now" && (panel.card?.page ?? "") !== ""
 
-            y: nowText.hasText ? nowText.implicitHeight + 16 : 0
+            y: nowPage.below
             width: parent.width
             height: parent.height - y
             visible: pageArea.wanted

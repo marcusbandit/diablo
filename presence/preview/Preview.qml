@@ -18,14 +18,31 @@ Window {
     readonly property string hub: args[4] ?? "http://127.0.0.1:18755"
 
     readonly property bool panelScene: scene.startsWith("panel")
-    width: panelScene ? 1280 : 760
-    height: panelScene ? 860 : 560
+    width: s.screen?.[0] ?? (panelScene ? 1280 : 760)
+    height: s.screen?.[1] ?? (panelScene ? 860 : 560)
     visible: true
     color: "#2a2f36"
 
     Style {
         id: theme
     }
+
+    // A made-up packing list the size of a real one: four sections, 24 items, some ticked.
+    readonly property var packing: [
+        { title: "Documents and money", items: [{ text: "Passport", done: true }, { text: "Bank card", done: true },
+            { text: "A little cash", done: false }, { text: "Travel insurance card", done: true }] },
+        { title: "Electronics", items: [{ text: "Laptop", done: true }, { text: "Laptop charger", done: true },
+            { text: "Phone charger", done: false }, { text: "Power bank", done: false }, { text: "Headphones", done: false },
+            { text: "Travel adapter", done: false }] },
+        { title: "Clothes", items: ["4 sets of underwear", "4 pairs of socks", "4 t-shirts", "1 pair of trousers", "Hoodie",
+            "Something smart for the dinner", "Warm jacket", "Hat, scarf and gloves", "Comfortable shoes"].map(t => ({ text: t, done: false })) },
+        { title: "Toiletries", items: ["Toothbrush and toothpaste", "Deodorant", "Shampoo, 100 ml at most", "Any medicine",
+            "Earplugs"].map(t => ({ text: t, done: false })) }
+    ]
+    // A list far longer than any card: eight sections of twelve.
+    readonly property var chores: ["Kitchen", "Bathroom", "Bedroom", "Hall", "Garden", "Garage", "Office", "Attic"].map((room, r) => ({
+        title: room, items: Array.from({ length: 12 }, (_, i) => ({ text: `${room} task ${i + 1}`, done: (r + i) % 4 === 0 }))
+    }))
 
     readonly property var scenes: ({
         "orb-listening": { mood: "listening", at: [240, 180], cards: [] },
@@ -49,14 +66,18 @@ Window {
         "panel-training": { mood: "listening", panel: { view: "settings" } },
         "panel-history": { mood: "asleep", panel: { view: "history" } },
         "panel-history-search": { mood: "asleep", panel: { view: "history", query: "basil" } },
-        "panel-now": { mood: "asleep", panel: { view: "now", card: { title: "Weather", big: "7°", lines: ["Cloudy, feels like 4°. Rain from 16:00.", "Tomorrow 4 to 8 degrees, light rain."] } } }
+        "panel-now": { mood: "asleep", panel: { view: "now", card: { title: "Weather", big: "7°", lines: ["Cloudy, feels like 4°. Rain from 16:00.", "Tomorrow 4 to 8 degrees, light rain."] } } },
+        "panel-list": { mood: "asleep", panel: { view: "now", card: { title: "Packing list", sections: win.packing } } },
+        "panel-list-desk": { mood: "asleep", screen: [5120, 1440], panel: { view: "now", card: { title: "Packing list", sections: win.packing } } },
+        "panel-list-wide": { mood: "asleep", screen: [5120, 1440], panel: { view: "now", card: { title: "Spring cleaning", sections: win.chores } } },
+        "panel-list-long": { mood: "asleep", panel: { view: "now", card: { title: "Spring cleaning", sections: win.chores } } }
     })
     readonly property var s: scenes[scene] ?? scenes["card-below"]
     readonly property bool cardsUp: (s.cards ?? []).length > 0
     readonly property bool awake: ["listening", "thinking", "speaking"].includes(s.mood)
 
     // The orb and its pill, as shell.qml groups them, beside the cursor.
-    readonly property var panelSpot: Place.panelRect({ w: win.width, h: win.height }, 12)
+    readonly property var panelSpot: Place.panelRect({ w: win.width, h: win.height }, 12, previewPanel.want)
     Item {
         id: group
 
@@ -155,7 +176,11 @@ Window {
     }
 
     Panel {
+        id: previewPanel
+
         visible: win.panelScene
+        base: Place.panelRect({ w: win.width, h: win.height }, 12)
+        room: Place.panelRoom({ w: win.width, h: win.height }, 12)
         x: win.panelSpot.x
         y: win.panelSpot.y
         width: win.panelSpot.w

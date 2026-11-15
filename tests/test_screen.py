@@ -40,6 +40,43 @@ class TestEndpoint(ApiCase):
         huge = "x" * (600 * 1024)
         self.assertEqual(self.client.post("/v1/screen", headers=HEADERS, json={"html": huge}).status_code, 400)
 
+    def test_a_list_goes_to_the_central_card_as_clean_sections(self):
+        sections = [{"title": " Clothes ", "items": ["Socks", {"text": "Hoodie", "done": True}, "  ", 7]},
+                    {"title": "Empty", "items": []}, "junk", {"items": [{"text": "Untitled item"}]}]
+        with mock.patch.object(server, "publish") as published:
+            reply = self.client.post("/v1/screen", headers=HEADERS, json={"title": "Packing list", "sections": sections})
+        self.assertEqual(reply.status_code, 200)
+        event = published.call_args.args[0]
+        self.assertEqual(event["size"], "large")
+        self.assertEqual(event["card"]["sections"], [
+            {"title": "Clothes", "items": [{"text": "Socks", "done": False}, {"text": "Hoodie", "done": True}, {"text": "7", "done": False}]},
+            {"title": "", "items": [{"text": "Untitled item", "done": False}]},
+        ])
+        self.assertEqual(event["card"]["ttl"], 60.0)
+
+    def test_a_list_alone_is_enough_and_never_runs_past_the_cap(self):
+        many = [{"title": f"S{n}", "items": [f"item {i}" for i in range(40)]} for n in range(10)]
+        with mock.patch.object(server, "publish") as published:
+            self.assertEqual(self.client.post("/v1/screen", headers=HEADERS, json={"sections": many}).status_code, 200)
+        sections = published.call_args.args[0]["card"]["sections"]
+        self.assertEqual(sum(len(x["items"]) for x in sections), server.SCREEN_ITEMS)
+        self.assertEqual(self.client.post("/v1/screen", headers=HEADERS, json={"sections": [{"items": [" "]}]}).status_code, 400)
+
+    def test_odd_item_shapes_never_spill_into_letters(self):
+        sections = [{"title": "A", "items": "Socks"}, {"title": "B", "items": {"x": 1}}, {"title": "C", "items": [0, None, "x"]}]
+        with mock.patch.object(server, "publish") as published:
+            self.client.post("/v1/screen", headers=HEADERS, json={"sections": sections})
+        self.assertEqual(published.call_args.args[0]["card"]["sections"], [
+            {"title": "A", "items": [{"text": "Socks", "done": False}]},
+            {"title": "C", "items": [{"text": "0", "done": False}, {"text": "x", "done": False}]},
+        ])
+
+    def test_a_list_and_a_page_together_are_refused(self):
+        body = {"sections": [{"items": ["a"]}], "html": "<p>a</p>"}
+        reply = self.client.post("/v1/screen", headers=HEADERS, json=body)
+        self.assertEqual(reply.status_code, 400)
+        self.assertIn("sections", reply.json()["detail"])
+
     def test_only_the_hub_token_may_show(self):
         self.assertEqual(self.client.post("/v1/screen", json={"title": "x"}).status_code, 403)
 
@@ -103,6 +140,11 @@ class TestDesktopSide(unittest.TestCase):
         self.assertIsNone(busy.show({"open": "../x"}, now=5))
         self.assertFalse((Path(self.tmp.name) / "panel.json").exists())
 
+    def test_a_list_always_opens_the_central_card(self):
+        sections = [{"title": "Clothes", "items": [{"text": "Socks", "done": False}]}]
+        self.assertEqual(busy.show({"card": {"id": "l1", "title": "Packing", "sections": sections}, "size": "small"}, now=5), "large")
+        self.assertEqual(self.read("panel.json")["card"]["sections"], sections)
+
     def test_a_page_is_saved_and_referenced(self):
         busy.show({"card": {"id": "p1", "html": "<b>3d</b>", "ttl": 60}, "size": "small"}, now=1000)
         card = self.read("presence.json")["cards"][0]
@@ -119,6 +161,18 @@ class TestTool(unittest.TestCase):
         self.assertIn("central card", text)
         self.assertEqual(post.call_args.kwargs["json"], {"title": "Weather", "lines": ["cloudy"], "size": "large"})
         self.assertTrue(post.call_args.args[0].endswith("/v1/screen"))
+
+    def test_the_tool_passes_a_list_on_and_says_where_it_went(self):
+        reply = mock.Mock(status_code=200)
+        sections = [{"title": "Clothes", "items": [{"text": "Socks"}]}]
+        with mock.patch.object(mcp_server, "get_config", return_value={"hub_token": "t"}), \
+                mock.patch.object(mcp_server.httpx, "post", return_value=reply) as post:
+            text = mcp_server.call("show_on_screen", {"title": "Packing", "sections": sections})
+        self.assertIn("central card", text)
+        self.assertEqual(post.call_args.kwargs["json"], {"title": "Packing", "sections": sections})
+        tool = next(t for t in mcp_server.EXTRA if t["name"] == "show_on_screen")
+        self.assertIn("sections", tool["inputSchema"]["properties"])
+        self.assertIn("never in html", tool["description"])
 
     def test_the_tool_is_listed_and_allowed_while_locked(self):
         from hub import lockguard

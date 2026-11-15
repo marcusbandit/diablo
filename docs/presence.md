@@ -196,6 +196,19 @@ ears' own cards and a large one into `panel.json`, which opens the central card 
 page is saved under `pages/` in the state dir, the newest 20 kept, and the card carries its path.
 "Enlarge this" then moves a small one into the central card like any other.
 
+## Lists in the central card
+
+A list or checklist comes as `sections` (`[{title, items: [{text, done}]}]`, at most 160 items;
+the hub cleans it in `screen_sections`) and always opens in the central card, never as an HTML
+page. `ListGrid.qml` draws every section as a block and the blocks in columns of 280 px, read
+down each column in order. `Place.listFit` picks the layout: the card's usual size in as many
+columns as its usual width holds, then wider, then taller, up to `Place.panelRoom` (86% of the
+monitor, at most 1720 by 1240). Whole sections stay together while that fits; past it a section
+breaks between items and its heading starts the rest in the next column. Only a list longer than
+that scrolls, through `WheelStep.qml` and the arrow, page, Home and End keys. Clicking an item
+ticks it, and `shell.qml` keeps the tick in `panel.json`. The blocks are measured out of sight at
+the column's width first, so long items that wrap still balance.
+
 ## HTML pages in a card
 
 A card or the central card can hold a whole HTML page (`page` on the card, a file under

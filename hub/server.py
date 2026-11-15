@@ -156,6 +156,7 @@ class ScreenIn(BaseModel):
     big: str = ""
     lines: list[str] = []
     html: str = ""
+    sections: list = []
     size: str = "small"
     ttl: float = 0
 
@@ -1477,11 +1478,45 @@ def screen_card(body):
     html = body.html or ""
     if html and len(html.encode("utf-8")) > agent.HTML_LIMIT:
         return f"the page is over {agent.HTML_LIMIT // 1024} KB"
-    if not (body.title.strip() or body.big.strip() or lines or html.strip()):
-        return "nothing to show: give a title, a big figure, lines or html"
-    ttl = body.ttl if body.ttl > 0 else (60.0 if html else max(10.0, min(60.0, 6 + sum(len(x) for x in lines) / 14)))
-    return {"id": uuid.uuid4().hex[:10], "kind": "shown", "title": body.title.strip()[:60], "big": body.big.strip()[:24],
+    sections = screen_sections(body.sections)
+    if sections and html.strip():
+        return "give sections or html, not both: a list goes in sections"
+    if not (body.title.strip() or body.big.strip() or lines or html.strip() or sections):
+        return "nothing to show: give a title, a big figure, lines, sections or html"
+    ttl = body.ttl if body.ttl > 0 else (60.0 if html or sections else max(10.0, min(60.0, 6 + sum(len(x) for x in lines) / 14)))
+    card = {"id": uuid.uuid4().hex[:10], "kind": "shown", "title": body.title.strip()[:60], "big": body.big.strip()[:24],
             "lines": lines, "html": html, "ttl": min(ttl, 3600.0), "size": size}
+    if sections:
+        card["sections"] = sections
+        card["size"] = "large"
+    return card
+
+
+SCREEN_SECTIONS, SCREEN_ITEMS = 16, 160
+
+
+def screen_sections(raw):
+    """A list's sections as the central card draws them, [{title, items: [{text, done}]}]: an item
+    may come as plain text, empty ones are dropped, and the whole list stops at SCREEN_ITEMS."""
+    sections, left = [], SCREEN_ITEMS
+    for section in raw[:SCREEN_SECTIONS] if isinstance(raw, list) else []:
+        if not isinstance(section, dict) or left <= 0:
+            continue
+        items, given = [], section.get("items")
+        if isinstance(given, str):
+            given = [given]
+        for item in given if isinstance(given, list) else []:
+            if isinstance(item, dict):
+                text, done = item.get("text"), bool(item.get("done"))
+            else:
+                text, done = item, False
+            text = " ".join(("" if text is None else str(text)).split())[:200]
+            if text and len(items) < left:
+                items.append({"text": text, "done": done})
+        if items:
+            sections.append({"title": " ".join(str(section.get("title") or "").split())[:60], "items": items})
+            left -= len(items)
+    return sections
 
 
 @app.post("/v1/restart")

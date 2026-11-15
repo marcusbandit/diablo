@@ -21,7 +21,7 @@ SHARED = (
 EXTRA = [
     {
         "name": "show_on_screen",
-        "description": "Show something on Marcus's desktop, beside your orb, whichever channel he asked on. size small: a card that grows out of the orb and fades after a while, for a quick fact, a figure, a short list. size large: the big central card, for anything worth looking at properly; he can also say \"enlarge this\" to make a small one big. A whole HTML page (html) renders in the card, scripts and https resources allowed, no local files: use it for interactive explanations, charts and 3D. Plain facts go in title, big (one short figure) and lines.",
+        "description": "Show something on Marcus's desktop, beside your orb, whichever channel he asked on. size small: a card that grows out of the orb and fades after a while, for a quick fact, a figure, a short list. size large: the big central card, for anything worth looking at properly; he can also say \"enlarge this\" to make a small one big. A whole HTML page (html) renders in the card, scripts and https resources allowed, no local files: use it for interactive explanations, charts and 3D. Plain facts go in title, big (one short figure) and lines. A list or checklist with more than a few items (packing, shopping, steps, todos) goes in sections, never in html: it always opens in the central card, laid out in columns so all of it shows at once, and he can tick items off there.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -29,6 +29,22 @@ EXTRA = [
                 "big": {"type": "string", "description": "one short figure or word, shown large (at most 24 characters)"},
                 "lines": {"type": "array", "items": {"type": "string"}, "description": "a few short lines"},
                 "html": {"type": "string", "description": "a whole HTML page to render instead of or below the lines, at most 512 KB"},
+                "sections": {
+                    "type": "array",
+                    "description": "a list or checklist: its sections in order, each a heading and its items; done ticks an item off",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "items": {"type": "array", "items": {
+                                "type": "object",
+                                "properties": {"text": {"type": "string"}, "done": {"type": "boolean"}},
+                                "required": ["text"],
+                            }},
+                        },
+                        "required": ["items"],
+                    },
+                },
                 "size": {"type": "string", "enum": ["small", "large"]},
                 "ttl": {"type": "number", "description": "seconds a small card stays; leave out for the default"},
             },
@@ -353,13 +369,13 @@ def screen_post(path, body):
 
 
 def show_on_screen(arguments):
-    body = {key: arguments[key] for key in ("title", "big", "lines", "html", "size", "ttl") if arguments.get(key) is not None}
+    body = {key: arguments[key] for key in ("title", "big", "lines", "html", "sections", "size", "ttl") if arguments.get(key) is not None}
     if isinstance(body.get("lines"), str):
         body["lines"] = [body["lines"]]
     failed = screen_post("/v1/screen", body)
     if failed:
         return failed if failed.startswith("could not") else f"not shown: {failed}"
-    size = body.get("size") or "small"
+    size = "large" if body.get("sections") else body.get("size") or "small"
     return "shown in the central card" if size == "large" else "shown beside the orb; he can say enlarge this"
 
 
