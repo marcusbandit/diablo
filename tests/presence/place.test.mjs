@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const source = readFileSync(new URL("../../presence/place.js", import.meta.url), "utf8").replace(/^\.pragma library\s*$/m, "");
-const place = new Function(`${source}; return { cardRect, panelRect, reaching, parsePoint, nearestRect, restSpot };`)();
+const place = new Function(`${source}; return { cardRect, panelRect, panelRoom, columnsIn, listColumns, listFit, reaching, parsePoint, nearestRect, restSpot };`)();
 
 const screen = { w: 2560, h: 1440 };
 const card = { w: 300, h: 120 };
@@ -150,4 +150,78 @@ test("a resting pointer over an ordinary window sends him to the corner", () => 
 test("while Marcus needs him he stays beside the resting pointer", () => {
     assert.equal(place.restSpot(true, true, true), "follow");
     assert.equal(place.restSpot(true, true, false), "follow");
+});
+
+test("the central card grows to what its content asks for, up to a share of the screen", () => {
+    const usual = place.panelRect(screen);
+    assert.deepEqual(place.panelRect(screen, 12, { w: 400, h: 300 }), usual);
+    const grown = place.panelRect(screen, 12, { w: 1300, h: 900 });
+    assert.equal(grown.w, 1300);
+    assert.equal(grown.h, 900);
+    assert.equal(grown.x * 2 + grown.w, screen.w);
+    const room = place.panelRoom(screen);
+    const huge = place.panelRect(screen, 12, { w: 9000, h: 9000 });
+    assert.equal(huge.w, room.w);
+    assert.equal(huge.h, room.h);
+    assert.ok(room.h <= screen.h * 0.86 && room.w <= 1720);
+});
+
+test("columns are counted from the room they have", () => {
+    assert.equal(place.columnsIn(916, 280, 24), 3);
+    assert.equal(place.columnsIn(200, 280, 24), 1);
+    assert.equal(place.columnsIn(1656, 280, 24), 5);
+});
+
+// A packing list: four sections of 4, 5, 9 and 4 items, 30 px a row under a 24 px heading.
+const gaps = { pad: 14, block: 14 };
+const heads = [24, 24, 24, 24];
+const rows = [4, 5, 9, 4].map(n => Array(n).fill(30));
+
+test("a list's whole sections go down the columns in order", () => {
+    const r = place.listColumns(heads, rows, 3, 560, gaps);
+    assert.equal(r.columns.length, 3);
+    const order = r.columns.flat().map(p => p.section);
+    assert.deepEqual(order, [0, 1, 2, 3]);
+    assert.ok(r.columns.flat().every(p => p.from === 0 && p.to === rows[p.section].length));
+    assert.equal(r.h, 2 * 14 + 24 + 4 * 30 + 14 + 2 * 14 + 24 + 5 * 30);
+});
+
+test("the tallest column is as short as whole sections allow", () => {
+    const r = place.listColumns(heads, rows, 2, 9999, gaps);
+    const heights = r.columns.map(c => c.reduce((h, p, i) => h + (i ? 14 : 0) + 28 + 24 + 30 * (p.to - p.from), 0));
+    assert.equal(Math.max(...heights), r.h);
+    assert.equal(r.h, 28 + 24 + 270 + 14 + 28 + 24 + 120);
+});
+
+test("one long section breaks between items when whole it would not fit", () => {
+    const long = [Array(27).fill(30)];
+    const r = place.listColumns([24], long, 3, 560, gaps);
+    assert.equal(r.columns.length, 3);
+    assert.deepEqual(r.columns.map(c => c[0].to - c[0].from), [9, 9, 9]);
+    assert.deepEqual(r.columns.map(c => c[0].from), [0, 9, 18]);
+    assert.equal(r.h, 28 + 24 + 9 * 30);
+});
+
+test("a list keeps the card's usual size when it fits there", () => {
+    const r = place.listFit(heads, rows, 3, 5, 560, 1000, gaps);
+    assert.equal(r.columns.length, 3);
+    assert.ok(r.h <= 560);
+});
+
+test("a longer list goes wider before it goes taller, and only then scrolls", () => {
+    const many = Array(10).fill(24);
+    const big = Array(10).fill(0).map(() => Array(10).fill(30));
+    const wider = place.listFit(many, big, 3, 5, 1100, 1100, gaps);
+    assert.equal(wider.columns.length, 4);
+    const taller = place.listFit(many, big, 3, 5, 560, 1100, gaps);
+    assert.equal(taller.columns.length, 5);
+    assert.ok(taller.h > 560 && taller.h <= 1100);
+    const scrolls = place.listFit(many, big, 3, 3, 560, 700, gaps);
+    assert.equal(scrolls.columns.length, 3);
+    assert.ok(scrolls.h > 700);
+});
+
+test("an empty list lays out nothing", () => {
+    assert.deepEqual(place.listColumns([], [], 3, 560, gaps), { columns: [], h: 0 });
+    assert.deepEqual(place.listColumns([24], [[]], 3, 560, gaps), { columns: [], h: 0 });
 });

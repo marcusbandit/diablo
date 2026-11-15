@@ -13,7 +13,7 @@ the reply itself to a line ("Here is how a four-stroke engine moves, sir.").
 - "How does X work", "show me X", "what does X look like", "explain X in 3D".
 - Something with parts in space or motion: mechanisms, structures, orbits, molecules, layouts.
 - Not for plain facts, numbers or lists: those are a small card (`show_on_screen` with title,
-  big and lines) or words.
+  big and lines), a list in `sections`, or words.
 
 ## How
 

@@ -195,7 +195,7 @@ def show(event, now=None):
     if html:
         card["page"] = save_page(str(card["id"]), html)
     card["at"] = now
-    if event.get("size") == "large":
+    if event.get("size") == "large" or card.get("sections"):
         panel = read_json(STATE / "panel.json", {})
         write_json(STATE / "panel.json", {**panel, "open": True, "view": "now", "card": card, "page": "", "at": now})
         return "large"

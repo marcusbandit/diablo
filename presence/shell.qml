@@ -67,6 +67,17 @@ ShellRoot {
         panelFile.setText(JSON.stringify(next));
     }
 
+    // An item of the list in the central card ticked or unticked, kept in panel.json with it.
+    function tick(section: int, item: int, done: bool) {
+        const card = JSON.parse(JSON.stringify(root.panelState.card ?? null));
+        const items = card?.sections?.[section]?.items;
+        if (!items || item < 0 || item >= items.length)
+            return;
+        const was = items[item];
+        items[item] = { text: typeof was === "string" ? was : String(was?.text ?? ""), done: done };
+        root.setPanel({ card: card });
+    }
+
     function setFollow(on: bool) {
         root.followCursor = on;
         settingsFile.setText(JSON.stringify({ follow: on }));
@@ -596,7 +607,7 @@ ShellRoot {
         readonly property real localY: follow.anchor.y - (follow.screen?.y ?? 0)
         readonly property bool flipX: root.followCursor && follow.localX + follow.gap + group.width > follow.width - follow.edge
         readonly property bool flipY: root.followCursor && follow.localY + follow.gap + group.height > follow.height - follow.edge
-        readonly property var panelSpot: Place.panelRect({ w: follow.width, h: follow.height }, follow.edge)
+        readonly property var panelSpot: Place.panelRect({ w: follow.width, h: follow.height }, follow.edge, panel.want)
         readonly property real targetX: root.panelOpen ? follow.panelSpot.x + 18 : Math.max(follow.edge, Math.min(follow.width - group.width - follow.edge,
             root.cornered ? follow.width - group.width - 22
             : follow.flipX ? follow.localX - follow.gap - group.width : follow.localX + follow.gap))
@@ -880,6 +891,9 @@ ShellRoot {
             opacity: root.panelOpen ? 1 : 0
             view: root.panelState.view ?? "settings"
             card: root.panelState.card ?? null
+            base: Place.panelRect({ w: follow.width, h: follow.height }, follow.edge)
+            room: Place.panelRoom({ w: follow.width, h: follow.height }, follow.edge)
+            onItemToggled: (section, item, done) => root.tick(section, item, done)
             page: root.panelState.page ?? ""
             pageAt: root.panelState.page_at ?? 0
             followCursor: root.followCursor
