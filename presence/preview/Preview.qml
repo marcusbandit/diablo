@@ -35,8 +35,9 @@ Window {
             { text: "Phone charger", done: false }, { text: "Power bank", done: false }, { text: "Headphones", done: false },
             { text: "Travel adapter", done: false }] },
         { title: "Clothes", items: ["4 sets of underwear", "4 pairs of socks", "4 t-shirts", "1 pair of trousers", "Hoodie",
-            "Something smart for the dinner", "Warm jacket", "Hat, scarf and gloves", "Comfortable shoes"] },
-        { title: "Toiletries", items: ["Toothbrush and toothpaste", "Deodorant", "Shampoo, 100 ml at most", "Any medicine", "Earplugs"] }
+            "Something smart for the dinner", "Warm jacket", "Hat, scarf and gloves", "Comfortable shoes"].map(t => ({ text: t, done: false })) },
+        { title: "Toiletries", items: ["Toothbrush and toothpaste", "Deodorant", "Shampoo, 100 ml at most", "Any medicine",
+            "Earplugs"].map(t => ({ text: t, done: false })) }
     ]
     // A list far longer than any card: eight sections of twelve.
     readonly property var chores: ["Kitchen", "Bathroom", "Bedroom", "Hall", "Garden", "Garage", "Office", "Attic"].map((room, r) => ({

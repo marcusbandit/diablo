@@ -62,6 +62,15 @@ class TestEndpoint(ApiCase):
         self.assertEqual(sum(len(x["items"]) for x in sections), server.SCREEN_ITEMS)
         self.assertEqual(self.client.post("/v1/screen", headers=HEADERS, json={"sections": [{"items": [" "]}]}).status_code, 400)
 
+    def test_odd_item_shapes_never_spill_into_letters(self):
+        sections = [{"title": "A", "items": "Socks"}, {"title": "B", "items": {"x": 1}}, {"title": "C", "items": [0, None, "x"]}]
+        with mock.patch.object(server, "publish") as published:
+            self.client.post("/v1/screen", headers=HEADERS, json={"sections": sections})
+        self.assertEqual(published.call_args.args[0]["card"]["sections"], [
+            {"title": "A", "items": [{"text": "Socks", "done": False}]},
+            {"title": "C", "items": [{"text": "0", "done": False}, {"text": "x", "done": False}]},
+        ])
+
     def test_a_list_and_a_page_together_are_refused(self):
         body = {"sections": [{"items": ["a"]}], "html": "<p>a</p>"}
         reply = self.client.post("/v1/screen", headers=HEADERS, json=body)

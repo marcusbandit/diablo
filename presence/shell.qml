@@ -73,8 +73,7 @@ ShellRoot {
         const items = card?.sections?.[section]?.items;
         if (!items || item < 0 || item >= items.length)
             return;
-        const was = items[item];
-        items[item] = { text: typeof was === "string" ? was : String(was?.text ?? ""), done: done };
+        items[item].done = done;
         root.setPanel({ card: card });
     }
 

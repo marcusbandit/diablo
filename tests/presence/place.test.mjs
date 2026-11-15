@@ -225,3 +225,10 @@ test("an empty list lays out nothing", () => {
     assert.deepEqual(place.listColumns([], [], 3, 560, gaps), { columns: [], h: 0 });
     assert.deepEqual(place.listColumns([24], [[]], 3, 560, gaps), { columns: [], h: 0 });
 });
+
+test("a list takes one more column before it breaks a section", () => {
+    const r = place.listFit(heads, rows, 3, 5, 370, 1000, gaps);
+    assert.equal(r.columns.length, 4);
+    assert.ok(r.columns.flat().every(p => p.from === 0 && p.to === rows[p.section].length));
+    assert.ok(r.h <= 370);
+});

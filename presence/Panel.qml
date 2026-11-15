@@ -27,8 +27,11 @@ Rectangle {
     property var base: ({ w: 980, h: 720 })
     property var room: ({ w: 980, h: 720 })
     readonly property bool listing: (panel.card?.sections ?? []).length > 0
-    readonly property real chrome: nowPage.y + 28
-    readonly property var want: panel.listing ? { w: listGrid.implicitWidth + 64, h: panel.chrome + listView.y + listGrid.implicitHeight } : null
+    // Now's margins, which a list's size is worked out from: its sides, and above and below it.
+    readonly property int nowSide: 32
+    readonly property real chrome: nowPage.y + nowPage.foot
+    readonly property var want: panel.listing && panel.view === "now"
+        ? { w: listGrid.implicitWidth + 2 * panel.nowSide, h: panel.chrome + nowPage.below + listGrid.implicitHeight } : null
     signal itemToggled(int section, int item, bool done)
     signal closeRequested
     signal viewRequested(string view)
@@ -259,10 +262,14 @@ Rectangle {
     Item {
         id: nowPage
 
-        x: 32
+        // Where the list or the page starts: under the text, if there is any.
+        readonly property real below: nowText.hasText ? nowText.implicitHeight + 16 : 0
+        readonly property int foot: 28
+
+        x: panel.nowSide
         y: 96
-        width: parent.width - 64
-        height: parent.height - y - 28
+        width: parent.width - 2 * panel.nowSide
+        height: parent.height - y - nowPage.foot
         visible: panel.view === "now"
 
         Column {
@@ -272,7 +279,7 @@ Rectangle {
 
             // Over a list it keeps the card's usual width, so the lines wrap the same however
             // wide the list makes the card.
-            width: panel.listing ? panel.base.w - 64 : parent.width
+            width: panel.listing ? panel.base.w - 2 * panel.nowSide : parent.width
             spacing: 8
             visible: panel.card !== null
 
@@ -317,7 +324,7 @@ Rectangle {
         Flickable {
             id: listView
 
-            y: nowText.hasText ? nowText.implicitHeight + 16 : 0
+            y: nowPage.below
             width: parent.width
             height: parent.height - y
             visible: panel.listing
@@ -338,10 +345,10 @@ Rectangle {
 
                 style: panel.style
                 sections: panel.listing ? panel.card.sections : []
-                minColumns: Place.columnsIn(panel.base.w - 64, listGrid.columnWidth, listGrid.columnGap)
-                maxColumns: Place.columnsIn(panel.room.w - 64, listGrid.columnWidth, listGrid.columnGap)
-                baseHeight: panel.base.h - panel.chrome - listView.y
-                roomHeight: panel.room.h - panel.chrome - listView.y
+                minColumns: Place.columnsIn(panel.base.w - 2 * panel.nowSide, listGrid.columnWidth, listGrid.columnGap)
+                maxColumns: Place.columnsIn(panel.room.w - 2 * panel.nowSide, listGrid.columnWidth, listGrid.columnGap)
+                baseHeight: panel.base.h - panel.chrome - nowPage.below
+                roomHeight: panel.room.h - panel.chrome - nowPage.below
                 onToggled: (section, item, done) => panel.itemToggled(section, item, done)
             }
         }
@@ -352,7 +359,7 @@ Rectangle {
 
             readonly property bool wanted: panel.view === "now" && (panel.card?.page ?? "") !== ""
 
-            y: nowText.hasText ? nowText.implicitHeight + 16 : 0
+            y: nowPage.below
             width: parent.width
             height: parent.height - y
             visible: pageArea.wanted

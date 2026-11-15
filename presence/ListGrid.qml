@@ -27,14 +27,6 @@ Item {
     implicitWidth: grid.layout.columns.length ? grid.layout.columns.length * (grid.columnWidth + grid.columnGap) - grid.columnGap : 0
     implicitHeight: grid.layout.h
 
-    function itemText(item: var): string {
-        return typeof item === "string" ? item : String(item?.text ?? "");
-    }
-
-    function itemDone(item: var): bool {
-        return typeof item === "object" && !!item?.done;
-    }
-
     function measure() {
         const heads = [], rows = [];
         for (let s = 0; s < measurer.count; s++) {
@@ -44,6 +36,8 @@ Item {
             heads.push(block.headHeight);
             rows.push(block.itemHeights());
         }
+        if (JSON.stringify(heads) === JSON.stringify(grid.heads) && JSON.stringify(rows) === JSON.stringify(grid.rows))
+            return;
         grid.heads = heads;
         grid.rows = rows;
     }
@@ -52,6 +46,8 @@ Item {
         Qt.callLater(grid.measure);
     }
 
+    // A tick changes `sections` but no heights: the blocks and items stay as they are, so the
+    // layout stays too and only the ticked item redraws.
     onSectionsChanged: grid.measureSoon()
 
     Item {
@@ -61,7 +57,7 @@ Item {
         Repeater {
             id: measurer
 
-            model: grid.sections
+            model: grid.sections.length
             onItemAdded: grid.measureSoon()
             onItemRemoved: grid.measureSoon()
 
@@ -157,7 +153,7 @@ Item {
             Repeater {
                 id: checks
 
-                model: (block.info.items ?? []).slice(block.from, block.to)
+                model: Math.max(0, block.to - block.from)
 
                 Check {
                     section: block.section
@@ -171,11 +167,11 @@ Item {
     component Check: Rectangle {
         id: check
 
-        required property var modelData
         required property int index
         property int section: 0
         property int offset: 0
-        readonly property bool done: grid.itemDone(check.modelData)
+        readonly property var item: grid.sections[check.section]?.items?.[check.offset + check.index] ?? ({})
+        readonly property bool done: !!check.item.done
 
         width: parent?.width ?? 0
         implicitHeight: Math.max(30, label.implicitHeight + 10)
@@ -208,7 +204,7 @@ Item {
             x: 34
             y: 5
             width: parent.width - x - 6
-            text: grid.itemText(check.modelData)
+            text: String(check.item.text ?? "")
             color: grid.style.text
             opacity: check.done ? 0.45 : 1
             font.family: grid.style.family

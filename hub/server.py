@@ -1502,13 +1502,15 @@ def screen_sections(raw):
     for section in raw[:SCREEN_SECTIONS] if isinstance(raw, list) else []:
         if not isinstance(section, dict) or left <= 0:
             continue
-        items = []
-        for item in section.get("items") or []:
+        items, given = [], section.get("items")
+        if isinstance(given, str):
+            given = [given]
+        for item in given if isinstance(given, list) else []:
             if isinstance(item, dict):
                 text, done = item.get("text"), bool(item.get("done"))
             else:
                 text, done = item, False
-            text = " ".join(str(text or "").split())[:200]
+            text = " ".join(("" if text is None else str(text)).split())[:200]
             if text and len(items) < left:
                 items.append({"text": text, "done": done})
         if items:

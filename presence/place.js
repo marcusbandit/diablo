@@ -69,8 +69,9 @@ function columnsIn(room, width, gap) {
 // block: `pad` above and below, its heading heads[s] high, then its items rows[s]; blocks in a
 // column sit `block` apart. Whole sections go into the columns when that keeps the tallest one
 // within maxH; past that a section breaks between items and its heading starts the rest in the
-// next column. Returns {columns: [[{section, from, to}]], h}, `to` exclusive, h the tallest column.
-function listColumns(heads, rows, count, maxH, gaps) {
+// next column. `whole` true or false asks for one of the two only. Returns
+// {columns: [[{section, from, to}]], h}, `to` exclusive, h the tallest column.
+function listColumns(heads, rows, count, maxH, gaps, whole) {
     const g = Object.assign({ pad: 14, block: 14 }, gaps || {});
     count = Math.max(1, Math.floor(count));
     const sections = [];
@@ -81,11 +82,15 @@ function listColumns(heads, rows, count, maxH, gaps) {
     }
     if (!sections.length)
         return { columns: [], h: 0 };
-    const whole = wholeSections(sections, count, g);
-    if (whole.h <= maxH)
-        return whole;
+    if (whole === true)
+        return wholeSections(sections, count, g);
+    if (whole === false)
+        return brokenSections(sections, count, g);
+    const kept = wholeSections(sections, count, g);
+    if (kept.h <= maxH)
+        return kept;
     const broken = brokenSections(sections, count, g);
-    return broken.h < whole.h ? broken : whole;
+    return broken.h < kept.h ? broken : kept;
 }
 
 // listColumns with whole sections only: the split of the blocks into at most `count` runs whose
@@ -188,16 +193,19 @@ function tallest(columns, sections, g) {
     return most;
 }
 
-// The columns a list is laid out in: the card's usual height in the fewest columns its usual
-// width holds, then wider, then taller, then the most it may take, scrolling past that.
-// Returns listColumns's answer for the first that fits.
+// The columns a list is laid out in, the first that fits: the card's usual height with whole
+// sections, in the fewest columns its usual width holds, then wider; the same with sections
+// broken between items; then taller, up to the most it may take, scrolling past that.
 function listFit(heads, rows, minCols, maxCols, baseH, roomH, gaps) {
     minCols = Math.max(1, Math.floor(minCols));
     maxCols = Math.max(minCols, Math.floor(maxCols));
-    for (let c = minCols; c <= maxCols; c++) {
-        const r = listColumns(heads, rows, c, baseH, gaps);
-        if (r.h <= baseH)
-            return r;
+    const modes = [true, false];
+    for (let m = 0; m < modes.length; m++) {
+        for (let c = minCols; c <= maxCols; c++) {
+            const r = listColumns(heads, rows, c, baseH, gaps, modes[m]);
+            if (r.h <= baseH)
+                return r;
+        }
     }
     return listColumns(heads, rows, maxCols, roomH, gaps);
 }
