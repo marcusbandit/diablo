@@ -71,9 +71,11 @@ ping from then on, and each run is still logged. Keep asking takes the rule away
 
 Only Marcus decides, by his own taps. Every ping with buttons is a question card in the app's main
 conversation (header Mail, the same buttons as options, its own conversation `mail-approval-<id>`, open
-for seven days); answering it runs `decide` in the hub loop directly, with no brain turn, and a decision
-made anywhere else cancels the card. With `delivery.telegram` set to `all` the same buttons also go to
-Telegram, which run `decide` the same way. The brain has `mail_recent` and `mail_approvals` to
+for seven days). Callers hand `notify` a `choice(approval_id, (label, decision), ...)`; the card and the
+Telegram keyboard are both built from it. Answering the card queues the decision exactly like a Mail
+panel tap, with no brain turn, and a decision made anywhere else cancels the card. A queued decision
+that fails in the mail loop says so in the app. With `delivery.telegram` set to `all` the same buttons
+also go to Telegram, which run `decide` in the hub loop directly. The brain has `mail_recent` and `mail_approvals` to
 read, and no tool that approves, so text in a mail can never talk a brain turn into an approval. Mail
 panel taps run on a worker thread, so they land in the `decisions` queue and the mail loop carries them
 out within seconds.

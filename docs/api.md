@@ -175,10 +175,13 @@ Some questions carry an action instead of a turn: a mail approval is a question 
 with the buttons the request offers (Approve and Deny, Send it and Don't send, Always and Keep
 asking, Let it continue and Stop it), in a conversation of its own (`mail-approval-<id>`) so it
 never replaces one Diablo asked, open for seven days, and options only. Answering it through
-`POST /v1/questions/{id}/answer` runs the same decision a Telegram button ran, stores his tap and
-the outcome line (`meta.kind` `mail`) in the main conversation, and answers `{"reply", "id",
-"section", "user_id", "objects": [], "answered"}` at once, with no brain turn. A decision made
-anywhere else, the Mail panel included, cancels the card.
+`POST /v1/questions/{id}/answer` queues the decision the way a Mail panel tap does
+(`mailbox.queue_decision`), stores his tap and the outcome line (`meta.kind` `mail`) in the main
+conversation, and answers `{"reply", "id", "section", "user_id", "objects": [], "answered"}` at once,
+with no brain turn. The mail loop carries it out within seconds; a decision that fails there says so in
+the app. A request that cannot take the decision any more leaves the card answered with the reason. A
+retried tap with the same `client_id` gets the stored reply. A decision made anywhere else, the Mail
+panel included, cancels the card.
 
 ## Files
 

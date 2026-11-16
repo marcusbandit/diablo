@@ -122,8 +122,8 @@ class MailCase(unittest.TestCase):
             return {"reply": self.replies.get(subject, ""), "why": ""}
         return {"ok": self.check[0], "why": self.check[1]}
 
-    async def fake_notify(self, text, buttons=None):
-        self.pings.append((text, buttons))
+    async def fake_notify(self, text, choice=None):
+        self.pings.append((text, choice))
         return True
 
     def go(self, coro):
@@ -330,7 +330,7 @@ class TestTelling(MailCase):
         self.poll()
         sent = []
 
-        async def down(text, buttons=None):
+        async def down(text, choice=None):
             sent.append(text)
             return False
 
@@ -508,7 +508,7 @@ class TestAnswers(MailCase):
         held = mailbox.pending()[0]
         self.assertEqual(held["what"], "send-reply")
         self.assertIn("shares his schedule", self.pings[0][0])
-        self.assertEqual(self.pings[0][1][0][0], ("Send it", f"mail:approve:{held['id']}"))
+        self.assertEqual(self.pings[0][1], mailbox.choice(held["id"], ("Send it", "approve"), ("Don't send", "deny")))
         self.assertEqual(self.go(mailbox.decide(held["id"], "approve")), "Sent.")
         self.assertEqual(len(self.inbox.sent), 1)
 
@@ -525,7 +525,9 @@ class TestApprovals(MailCase):
         self.baseline()
         row = self.request(2)
         self.assertEqual((row["task_kind"], row["status"]), ("share-file", "pending"))
-        self.assertEqual(self.pings[0][1], [[("Approve", f"mail:approve:{row['id']}"), ("Deny", f"mail:deny:{row['id']}")]])
+        self.assertEqual(self.pings[0][1], mailbox.choice(row["id"], ("Approve", "approve"), ("Deny", "deny")))
+        self.assertEqual(mailbox.buttons(self.pings[0][1]),
+                         [[("Approve", f"mail:approve:{row['id']}"), ("Deny", f"mail:deny:{row['id']}")]])
         self.assertIn("passed your request on to Marcus", self.inbox.sent[0][1])
 
     def test_an_approved_task_runs_and_its_answer_is_mailed_back(self):
@@ -565,7 +567,7 @@ class TestApprovals(MailCase):
             self.settle()
             stop.assert_awaited()
             self.assertEqual(mailbox.approval(row["id"])["status"], "held")
-            self.assertEqual(self.pings[-1][1][0][0], ("Let it continue", f"mail:continue:{row['id']}"))
+            self.assertEqual(self.pings[-1][1].options[0], ("Let it continue", "continue"))
             self.check = (True, "fine")
             self.assertEqual(self.go(mailbox.decide(row["id"], "continue")), f"Task #{row['id']} carries on.")
             self.settle()
@@ -600,7 +602,7 @@ class TestApprovals(MailCase):
                 self.settle()
             offer = self.pings[-1]
             self.assertIn("3 times", offer[0])
-            self.assertEqual(offer[1][0][0][0], "Always")
+            self.assertEqual(offer[1].options[0], ("Always", "always"))
             self.go(mailbox.decide(row["id"], "always"))
             before = len(self.pings)
             self.request(5, "[Agent] kit 5")
@@ -631,7 +633,7 @@ class TestApprovals(MailCase):
         mailbox.write("UPDATE approvals SET status = 'running' WHERE id = ?", (row["id"],))
         self.go(mailbox.recover())
         self.assertEqual(mailbox.approval(row["id"])["status"], "held")
-        self.assertEqual(self.pings[-1][1][0][0], ("Let it continue", f"mail:continue:{row['id']}"))
+        self.assertEqual(self.pings[-1][1].options[0], ("Let it continue", "continue"))
 
     def test_the_brain_has_no_tool_that_decides(self):
         self.assertEqual([tool["name"] for tool in mail.TOOLS], ["mail_recent", "mail_agent", "mail_approvals"])

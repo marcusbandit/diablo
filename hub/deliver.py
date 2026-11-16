@@ -10,6 +10,7 @@ Buttons that used to be a Telegram keyboard are question objects here (choice())
 a question card, and an answer runs the question's action (answer_action()) instead of a brain turn.
 """
 
+import asyncio
 import html
 import logging
 import re
@@ -21,9 +22,9 @@ logger = logging.getLogger(__name__)
 SOURCE = "hub"
 MODES = ("replies", "all")
 ACTION_TTL_S = 7 * 24 * 3600
-LINK_RE = re.compile(r"<a\s+href=\"([^\"]*)\"\s*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
-BOLD_RE = re.compile(r"</?b>", re.IGNORECASE)
+SPAN_RE = re.compile(r"<a\s+href=\"([^\"]*)\"\s*>(.*?)</a>|</?b>", re.IGNORECASE | re.DOTALL)
 TAG_RE = re.compile(r"<[^>]+>")
+MARKDOWN_RE = re.compile(r"([\\`*\[\]<>])")
 
 
 def mode():
@@ -39,20 +40,41 @@ def to_telegram(origin=""):
     return mode() == "all" or from_telegram(origin)
 
 
-def plain(text, markdown=True):
-    """Telegram HTML (bold, links, escapes) as the Markdown the apps draw, or as bare text."""
-    def link(found):
-        label, url = found.group(2), found.group(1)
-        return f"[{label}]({url})" if markdown else label
+def _words(text, markdown):
+    """Text between the spans: anything that came from a mail stays words, never Markdown."""
+    text = html.unescape(TAG_RE.sub("", text))
+    return MARKDOWN_RE.sub(r"\\\1", text) if markdown else text
 
-    text = LINK_RE.sub(link, str(text or ""))
-    text = BOLD_RE.sub("**" if markdown else "", text)
-    return html.unescape(TAG_RE.sub("", text)).strip()
+
+def plain(text, markdown=True):
+    """Telegram HTML as the Markdown the apps draw, or as bare text. Only the <b> and <a href> spans the
+    hub wrote become Markdown; every other character is escaped, so a sender name or summary that reads
+    like a Markdown link stays text."""
+    text = str(text or "")
+    out, at = [], 0
+    for found in SPAN_RE.finditer(text):
+        out.append(_words(text[at:found.start()], markdown))
+        if found.group(1) is not None:
+            label = _words(found.group(2), markdown)
+            url = html.unescape(found.group(1))
+            for raw, safe in (("(", "%28"), (")", "%29"), (" ", "%20"), ("<", "%3C"), (">", "%3E")):
+                url = url.replace(raw, safe)
+            out.append(f"[{label}]({url})" if markdown else label)
+        elif markdown:
+            out.append("**")
+        at = found.end()
+    out.append(_words(text[at:], markdown))
+    return "".join(out).strip()
 
 
 def store(text, kind, objects=None, client_id=None, source=SOURCE, meta=None):
     """The app copy: an assistant message in the main conversation. Its id. meta may set pushed false
-    for a message that answers a stored line, like a scheduled task's result, so the two stay a pair."""
+    for a message that answers a stored line, like a scheduled task's result, so the two stay a pair.
+    A client_id already stored is not stored again."""
+    if client_id:
+        _, earlier = db.by_client_id(client_id, sections.MAIN_ID)
+        if earlier is not None:
+            return earlier["id"]
     stored = {"pushed": True, **(meta or {}), "section": sections.MAIN_ID, "kind": kind}
     if objects:
         stored["objects"] = objects
@@ -106,23 +128,48 @@ def choice(conv, header, question, labels, action):
     return questions.public(asked)
 
 
+class Refused(Exception):
+    """The action would not take the answer, and nothing was written: the line to show him."""
+
+
 async def run_action(question):
-    """Carry out what an answered action question was for. The line to show Marcus."""
+    """Hand an answered action question to what it was for. The line to show Marcus. A mail card goes
+    through mailbox.queue_decision, the Mail panel's own path, so the two can never contradict each other;
+    the mail loop carries it out within seconds and says so in the app if it fails."""
     action = question.get("action") or {}
     picked = (question.get("answer") or {}).get("choices") or []
     decisions = action.get("decisions") or []
     if not picked or not 0 <= picked[0] < len(decisions):
-        return "That did nothing."
+        raise Refused("That did nothing.")
     if action.get("kind") == "mail":
         from . import mailbox
 
-        return await mailbox.decide(int(action["id"]), decisions[picked[0]])
-    return "That did nothing."
+        try:
+            return await asyncio.to_thread(mailbox.queue_decision, int(action["id"]), decisions[picked[0]])
+        except (LookupError, ValueError) as error:
+            raise Refused(str(error)) from None
+    raise Refused("That did nothing.")
+
+
+def answered_before(question, client_id):
+    """The stored outcome of an earlier tap with this client_id on this question, else None."""
+    if client_id is None:
+        return None
+    earlier, reply = db.by_client_id(client_id, sections.MAIN_ID)
+    if reply is None or (reply["meta"] or {}).get("answers") != question["id"]:
+        return None
+    return {"reply": reply["text"], "id": reply["id"], "section": sections.MAIN_ID,
+            "user_id": earlier["id"] if earlier else None, "objects": [], "answered": question["id"]}
 
 
 async def answer_action(question, choices, text="", source="fleet", client_id=None):
-    """A tap on an action question: record it, run the action, keep both lines in the main conversation.
-    Raises questions.Problem when the answer cannot count; a failed action puts the question back."""
+    """A tap on an action question: record it, hand it on, keep both lines in the main conversation.
+    A retried tap (the same client_id) gets the stored reply. Raises questions.Problem when the answer
+    cannot count. An action that refuses leaves the card answered with its reason; only a failure before
+    anything was written puts the question back."""
+    stored = answered_before(question, client_id)
+    if stored is not None:
+        return stored
     answered = questions.choose(question, choices, text, source)
     kind = (answered.get("action") or {}).get("kind") or "action"
     base = {"section": sections.MAIN_ID, "answers": answered["id"]}
@@ -131,6 +178,8 @@ async def answer_action(question, choices, text="", source="fleet", client_id=No
     user_id = db.add_message(source, "user", questions.shown_text(answered), base)
     try:
         said = await run_action(answered)
+    except Refused as refused:
+        said = str(refused)
     except Exception:
         questions.reopen(answered)
         db.delete_message(user_id)
