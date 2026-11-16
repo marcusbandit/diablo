@@ -3,6 +3,7 @@
 #   fake-hub.sh start [--port N] [--url URL] [--keep]
 #   fake-hub.sh code | status | stop | log [-n N]
 #   fake-hub.sh say [--in SECONDS] [--objects JSON] <section> <text>
+#   fake-hub.sh task <id> <queued|working|waiting|done|failed> [--title T] [--step S]
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
@@ -21,7 +22,7 @@ case "${1:-}" in
     exec python3 "$here/fake-hub.py" --help
     ;;
   *)
-    # code, say, status, stop, log only need the standard library.
+    # code, say, task, status, stop, log only need the standard library.
     exec python3 "$here/fake-hub.py" "$@"
     ;;
 esac

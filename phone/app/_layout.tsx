@@ -18,8 +18,11 @@ import { Big, Button } from "../src/ui/parts";
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 /** diablo://pair?host=..&code=.. pairs; diablo://section/<id> opens a section (from a notification). */
+const handled = new Set<string>();
+
 function handleLink(url: string | null) {
-  if (!url) return;
+  if (!url || handled.has(url)) return;
+  handled.add(url);
   let parsed: URL;
   try {
     parsed = new URL(url);

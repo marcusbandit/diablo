@@ -5,6 +5,8 @@ import { Pressable, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BlockActionsContext, type BlockActions } from "../blocks/context";
+import { moodOf } from "../den";
+import { Face } from "../ui/Face";
 import { MAIN, model } from "../model";
 import { fonts, size, sp, useTheme } from "../theme";
 import { useModel } from "../use";
@@ -70,6 +72,16 @@ function Composer({ section, bottom }: { section: string; bottom: number }) {
       </Pressable>
     </View>
   );
+}
+
+/** His face in the conversation's header, small, wearing the same mood as on the den. */
+function HeadFace() {
+  const link = useModel((s) => s.link.state);
+  const turns = useModel((s) => s.turns);
+  const tasks = useModel((s) => s.tasks);
+  const owed = useModel((s) => s.owed);
+  const moment = useModel((s) => s.moment);
+  return <Face mood={moodOf({ link, turns, tasks, owed, moment })} size={44} onPress={() => model.poke()} />;
 }
 
 function LinkLine() {
@@ -139,8 +151,8 @@ export function ChatPane({
         <View style={seam ? { height: seam.top } : { flex: 1 }}>
           <View style={{ paddingTop: insets.top, borderBottomWidth: 1, borderBottomColor: c.line, backgroundColor: c.bg }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: sp(2), paddingHorizontal: sp(2), minHeight: 56 }}>
-              {onMenu ? <IconButton icon="menu" label="Sections" onPress={onMenu} /> : <View style={{ width: sp(2) }} />}
-              <Mark icon={section.icon} accent={section.accent} size={32} />
+              {onMenu ? <IconButton icon="back" label="Back to the den" onPress={onMenu} /> : <View style={{ width: sp(2) }} />}
+              {current === MAIN ? <HeadFace /> : <Mark icon={section.icon} accent={section.accent} size={32} />}
               <View style={{ flex: 1, paddingLeft: sp(1) }}>
                 <Title style={{ fontSize: 18 }} numberOfLines={1}>
                   {section.name}

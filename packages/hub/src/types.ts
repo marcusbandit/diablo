@@ -47,6 +47,28 @@ export type Device = {
   current?: boolean;
 };
 
+export type TaskState = "queued" | "working" | "waiting" | "done" | "failed";
+
+/** Work Diablo runs or watches: a T3 thread or a job of his own, kept by the hub with no model turn. */
+export type Task = {
+  id: string;
+  title: string;
+  kind: "self_improvement" | "partner";
+  machine: string;
+  state: TaskState;
+  step: string;
+  started_at: number | null;
+  finished_at: number | null;
+  seen_at: number | null;
+  updated_at: number | null;
+  links: { pr: string; pr_number: number | null; pr_state: string; issue: string; thread: string };
+  result: string;
+  source: string;
+};
+
+/** A question Diablo asked that still waits, with where it was asked. */
+export type Pending = Block & { id: string; section?: string | null; message?: number | null };
+
 export type PairCode = { code: string; expires_at: number; ttl: number; url: string; link: string };
 
 export type PairStatus =

@@ -89,11 +89,11 @@ function Stats({ b }: { b: B }) {
             key={i}
             disabled={!item.open}
             onPress={() => open(str(item.open))}
-            style={{ flexGrow: 1, flexBasis: 96, backgroundColor: c.raised, borderWidth: 1, borderColor: c.line, padding: sp(3), gap: 2 }}
+            style={{ flexGrow: 1, flexBasis: 120, backgroundColor: c.raised, borderWidth: 1, borderColor: c.line, padding: sp(3), gap: 2 }}
           >
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
               {item.icon ? <Icon name={str(item.icon)} size={15} color={c.muted} /> : null}
-              <Label numberOfLines={1} style={{ flex: 1 }}>
+              <Label numberOfLines={2} style={{ flex: 1 }}>
                 {str(item.label)}
               </Label>
             </View>
