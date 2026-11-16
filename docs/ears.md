@@ -45,8 +45,8 @@ with that note Jev reads it as play at 0.71 instead of a window switch at 0.45.
 ## Speech control
 
 "Diablo, speech control" (also "accessibility mode", "voice control", "command mode", "voice loop")
-keeps him listening without the name until "stop speech control", "that's all", or
-`ears.loop_idle_s` (300 s) with nothing said. Each line has to pass the voice check against his
+keeps him listening without the name until "stop speech control", a bare "stop", "that's all",
+"I'm done", or `ears.loop_idle_s` (300 s) with nothing said. Each line has to pass the voice check against his
 own talk, so a song or a video does not count; a line runs as long as he talks, up to `ears.turn_max_s` (90 s) counted from his first word, and
 a line said while gvoice dictates is ignored. Sound is not held, so music keeps playing.
 
@@ -61,9 +61,23 @@ A line goes, in order, to:
    moves press his own Hyprland binds (Super and an arrow), so they follow the layout that is on.
    Closing a window or a tab and pressing enter need Jev at 0.8; the rest act at 0.6. Measured on
    34 lines: 32 right, about 250 ms each.
-3. The whole turn, Claude included, when Jev finds no plain command.
+3. The whole turn, Claude included, when Jev finds no plain command and the line starts with
+   "Diablo". Any other line plays the low note and nothing else: speech control takes commands, and
+   a sentence to someone in the room used to get Claude's "I can't find anything for me to do" a
+   minute later. `ears.loop_commands_only` set to 0 sends every line to Claude, as before.
 
 "Diablo, type ..." and "Diablo, dictate" also work from a normal turn.
+
+The mode words end a line at its first pause, before the full quiet, because the ears read them
+on the words so far: "dictate", "speech control" from a turn, a bare "stop" inside speech
+control. On a box whose speech to text runs through the hub, "Diablo, dictate" used to wait so
+long that he said it four times.
+
+### One way out
+
+A bare "stop", "that's all" or "I'm done" leaves whatever mode he is in: speech control ends with
+its falling notes, and dictation ends and pastes what it has. The orb keeps a ring around him for
+as long as a mode is on, violet for speech control and gold for dictation.
 
 ### What he plays
 
@@ -117,7 +131,13 @@ piece ends in "dictation done" (or "done dictating", "dictation over"), the phra
 whole text is pasted into the window that had focus when dictation began, then the clipboard is
 put back. Typed key by key with wtype, it lost the last letter and full stop of every sentence in
 T3. Terminals get ctrl+shift+v, by gvoice's own `terminal-classes`. He says "Dictating." first. Nothing goes
-to the hub. A minute with nothing said gives up.
+to the hub. A minute with nothing said, or a bare "stop", pastes what it has.
+
+"Dictate" counts said again while he waits ("Dictate. Dictate. Dictate."), and with the text in
+the same breath after a pause: "Dictate. Dear Alex," starts dictation with that as its first
+piece, and "dictate hello there, dictation done" pastes at once. A line that only talks about
+dictation ("dictation is broken"), or runs straight on ("dictate a mail to Alex saying..."), is
+a request like any other.
 
 ## He listens while he thinks
 

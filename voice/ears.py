@@ -409,7 +409,9 @@ class Heard(tuple):
 def early_sure(found):
     """A Jev answer good enough to end the turn on: an act, Jev sure of the command, and not
     one that sends or closes something: "close Firefox... once the download is done" must not
-    close it at the first pause."""
+    close it at the first pause. A line the ears handle themselves (early_local) always is."""
+    if (found or {}).get("local"):
+        return True
     act = (found or {}).get("act")
     return bool(isinstance(act, dict) and act.get("action") not in commands.SURE_ONLY
                 and float(found.get("confidence") or 0) >= EARLY_SURE)
@@ -740,8 +742,25 @@ def with_recent(desktop):
     return {**(desktop or {}), "recent": commands.recent_lines()}
 
 
-def early_read(cfg, words, desktop):
+def early_local(words, loop=False):
+    """The ears' own mode words, read on the words so far: "dictate" (also with its text),
+    "speech control" from a turn, a bare "stop" inside speech control. They end the turn at the
+    first pause, so the chime answers at once instead of after the full quiet: on a box whose
+    speech to text runs through the hub, "Diablo, dictate" sat waiting until he said it four
+    times (2026-11-16)."""
+    if commands.wants_dictation(words):
+        return {"local": "dictate"}
+    intent = commands.loop_intent(words, active=loop)
+    if intent == ("stop" if loop else "start"):
+        return {"local": intent}
+    return None
+
+
+def early_read(cfg, words, desktop, loop=False):
     """Jev on the words so far, for record()'s early end. None on any failure."""
+    local = early_local(words, loop)
+    if local is not None:
+        return local
     try:
         return control(cfg, words, with_recent(desktop))
     except Exception as error:
@@ -818,8 +837,9 @@ def local_line(mic, settings, vad, text, tl, speaker=None):
             tl.note(act="sound up", outcome="other sound left up for this conversation")
             feedback.done()
             return "I'll leave the sound up."
-    if commands.wants_dictation(text):
-        return dictate(mic, settings, vad, tl, speaker)
+    start = commands.dictation_start(text)
+    if start is not None:
+        return dictate(mic, settings, vad, tl, speaker, first=start[0], ended=start[1])
     if commands.wants_animation(text):
         return animate(mic, settings, vad, tl, speaker)
     panel_kind = panel.intent(text)
@@ -982,11 +1002,14 @@ def animate(mic, settings, vad, tl, speaker=None):
     return f"Got it. Your last word was {last_word}."
 
 
-def dictate(mic, settings, vad, tl, speaker=None):
-    """Talk until "dictation done", then the whole of it is typed where the focus was.
+def dictate(mic, settings, vad, tl, speaker=None, first="", ended=False):
+    """Talk until "dictation done", or a bare "stop" or "that's all", then the whole of it is
+    typed where the focus was.
 
     Each pause closes a piece, which is checked against his voice and turned to text at
-    once, so the end phrase is seen as soon as it is said. Nothing goes to the hub."""
+    once, so the end phrase is seen as soon as it is said. Nothing goes to the hub. first is
+    what he said in the same breath as "dictate", and ended that it already closed there:
+    "dictate hello there, dictation done" types at once."""
     cfg = dict(settings.get())
     cfg.update({"ears.adaptive": "0", "ears.turn_max_s": DICTATION_PIECE_MAX_S,
                 "ears.silence_s": cfg.get("ears.dictation_pause_s") or DICTATION_PAUSE_S})
@@ -994,13 +1017,14 @@ def dictate(mic, settings, vad, tl, speaker=None):
     focused = next((w for w in windows if w["focused"]), None)
     focus = focused["address"] if focused else None
     into = (focused or {}).get("class") or "the window you are in"
-    log.info("dictation on")
+    pieces = [first] if first else []
+    log.info("dictation on%s", f", first piece: {first}" if first else "")
     set_state("listening", holding=False, dictation=True)
-    feedback.dictation(True)
+    if not ended:
+        feedback.dictation(True)
     tl.mark("dictation_start")
-    pieces, ended = [], False
     after = last = time.monotonic()
-    while listening() and time.monotonic() - last < DICTATION_IDLE_S:
+    while not ended and listening() and time.monotonic() - last < DICTATION_IDLE_S:
         heard = record(mic, cfg, after, vad, no_speech_s=10)
         after = time.monotonic()
         audio, spoke = heard
@@ -1018,6 +1042,10 @@ def dictate(mic, settings, vad, tl, speaker=None):
             continue
         if stt.is_noise(text):
             continue
+        if commands.leaves_mode(text):
+            log.info("dictation: %r ends it", text)
+            ended = True
+            break
         ended, words = commands.dictation_end(text)
         if words:
             pieces.append(words)
@@ -1306,7 +1334,7 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
     local = local_line(mic, settings, vad, text, tl, speaker)
     if local is not None:
         return say_answer(mic, speaker, local, cfg, detector, tap, tl)
-    if heard.early is not None:
+    if heard.early is not None and isinstance(heard.early.get("act"), dict):
         note_control(tl, heard.early)
         return say_answer(mic, speaker, run_act(heard.early["act"], tl, cfg), cfg, detector, tap, tl)
     context, shot = seen.get()
@@ -1363,7 +1391,7 @@ def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=No
     tl = timeline.Timeline("loop")
     heard = record(mic, cfg, time.monotonic(), vad, probe=lambda clip: transcribe(clip, cfg),
                    no_speech_s=LOOP_LISTEN_S, tl=tl,
-                   early=lambda words: early_read(cfg, words, commands.desktop_state()),
+                   early=lambda words: early_read(cfg, words, commands.desktop_state(), loop=True),
                    interrupt=PENDING.has_speech,
                    interrupt_quiet_s=CUT_QUIET_S if after_cut else INTERRUPT_QUIET_S)
     audio, spoke = heard
@@ -1421,7 +1449,7 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
     if local is not None:
         return CUT if say_answer(mic, speaker, local, cfg, detector, tap, tl) else True
     desktop = commands.desktop_state()
-    if heard.early is not None:
+    if heard.early is not None and isinstance(heard.early.get("act"), dict):
         found = heard.early
         note_control(tl, found)
     else:
@@ -1438,7 +1466,15 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
         if found["act"].get("action") in REDIM_AFTER:
             redim()
         return CUT if cut else True
-    # Not a plain command: the whole turn, Claude included, as if he had said the name.
+    if not loop_to_claude(cfg, text):
+        # Speech control takes commands. A stray sentence to someone in the room got Claude's
+        # "I can't find anything for me to do" a minute later (2026-11-16); now it gets the low
+        # note, and "Diablo, ..." is the way to Claude.
+        log.info("loop: not a command, left alone: %r", text[:80])
+        tl.note(outcome="not a command")
+        chime.play("never")
+        return None
+    # Not a plain command, said to him by name: the whole turn, Claude included.
     tl.points.pop("hub_sent", None)
     tl.points.pop("hub_back", None)
     context = surroundings.lines()
@@ -1447,6 +1483,17 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
     if words is not None and say_answer(mic, speaker, words, cfg, detector, tap, tl):
         return CUT
     return True
+
+
+NAMED = re.compile(r"^\W*diablo\b", re.I)
+
+
+def loop_to_claude(cfg, text):
+    """Whether a line in speech control that is no plain command goes to Claude: only when it
+    starts with his name, unless ears.loop_commands_only is 0."""
+    if str(cfg.get("ears.loop_commands_only", "1")).strip() in ("0", "false", "off", "no"):
+        return True
+    return bool(NAMED.match(text or ""))
 
 
 # Speech control dims what plays for as long as it is on, so his voice is not lost under the

@@ -286,7 +286,7 @@ class TestCutInLineComesFirst(unittest.TestCase):
 
         from voice import timeline
 
-        heard = ears.Heard(np.zeros(1600, dtype=np.float32), True, "what is the time")
+        heard = ears.Heard(np.zeros(1600, dtype=np.float32), True, "Diablo, what is the time")
         patches = [
             mock.patch.object(ears, "talk_ok", return_value=(True, None)),
             mock.patch.object(ears, "set_state"),
@@ -362,6 +362,7 @@ class TestSpeechControlAnswersInOrder(unittest.TestCase):
                 mock.patch.object(ears, "early_read", return_value={}), \
                 mock.patch.object(ears, "control", return_value={}), \
                 mock.patch.object(ears, "local_line", return_value=None), \
+                mock.patch.object(ears, "loop_to_claude", return_value=True), \
                 mock.patch.object(ears, "set_state"), mock.patch.object(ears, "thinking_changed"), \
                 mock.patch.object(ears, "feedback"), mock.patch.object(ears, "chime"), \
                 mock.patch.object(ears, "recordings"), mock.patch.object(ears, "surroundings") as around, \
