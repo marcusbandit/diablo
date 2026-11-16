@@ -114,6 +114,52 @@ class OutboxSender:
 
 
 
+class HubDown(SendError):
+    """Nothing reached the hub, or it refused the token: it cannot have the message."""
+
+
+def hub_token():
+    token = os.environ.get("REMIND_HUB_TOKEN") or ""
+    if not token:
+        try:
+            with open(HUB_CONFIG, "rb") as handle:
+                token = str(tomllib.load(handle).get("hub_token") or "")
+        except (OSError, ValueError):
+            token = ""
+    if not token:
+        raise HubDown(f"no hub_token in {HUB_CONFIG}")
+    return token
+
+
+def post_hub(path, payload, timeout):
+    """POST json to the hub with its token. Returns the answer when it says ok.
+
+    Raises HubDown when the request never reached the hub (no URL or token, refused, no route, a connect
+    timeout) or the hub refused the token (401, 403): it cannot have stored anything. Anything after
+    that, another refusal, a bad answer or a read that timed out, is a SendError: the hub may have it.
+    """
+    hub_url = os.environ.get("REMIND_HUB_URL", "").rstrip("/")
+    if not hub_url:
+        raise HubDown("REMIND_HUB_URL is not set, so nothing can reach the hub")
+    request = urllib.request.Request(
+        f"{hub_url}{path}", data=json.dumps(payload).encode(), method="POST",
+        headers={"Content-Type": "application/json", "X-Diablo-Token": hub_token()},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            reply = json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as error:
+        detail = error.read()[:200].decode(errors="replace")
+        refused = HubDown if error.code in (401, 403) else SendError
+        raise refused(f"the hub refused {path} with {error.code}: {detail}") from None
+    except urllib.error.URLError as error:
+        raise HubDown(f"the hub is unreachable: {error.reason}") from None
+    except (OSError, ValueError) as error:
+        raise SendError(f"the hub did not answer: {error}") from None
+    if not reply.get("ok"):
+        raise SendError(f"the hub said no: {str(reply)[:200]}")
+    return reply
+
 
 class TaskSender:
     """Hands a scheduled task to the hub, which runs it as a brain turn and tells Marcus the result.
@@ -126,87 +172,54 @@ class TaskSender:
         self.timeout = timeout
 
     def token(self):
-        token = os.environ.get("REMIND_HUB_TOKEN") or ""
-        if not token:
-            try:
-                with open(HUB_CONFIG, "rb") as handle:
-                    token = str(tomllib.load(handle).get("hub_token") or "")
-            except (OSError, ValueError):
-                token = ""
-        if not token:
-            raise SendError(f"no hub_token in {HUB_CONFIG}")
-        return token
+        return hub_token()
 
     def send(self, text, meta=None):
-        hub_url = os.environ.get("REMIND_HUB_URL", "").rstrip("/")
-        if not hub_url:
-            raise SendError("REMIND_HUB_URL is not set, so tasks cannot reach the hub")
         meta = meta or {}
         client_id = meta.get("client_id") or f"task-{meta.get('reminder')}-{meta.get('delivery')}"
-        body = json.dumps({"text": text, "client_id": client_id}).encode()
-        request = urllib.request.Request(
-            f"{hub_url}/v1/scheduled", data=body, method="POST",
-            headers={"Content-Type": "application/json", "X-Diablo-Token": self.token()},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                reply = json.loads(response.read() or b"{}")
-        except urllib.error.HTTPError as error:
-            raise SendError(f"the hub refused the task with {error.code}: {error.read()[:200].decode(errors='replace')}") from None
-        except (urllib.error.URLError, OSError, ValueError) as error:
-            raise SendError(f"the hub is unreachable: {error}") from None
-        if not reply.get("ok"):
-            raise SendError(f"the hub said no: {str(reply)[:200]}")
+        post_hub("/v1/scheduled", {"text": text, "client_id": client_id}, self.timeout)
         return None
-
-
-class HubDown(SendError):
-    pass
 
 
 class HubSender:
     """Hands a reminder to the hub's POST /v1/notify, which puts it in Marcus's app and lets his phone ping.
 
-    Raises HubDown when the request never reached the hub (no URL, refused, no route, a connect timeout),
-    which is the one case Fallback may send it on Telegram instead. Anything after that, a bad answer or a
-    read that timed out, is a SendError and retried here: the delivery's client id makes a repeat at the
-    hub a no-op, so the reminder is stored once and never also sent on Telegram.
+    The delivery's client id makes a repeat at the hub a no-op, so a retry after a lost answer is stored
+    once. A hub that cannot have it (HubDown) hands it to Telegram at once. A hub that got it but keeps
+    failing is tried `tries` times or for `window_s` seconds, whichever ends first, with the scheduler's
+    own backoff (30 s, then 60 s), and then counts as down, so a reminder is never dropped. Only that
+    last case can show the reminder twice, in the app and on Telegram, if the hub did store it.
     """
 
-    def __init__(self, timeout=20):
+    def __init__(self, timeout=20, tries=3, window_s=120, clock=time.monotonic):
         self.timeout = timeout
+        self.tries = tries
+        self.window_s = window_s
+        self.clock = clock
+        self.failing = {}
 
     def send(self, text, meta=None):
-        hub_url = os.environ.get("REMIND_HUB_URL", "").rstrip("/")
-        if not hub_url:
-            raise HubDown("REMIND_HUB_URL is not set")
-        try:
-            token = TaskSender().token()
-        except SendError as error:
-            raise HubDown(str(error)) from None
         meta = meta or {}
         client_id = f"remind-{meta.get('client_id') or meta.get('delivery')}"
-        body = json.dumps({"text": text, "kind": "reminder", "client_id": client_id}).encode()
-        request = urllib.request.Request(
-            f"{hub_url}/v1/notify", data=body, method="POST",
-            headers={"Content-Type": "application/json", "X-Diablo-Token": token},
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                reply = json.loads(response.read() or b"{}")
-        except urllib.error.HTTPError as error:
-            raise SendError(f"the hub refused the reminder with {error.code}: {error.read()[:200].decode(errors='replace')}") from None
-        except urllib.error.URLError as error:
-            raise HubDown(f"the hub is unreachable: {error.reason}") from None
-        except (OSError, ValueError) as error:
-            raise SendError(f"the hub did not answer: {error}") from None
-        if not reply.get("ok"):
-            raise SendError(f"the hub said no: {str(reply)[:200]}")
-        return None
+            reply = post_hub("/v1/notify", {"text": text, "kind": "reminder", "client_id": client_id}, self.timeout)
+        except HubDown:
+            self.failing.pop(client_id, None)
+            raise
+        except SendError as error:
+            count, first = self.failing.get(client_id, (0, self.clock()))
+            count += 1
+            if count >= self.tries or self.clock() - first >= self.window_s:
+                self.failing.pop(client_id, None)
+                raise HubDown(f"the hub failed {count} times: {error}") from None
+            self.failing[client_id] = (count, first)
+            raise
+        self.failing.pop(client_id, None)
+        return reply.get("id")
 
 
 class Fallback:
-    """The app through the hub first; Telegram only while the hub cannot be reached."""
+    """The app through the hub first; Telegram when the hub cannot have it or keeps failing."""
 
     def __init__(self, first, then):
         self.first, self.then = first, then

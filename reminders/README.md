@@ -31,8 +31,11 @@ diablo-reminders.service (systemd user unit, own process)
   conversation, so the phone and web apps show it and the phone posts a
   notification. A repeat of the same client id is stored once.
 - Telegram, the fallback: when the request never reaches the hub (no URL, no
-  token, refused, no route, a connect timeout) the reminder goes straight to
-  Telegram instead. The scheduler reads `telegram_bot_token` and `telegram_chat_id` from
+  token, refused, no route, a connect timeout) or the hub refuses the token
+  (401, 403), the reminder goes straight to Telegram instead. A hub that got
+  it but keeps failing (another error, a read that timed out) is tried three
+  times or for two minutes, whichever ends first, and then Telegram takes it,
+  so a reminder is never dropped. The scheduler reads `telegram_bot_token` and `telegram_chat_id` from
   the hub's `diablo.db` settings at every send, the same values the hub's
   `notify` tool uses, with the hub's `config.toml` as the fallback for the token.
   After a send it adds the message to the hub's history as `notify` does, so
@@ -96,9 +99,11 @@ failures it is marked `failed` and stays visible in `remind list --all`.
 Cancelling a reminder also stops a delivery that is waiting for a retry.
 
 A hub that got the request but answered badly or timed out is retried through
-the hub, never on Telegram: the client id makes the retry a no-op there, so a
-reminder never lands twice. The one gap no design closes is on the Telegram
-fallback: Telegram has no idempotency key, so if the
+the hub first: the client id makes the retry a no-op there, so a reminder it
+stored lands once. Only when it keeps failing past that short window does
+Telegram take it, which can show a reminder twice if the hub had stored it
+after all; that trades a rare duplicate for never dropping one. The other gap
+is on the Telegram fallback itself: Telegram has no idempotency key, so if the
 process dies in the instant after Telegram accepted a message and before the
 `sent` mark is written, the outcome is unknown. Recovery treats `sending` as
 not sent and retries it once on the next start. That trades a rare duplicate

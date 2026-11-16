@@ -187,15 +187,53 @@ class TestReminderToTheApp(unittest.TestCase):
             self.sender().send("Drink water", META)
         self.assertEqual(len(self.telegram.sent), 1)
 
-    def test_a_hub_that_got_it_but_failed_is_retried_never_sent_on_telegram(self):
-        for failure in (urllib.error.HTTPError("http://hub:8755/v1/notify", 500, "boom", {}, io.BytesIO(b"boom")),
-                        TimeoutError("read timed out")):
-            sender = self.sender()
-            with mock.patch.dict(os.environ, HUB_ENV), mock.patch("urllib.request.urlopen", side_effect=failure):
+    def test_a_hub_that_refuses_the_token_hands_it_to_telegram_at_once(self):
+        refused = urllib.error.HTTPError("http://hub:8755/v1/notify", 403, "no", {}, io.BytesIO(b"bad token"))
+        with mock.patch.dict(os.environ, HUB_ENV), mock.patch("urllib.request.urlopen", side_effect=refused):
+            self.sender().send("Drink water", META)
+        self.assertEqual(self.telegram.sent, [("Drink water", META)])
+
+    def test_a_hub_that_got_it_but_failed_is_retried_then_telegram_takes_it(self):
+        clock = [0.0]
+        sender = telegram.Fallback(telegram.HubSender(clock=lambda: clock[0]), Recorder())
+        self.telegram = sender.then
+        broken = urllib.error.HTTPError("http://hub:8755/v1/notify", 500, "boom", {}, io.BytesIO(b"boom"))
+        with mock.patch.dict(os.environ, HUB_ENV), mock.patch("urllib.request.urlopen", side_effect=broken):
+            for wait in (0, 30):
+                clock[0] += wait
                 with self.assertRaises(SendError) as caught:
                     sender.send("Drink water", META)
-            self.assertNotIsInstance(caught.exception, telegram.HubDown)
-            self.assertEqual(self.telegram.sent, [])
+                self.assertNotIsInstance(caught.exception, telegram.HubDown)
+                self.assertEqual(self.telegram.sent, [])
+            clock[0] += 60
+            sender.send("Drink water", META)
+        self.assertEqual(self.telegram.sent, [("Drink water", META)])
+
+    def test_a_slow_hub_gives_up_to_telegram_after_the_window(self):
+        clock = [0.0]
+        sender = telegram.Fallback(telegram.HubSender(clock=lambda: clock[0], tries=10), Recorder())
+        with mock.patch.dict(os.environ, HUB_ENV), mock.patch("urllib.request.urlopen", side_effect=TimeoutError("read")):
+            with self.assertRaises(SendError):
+                sender.send("Drink water", META)
+            clock[0] += 121
+            sender.send("Drink water", META)
+        self.assertEqual(len(sender.then.sent), 1)
+
+    def test_a_hub_that_recovers_takes_it_and_telegram_never_does(self):
+        calls = []
+
+        def urlopen(request, timeout=0):
+            calls.append(1)
+            if len(calls) == 1:
+                raise TimeoutError("read")
+            return Answer(b'{"ok": true, "id": 3}')
+
+        sender = self.sender()
+        with mock.patch.dict(os.environ, HUB_ENV), mock.patch("urllib.request.urlopen", urlopen):
+            with self.assertRaises(SendError):
+                sender.send("Drink water", META)
+            sender.send("Drink water", META)
+        self.assertEqual(self.telegram.sent, [])
 
     def test_the_service_sends_reminders_through_the_hub(self):
         router = telegram.make_sender()
