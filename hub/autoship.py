@@ -149,19 +149,26 @@ def tarball(sha):
 
 
 def web_build(sha):
-    """The zip of web/dist that CI built for sha. Not built yet is transient; a failed build is not."""
+    """The zip of web/dist that CI built for sha, or None when there is none to have: no push run for
+    sha (a branch shipped by hand) or a failed build. Then the live web app stays and the hub still
+    ships. A build still running is transient."""
     import zipfile
 
     try:
         runs = gh(f"actions/workflows/{WEB_WORKFLOW}/runs", head_sha=sha, event="push").get("workflow_runs") or []
     except httpx.HTTPError as error:
         raise ShipError(f"could not ask GitHub for the web build of {sha[:SHORT]}: {error}", transient=True)
+    if not runs:
+        logger.warning("autoship: no web build for %s, the live web app stays", sha[:SHORT])
+        return None
     done = [r for r in runs if r.get("status") == "completed"]
-    if not done:
+    if len(done) < len(runs) and not any(r.get("conclusion") == "success" for r in done):
         raise ShipError(f"the web build of {sha[:SHORT]} is not finished yet", transient=True)
-    run = max(done, key=lambda r: r.get("run_attempt") or 0)
-    if run.get("conclusion") != "success":
-        raise ShipError(f"the web build of {sha[:SHORT]} failed on GitHub ({run.get('conclusion')})")
+    good = [r for r in done if r.get("conclusion") == "success"]
+    if not good:
+        logger.warning("autoship: the web build of %s failed, the live web app stays", sha[:SHORT])
+        return None
+    run = max(good, key=lambda r: r.get("run_attempt") or 0)
     try:
         artifacts = gh(f"actions/runs/{run['id']}/artifacts").get("artifacts") or []
         found = next((a for a in artifacts if a.get("name") == WEB_ARTIFACT and not a.get("expired")), None)
@@ -247,7 +254,7 @@ def swap(stage, root, sha):
     lacks stay, the way ship-hub.sh leaves web/fonts alone."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     old_fonts, new_fonts = root / "web" / "fonts", stage / "web" / "fonts"
-    if old_fonts.is_dir():
+    if old_fonts.is_dir() and (stage / "web").is_dir():
         new_fonts.mkdir(parents=True, exist_ok=True)
         for font in old_fonts.iterdir():
             if font.is_file() and not (new_fonts / font.name).exists():
@@ -291,7 +298,11 @@ def ship(sha, root=None, python=None, fetch=tarball, web=web_build):
         except (tarfile.TarError, OSError) as error:
             raise ShipError(f"could not unpack {sha[:SHORT]}: {error}")
         if (stage / "web" / "package.json").exists():
-            built_web(stage, web(sha))
+            blob = web(sha)
+            if blob is None:
+                shutil.rmtree(stage / "web", ignore_errors=True)
+            else:
+                built_web(stage, blob)
         if requirements_changed(stage, root):
             installer(python)
             install(stage / "hub" / "requirements.txt", python)

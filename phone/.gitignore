@@ -1,7 +1,8 @@
 node_modules/
 .expo/
-android/
-ios/
+/android/
+/ios/
 captures/
 expo-env.d.ts
 *.apk
+build/

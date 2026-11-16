@@ -344,3 +344,9 @@ def test_autoship_follows_the_public_repo_not_the_release_archive():
 
     assert autoship.REPO == "marcusbandit/diablo"
     assert autoship.REPO != releases.REPO
+
+
+def test_with_no_web_build_the_hub_ships_and_the_live_web_app_stays(root):
+    autoship.ship(SHA, root=root, fetch=lambda sha: make_tarball(SOURCE), web=lambda sha: None)
+    assert (root / "hub" / "server.py").read_text() == "VALUE = 2\n"
+    assert (root / "web" / "index.html").read_text() == "old"

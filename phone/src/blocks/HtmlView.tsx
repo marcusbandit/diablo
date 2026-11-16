@@ -13,7 +13,7 @@ function themed(html: string, c: Colors): string {
 html,body{margin:0;padding:8px;background:var(--bg);color:var(--ink);font-family:var(--font-sans);font-size:15px;line-height:1.45;word-wrap:break-word}
 img,svg,canvas,video{max-width:100%;height:auto}table{border-collapse:collapse}td,th{border:1px solid var(--line);padding:4px 6px}`;
   const head = `<meta http-equiv="Content-Security-Policy" content="${CSP}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${vars}</style>`;
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => `${m}${head}`);
+  if (/<head(\s[^>]*)?>/i.test(html)) return html.replace(/<head(\s[^>]*)?>/i, (m) => `${m}${head}`);
   if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => `${m}<head>${head}</head>`);
   return `<!doctype html><html><head>${head}</head><body>${html}</body></html>`;
 }

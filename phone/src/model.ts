@@ -8,7 +8,7 @@ import { AppState, PermissionsAndroid, Platform } from "react-native";
 import Listener from "../modules/diablo-listener";
 import { plain } from "./md/plain";
 import { openExpoSql } from "./store/expo-sql";
-import { now, Store, type Shown } from "./store/store";
+import { newClientId, now, Store, type Shown } from "./store/store";
 import { flushOutbox } from "./sync/outbox";
 
 export const MAIN = "diablo";
@@ -97,6 +97,8 @@ class Model {
   private stream: AbortController | null = null;
   private streamHub: string | null = null;
   private hub: Hub | null = null;
+  /** How many stored messages each section shows; older() widens it. */
+  private shown: Record<string, number> = {};
   private foreground = true;
   private flushing = false;
   private actedAt: Record<string, number> = {};
@@ -199,7 +201,7 @@ class Model {
       if (last) previews[sec.id] = plain(last.text).split("\n")[0] ?? "";
     }
     this.set({
-      messages: s.messages(this.state.current),
+      messages: s.messages(this.state.current, this.shown[this.state.current] ?? 300),
       unread,
       previews,
       link: { ...this.state.link, queued: s.queuedCount() },
@@ -313,7 +315,7 @@ class Model {
     }
     this.setTurn(section, { state: "thinking", since: Date.now() });
     try {
-      await hub.answerQuestion(questionId, { ...answer, ...({ source: "phone" } as object) });
+      await hub.answerAndWait(questionId, answer, newClientId(), "phone");
       await this.pull(hub, section);
     } catch (error) {
       this.notice(section, error instanceof HubError ? error.message : "The hub did not take the answer.", true);
@@ -401,7 +403,7 @@ class Model {
       this.store.set("device", JSON.stringify(device));
       this.set({ device, hubs: this.hubs(), link: { ...this.state.link, state: "checking" } });
       if (previous && previousToken && previous.id !== paired.deviceId) {
-        new Hub(previous.hub, paired.token, { fetch: fetchFn }).revokeDevice(previous.id).catch(() => undefined);
+        new Hub(previous.hub, previousToken, { fetch: fetchFn }).revokeDevice(previous.id).catch(() => undefined);
       }
       this.configureListener({ token: paired.token });
       this.set({ pairing: { ...idle, ok: true, text: `Paired as ${paired.device}.`, fromLink } });
@@ -619,6 +621,7 @@ class Model {
       const batch = await hub.messages(section, { before: oldest, limit: 100 });
       if (!batch.length) return false;
       this.store.addMessages(section, batch);
+      this.shown[section] = (this.shown[section] ?? 300) + batch.length;
       this.reload();
       return true;
     } catch {

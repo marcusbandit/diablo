@@ -25,7 +25,7 @@ export function sandboxDoc(html: string, style: { getPropertyValue(name: string)
     `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:">` +
     `<style>:root{${vars}--font-sans:"Source Sans 3",system-ui,sans-serif;--font-mono:ui-monospace,monospace;color-scheme:light dark}` +
     `html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-sans)}</style>`;
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + head);
+  if (/<head(\s[^>]*)?>/i.test(html)) return html.replace(/<head(\s[^>]*)?>/i, (m) => m + head);
   if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + `<head>${head}</head>`);
   return `<!doctype html><html><head>${head}</head><body>${html}</body></html>`;
 }

@@ -34,7 +34,6 @@ export default function Scan() {
         />
       ) : (
         <View style={{ padding: sp(6), gap: sp(4) }}>
-          <Reading color={c.muted}>The camera reads the QR code Diablo shows, once. Nothing is recorded or kept.</Reading>
           <View style={{ flexDirection: "row" }}>
             <Button label="Allow the camera" kind="primary" onPress={() => void ask()} />
           </View>

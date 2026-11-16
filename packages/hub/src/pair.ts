@@ -22,6 +22,7 @@ export function parsePairLink(link: string): { host: string | null; code: string
   if (!code) return null;
   if (url.protocol === "diablo:") {
     const host = url.searchParams.get("host");
+    if (host && !/^https?:\/\/[^/\s]+/i.test(host)) return null;
     return { host: host ? host.replace(/\/+$/, "") : null, code };
   }
   if (url.protocol === "http:" || url.protocol === "https:") {
