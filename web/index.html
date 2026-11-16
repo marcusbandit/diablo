@@ -185,6 +185,10 @@
   .pairview .devices { border-top: 1px solid var(--line); }
   .pairview .device { display: flex; justify-content: space-between; align-items: center; gap: calc(var(--sp) * 3); padding: calc(var(--sp) * 3) 0; border-bottom: 1px solid var(--line); }
   .pairview .device .k { color: var(--faint); font-family: var(--mono); font-size: var(--fs-small); }
+  .pairview textarea { background: var(--sunken); color: var(--ink); border: 1px solid var(--line-strong); padding: calc(var(--sp) * 3); font: inherit; min-height: 14em; resize: vertical; width: 100%; }
+  .pairview textarea:focus { outline: none; border-color: var(--accent); }
+  .pairview button.quiet { border: none; color: var(--faint); padding: 0; margin-top: calc(var(--sp) * 10); font-size: var(--fs-small); }
+  .pairview button.quiet:hover { background: none; color: var(--muted); }
   .empty { margin: auto; text-align: center; color: var(--faint); }
   .empty .big { font-family: var(--titles); font-size: var(--fs-large); font-weight: 700; color: var(--muted); margin-bottom: calc(var(--sp) * 2); }
 
@@ -982,6 +986,9 @@
       } catch (e) {}
     }
     devicesView.repaint = paintList;
+    const quiet = pairEl('button', 'quiet hud', 'character');
+    quiet.addEventListener('click', showCharacter);
+    view.appendChild(quiet);
     start.addEventListener('click', async () => {
       clearInterval(pairTimer);
       mint.replaceChildren(statusEl('making a code...'));
@@ -1023,6 +1030,57 @@
     paintList();
   }
   $('deviceschip').addEventListener('click', showDevices);
+
+  function showCharacter() {
+    active = { ws: null, chat: null };
+    clearInterval(pairTimer);
+    $('coltitle').textContent = 'character';
+    $('colstate').textContent = '';
+    stream.innerHTML = '';
+    const view = pairEl('div', 'pairview');
+    stream.appendChild(view);
+    view.appendChild(pairEl('h2', '', 'Character'));
+    const box = pairEl('textarea');
+    box.spellcheck = false;
+    view.appendChild(box);
+    const row = pairEl('div', 'row');
+    const save = pairEl('button', 'go hud', 'save');
+    const back = pairEl('button', 'hud', 'devices');
+    row.append(save, back);
+    view.appendChild(row);
+    const out = pairEl('div');
+    view.appendChild(out);
+    const triedHead = pairEl('div', 'hud', 'refused by voice');
+    const tried = pairEl('div', 'devices');
+    triedHead.hidden = true;
+    view.append(triedHead, tried);
+    function paint(data) {
+      box.placeholder = data.default || '';
+      const refused = data.refused || [];
+      triedHead.hidden = !refused.length;
+      tried.replaceChildren();
+      for (const r of refused) {
+        const line = pairEl('div', 'device');
+        const left = pairEl('div');
+        left.appendChild(pairEl('div', '', r.said || r.tool));
+        left.appendChild(pairEl('div', 'k', day(r.ts) + ' ' + clock(r.ts)));
+        line.appendChild(left);
+        tried.appendChild(line);
+      }
+    }
+    api('/v1/character').then(d => { box.value = d.text; paint(d); })
+      .catch(e => out.replaceChildren(statusEl('the hub did not answer: ' + e.message, 'bad')));
+    save.addEventListener('click', async () => {
+      out.replaceChildren(statusEl('saving...'));
+      try {
+        const d = await api('/v1/character', { method: 'PUT', body: JSON.stringify({ text: box.value }) });
+        box.value = d.text;
+        paint(d);
+        out.replaceChildren(statusEl(d.text ? 'Saved. He speaks this way from his next turn.' : 'Saved. He is the plain butler again.', 'ok'));
+      } catch (e) { out.replaceChildren(statusEl('not saved: ' + e.message, 'bad')); }
+    });
+    back.addEventListener('click', showDevices);
+  }
 
   function watchHub() {
     if (!TOKEN || typeof EventSource === 'undefined') return;

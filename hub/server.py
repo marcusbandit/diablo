@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from . import agent, autoship, brains, busy, db, devices, events, files, jev, llm, hue, lockguard, modules, questions, releases, route, sections, selfrestart, standby, stt, t3link, t3threads, tasks, threads, usage, voicemerge, watch
+from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, questions, releases, route, sections, selfrestart, standby, stt, t3link, t3threads, tasks, threads, usage, voicemerge, watch
 from . import settings as app_settings
 from .config import get_config
 
@@ -1323,8 +1323,26 @@ def read_setting(key: str, _: None = Depends(require_token)):
 
 @app.put("/v1/settings/{key}")
 def write_setting(key: str, body: SettingIn, _: None = Depends(require_token)):
+    if character.protected(key):
+        raise HTTPException(status_code=403, detail="his character changes only on the Character page")
     db.set_setting(key, body.value)
     return {"ok": True}
+
+
+class CharacterIn(BaseModel):
+    text: str = ""
+
+
+@app.get("/v1/character")
+def read_character(_: None = Depends(require_token)):
+    return {"text": character.text(), "default": character.DEFAULT, "refused": character.refused()}
+
+
+@app.put("/v1/character")
+def write_character(body: CharacterIn, caller: dict = Depends(require_token)):
+    if caller.get("master"):
+        raise HTTPException(status_code=403, detail="only a paired device changes his character, never the machine token")
+    return {"text": character.save(body.text), "default": character.DEFAULT, "refused": character.refused()}
 
 
 @app.put("/v1/profile")

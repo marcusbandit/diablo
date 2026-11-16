@@ -6,7 +6,7 @@ import time
 
 import httpx
 
-from . import agent, db, devices, lockguard, modules, questions, settings, t3link, tasks, tts
+from . import agent, character, db, devices, lockguard, modules, questions, settings, t3link, tasks, tts
 from .config import get_config
 
 logger = logging.getLogger("diablo.mcp")
@@ -481,7 +481,8 @@ def wake(arguments):
 
 
 def call(name, arguments):
-    refused = lockguard.refusal(name, os.environ.get("DIABLO_CONVERSATION") or "main", "mcp", arguments)
+    conv = os.environ.get("DIABLO_CONVERSATION") or "main"
+    refused = lockguard.refusal(name, conv, "mcp", arguments) or character.refusal(name, conv, arguments, "mcp")
     if refused:
         return refused
     if name == "t3_where":
