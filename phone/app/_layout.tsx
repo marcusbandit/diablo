@@ -15,14 +15,13 @@ import { useModel } from "../src/use";
 import { iconFont } from "../src/ui/Icon";
 import { Big, Button } from "../src/ui/parts";
 
+let launchLinkTaken = false;
+
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 /** diablo://pair?host=..&code=.. pairs; diablo://section/<id> opens a section (from a notification). */
-const handled = new Set<string>();
-
 function handleLink(url: string | null) {
-  if (!url || handled.has(url)) return;
-  handled.add(url);
+  if (!url) return;
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -34,7 +33,7 @@ function handleLink(url: string | null) {
   if (where.startsWith("pair")) void model.pairFrom(url, true);
   else if (where.startsWith("section/")) {
     const id = decodeURIComponent(where.slice("section/".length));
-    model.select(id);
+    model.show("talk", id);
     if (router.canDismiss()) router.dismissAll();
   }
 }
@@ -66,7 +65,6 @@ export default function Root() {
   const theme = useMemo(() => (scheme === "light" ? { c: light, dark: false } : { c: dark, dark: true }), [scheme]);
   const ready = useModel((s) => s.ready);
   const [fontsLoaded] = useFonts(iconFont);
-  const url = Linking.useLinkingURL();
 
   useEffect(() => {
     void model.start();
@@ -77,9 +75,17 @@ export default function Root() {
   useEffect(() => {
     if (ready && fontsLoaded) SplashScreen.hideAsync().catch(() => undefined);
   }, [ready, fontsLoaded]);
+  // The launch link once per process, then every link that arrives while the app runs, so a
+  // second tap on the same notification still opens its room.
   useEffect(() => {
-    if (ready) handleLink(url);
-  }, [ready, url]);
+    if (!ready) return;
+    if (!launchLinkTaken) {
+      launchLinkTaken = true;
+      void Linking.getInitialURL().then(handleLink);
+    }
+    const sub = Linking.addEventListener("url", (e) => handleLink(e.url));
+    return () => sub.remove();
+  }, [ready]);
 
   if (!ready || !fontsLoaded) return null;
   return (

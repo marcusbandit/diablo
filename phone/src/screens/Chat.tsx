@@ -75,13 +75,13 @@ function Composer({ section, bottom }: { section: string; bottom: number }) {
 }
 
 /** His face in the conversation's header, small, wearing the same mood as on the den. */
-function HeadFace() {
+function HeadFace({ live }: { live: boolean }) {
   const link = useModel((s) => s.link.state);
   const turns = useModel((s) => s.turns);
   const tasks = useModel((s) => s.tasks);
   const owed = useModel((s) => s.owed);
   const moment = useModel((s) => s.moment);
-  return <Face mood={moodOf({ link, turns, tasks, owed, moment })} size={44} onPress={() => model.poke()} />;
+  return <Face mood={moodOf({ link, turns, tasks, owed, moment })} size={44} live={live} onPress={() => model.poke()} />;
 }
 
 function LinkLine() {
@@ -111,6 +111,7 @@ export function ChatPane({
   onMenu,
   showSettings,
   keyboard,
+  live = true,
 }: {
   width: number;
   height: number;
@@ -119,6 +120,7 @@ export function ChatPane({
   onMenu: (() => void) | null;
   showSettings: boolean;
   keyboard: number;
+  live?: boolean;
 }) {
   const { c } = useTheme();
   const insets = useSafeAreaInsets();
@@ -152,7 +154,7 @@ export function ChatPane({
           <View style={{ paddingTop: insets.top, borderBottomWidth: 1, borderBottomColor: c.line, backgroundColor: c.bg }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: sp(2), paddingHorizontal: sp(2), minHeight: 56 }}>
               {onMenu ? <IconButton icon="back" label="Back to the den" onPress={onMenu} /> : <View style={{ width: sp(2) }} />}
-              {current === MAIN ? <HeadFace /> : <Mark icon={section.icon} accent={section.accent} size={32} />}
+              {current === MAIN ? <HeadFace live={live} /> : <Mark icon={section.icon} accent={section.accent} size={32} />}
               <View style={{ flex: 1, paddingLeft: sp(1) }}>
                 <Title style={{ fontSize: 18 }} numberOfLines={1}>
                   {section.name}

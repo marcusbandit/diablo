@@ -11,7 +11,7 @@ import { useModel } from "../use";
 import { Big, Button, IconButton, Label, Status, Title } from "../ui/parts";
 import { NotifyControls } from "./NotifyPanel";
 import { PairPanel, PairResult } from "./PairPanel";
-import { hostOf } from "./Sections";
+import { hostOf } from "../host";
 
 function Group({ title, children }: { title: string; children: ReactNode }) {
   const { c } = useTheme();

@@ -15,13 +15,14 @@ import { Icon } from "../ui/Icon";
 import { IconButton, Label, Mark, Title } from "../ui/parts";
 
 /** The thin line that sweeps under work while it runs: the house work indicator, never a spinner. */
-function Sweep({ color, width }: { color: string; width: number }) {
+function Sweep({ color, width, live }: { color: string; width: number; live: boolean }) {
   const x = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (!live) return;
     const loop = Animated.loop(Animated.timing(x, { toValue: 1, duration: 1400, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }));
     loop.start();
     return () => loop.stop();
-  }, [x]);
+  }, [x, live]);
   const bar = Math.max(48, width * 0.28);
   return (
     <View style={{ height: 2, overflow: "hidden" }}>
@@ -42,7 +43,7 @@ function Heading({ title, count, color }: { title: string; count?: number; color
   );
 }
 
-const TaskRow = memo(function TaskRow({ t, width, flash }: { t: Task; width: number; flash: boolean }) {
+const TaskRow = memo(function TaskRow({ t, width, flash, live }: { t: Task; width: number; flash: boolean; live: boolean }) {
   const { c } = useTheme();
   const glow = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -94,18 +95,21 @@ const TaskRow = memo(function TaskRow({ t, width, flash }: { t: Task; width: num
         </View>
         {finished ? <IconButton icon="close" label="Put away" onPress={() => model.dismissTask(t.id)} /> : null}
       </Pressable>
-      {t.state === "working" ? <Sweep color={c.accent} width={width} /> : <View style={{ height: 2 }} />}
+      {t.state === "working" ? <Sweep color={c.accent} width={width} live={live} /> : <View style={{ height: 2 }} />}
     </Animated.View>
   );
 });
 
-function Owed({ width }: { width: number }) {
+function Owed({ width, live }: { width: number; live: boolean }) {
   const { c } = useTheme();
   const owed = useModel((s) => s.owed);
-  if (!owed.length) return null;
+  const tasks = useModel((s) => s.tasks);
+  const { waiting } = useMemo(() => shownTasks(tasks), [tasks]);
+  const total = owed.length + waiting.length;
+  if (!total) return null;
   return (
     <View>
-      <Heading title="Needs you" count={owed.length > 1 ? owed.length : undefined} color={c.accentInk} />
+      <Heading title="Needs you" count={total > 1 ? total : undefined} color={c.accentInk} />
       <View style={{ gap: sp(3), paddingHorizontal: sp(4) }}>
         {owed.map((q) => (
           <View key={q.id} style={{ maxWidth: width }}>
@@ -113,11 +117,14 @@ function Owed({ width }: { width: number }) {
           </View>
         ))}
       </View>
+      {waiting.map((t) => (
+        <TaskRow key={t.id} t={t} width={width} flash={false} live={live} />
+      ))}
     </View>
   );
 }
 
-function Work({ width }: { width: number }) {
+function Work({ width, live }: { width: number; live: boolean }) {
   const tasks = useModel((s) => s.tasks);
   const moment = useModel((s) => s.moment);
   const { active, finished } = useMemo(() => shownTasks(tasks), [tasks]);
@@ -126,10 +133,10 @@ function Work({ width }: { width: number }) {
     <View>
       <Heading title="Work" count={active.length || undefined} />
       {active.map((t) => (
-        <TaskRow key={t.id} t={t} width={width} flash={false} />
+        <TaskRow key={t.id} t={t} width={width} flash={false} live={live} />
       ))}
       {finished.map((t) => (
-        <TaskRow key={t.id} t={t} width={width} flash={moment?.task === t.id} />
+        <TaskRow key={t.id} t={t} width={width} flash={moment?.task === t.id} live={live} />
       ))}
     </View>
   );
@@ -236,9 +243,24 @@ function Ask({ bottom }: { bottom: number }) {
  * Home: Diablo himself, one line on where things stand, then what he needs from Marcus, the
  * work he runs, today, and the rooms. Color is attention: ember only on what is owed.
  */
-export function Den({ width, height, bottom, ask = true }: { width: number; height: number; bottom: number; ask?: boolean }) {
+export function Den({
+  width,
+  height,
+  bottom,
+  ask = true,
+  atTop = true,
+  live = true,
+}: {
+  width: number;
+  height: number;
+  bottom: number;
+  ask?: boolean;
+  atTop?: boolean;
+  live?: boolean;
+}) {
   const { c } = useTheme();
-  const insets = useSafeAreaInsets();
+  const safe = useSafeAreaInsets();
+  const top = atTop ? safe.top : 0;
   const link = useModel((s) => s.link.state);
   const turns = useModel((s) => s.turns);
   const tasks = useModel((s) => s.tasks);
@@ -254,8 +276,8 @@ export function Den({ width, height, bottom, ask = true }: { width: number; heig
         model.show("talk", MAIN);
         model.say(text, send);
       },
-      act: (a) => void model.act(a),
-      answer: (q, a) => void model.answer(q, a),
+      act: (a) => void model.act(a, MAIN),
+      answer: (q, a) => void model.answer(q, a, model.getState().owed.find((o) => o.id === q)?.section ?? MAIN),
       file: (id) => model.fileSource(id),
       open: (module) => model.openModule(module),
     }),
@@ -264,22 +286,22 @@ export function Den({ width, height, bottom, ask = true }: { width: number; heig
   return (
     <BlockActionsContext.Provider value={actions}>
       <View style={{ width, height, backgroundColor: c.bg }}>
-        <ScrollView contentContainerStyle={{ paddingTop: insets.top, paddingBottom: sp(6) + (ask ? 0 : bottom) }}>
+        <ScrollView contentContainerStyle={{ paddingTop: top, paddingBottom: sp(6) + (ask ? 0 : bottom) }}>
           <View style={{ flexDirection: "row", justifyContent: "flex-end", paddingHorizontal: sp(2), height: 48, alignItems: "center" }}>
             <IconButton icon="settings" label="Settings" onPress={() => router.push("/settings")} />
           </View>
           <View style={{ alignItems: "center", paddingHorizontal: sp(6), gap: sp(3), marginTop: -sp(4) }}>
-            <Face mood={mood} size={faceSize} onPress={() => model.poke()} />
+            <Face mood={mood} size={faceSize} live={live} onPress={() => model.poke()} />
             <Title style={{ fontFamily: fonts.reading, fontWeight: "400", fontSize: 22, lineHeight: 30, textAlign: "center" }} accessibilityLiveRegion="polite">
               {line}
             </Title>
           </View>
-          <Owed width={width - sp(8)} />
-          <Work width={width} />
+          <Owed width={width - sp(8)} live={live} />
+          <Work width={width} live={live} />
           <Today />
           <Places />
         </ScrollView>
-        <View pointerEvents="none" style={{ position: "absolute", left: 0, right: 0, top: 0, height: insets.top, backgroundColor: c.bg }} />
+        <View pointerEvents="none" style={{ position: "absolute", left: 0, right: 0, top: 0, height: top, backgroundColor: c.bg }} />
         {ask ? <Ask bottom={bottom} /> : null}
       </View>
     </BlockActionsContext.Provider>

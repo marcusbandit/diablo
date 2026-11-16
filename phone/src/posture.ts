@@ -79,7 +79,7 @@ export function layoutFor(width: number, height: number, posture: PostureSnapsho
   }
   return {
     mode: tabletop ? "tabletop" : "phone",
-    pane: { x: den ? 0 : -Math.round(width * 0.3), y: 0, width, height },
+    pane: { x: den ? 0 : -Math.round(width * 0.3), y: 0, width, height: seam ? seam.top : height },
     drawer: true,
     chat: { x: den ? width : 0, y: 0, width, height },
     seam,

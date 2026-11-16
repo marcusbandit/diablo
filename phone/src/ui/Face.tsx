@@ -30,7 +30,7 @@ const BUSY: Mood[] = ["thinking", "working", "talking", "listening"];
  * boils like a cartoon, on a dark disc ringed in the hue of what he is doing. A new mood lands
  * with a small squash and settle; busy moods breathe.
  */
-export function Face({ mood, size = 160, onPress }: { mood: Mood; size?: number; onPress?: () => void }) {
+export function Face({ mood, size = 160, live = true, onPress }: { mood: Mood; size?: number; live?: boolean; onPress?: () => void }) {
   const { c, dark } = useTheme();
   const frames = FACES[mood] ?? FACES.resting;
   const [frame, setFrame] = useState(0);
@@ -41,9 +41,10 @@ export function Face({ mood, size = 160, onPress }: { mood: Mood; size?: number;
   const asleep = mood === "asleep";
 
   useEffect(() => {
+    if (!live) return;
     const id = setInterval(() => setFrame((f) => (f + 1 + Math.floor(Math.random() * (frames.length - 1))) % frames.length), asleep ? 600 : 250);
     return () => clearInterval(id);
-  }, [frames.length, asleep]);
+  }, [frames.length, asleep, live]);
 
   useEffect(() => {
     pop.setValue(0.9);
@@ -51,7 +52,7 @@ export function Face({ mood, size = 160, onPress }: { mood: Mood; size?: number;
   }, [mood, pop]);
 
   useEffect(() => {
-    if (!busy) {
+    if (!busy || !live) {
       breath.stopAnimation();
       Animated.timing(breath, { toValue: 0, duration: 300, useNativeDriver: true }).start();
       return;
@@ -65,7 +66,7 @@ export function Face({ mood, size = 160, onPress }: { mood: Mood; size?: number;
     );
     loop.start();
     return () => loop.stop();
-  }, [busy, mood, breath]);
+  }, [busy, live, mood, breath]);
 
   const disc = Math.round(size * 0.82);
   const glowScale = breath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });

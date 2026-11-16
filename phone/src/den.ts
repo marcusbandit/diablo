@@ -16,15 +16,20 @@ export type DenInput = {
   now?: number;
 };
 
-/** The cards the den lists: running work first, then what finished lately and was not put away. */
-export function shownTasks(tasks: Task[], now = Date.now() / 1000): { active: Task[]; finished: Task[] } {
-  const active = tasks.filter((t) => ACTIVE.has(t.state));
+/**
+ * The cards the den lists: work waiting on Marcus (shown under Needs you), running work, then
+ * what finished lately and was not put away.
+ */
+export function shownTasks(tasks: Task[], now = Date.now() / 1000): { waiting: Task[]; active: Task[]; finished: Task[] } {
+  const all = tasks.filter((t) => ACTIVE.has(t.state));
   const order = { waiting: 0, working: 1, queued: 2 } as Record<string, number>;
-  active.sort((a, b) => (order[a.state] ?? 3) - (order[b.state] ?? 3) || (b.updated_at ?? 0) - (a.updated_at ?? 0));
+  all.sort((a, b) => (order[a.state] ?? 3) - (order[b.state] ?? 3) || (b.updated_at ?? 0) - (a.updated_at ?? 0));
+  const waiting = all.filter((t) => t.state === "waiting");
+  const active = all.filter((t) => t.state !== "waiting");
   const finished = tasks
     .filter((t) => !ACTIVE.has(t.state) && !t.seen_at && now - (t.finished_at ?? t.updated_at ?? 0) < FINISHED_SHOWN_S)
     .sort((a, b) => (b.finished_at ?? 0) - (a.finished_at ?? 0));
-  return { active, finished };
+  return { waiting, active, finished };
 }
 
 /** Which face he wears: a passing feeling first, then what he is doing, then what he waits on. */
@@ -37,8 +42,8 @@ export function moodOf(d: DenInput): Mood {
   if (turns.length) return "thinking";
   if (d.typing) return "listening";
   if (d.owed.length) return "expectant";
-  const { active } = shownTasks(d.tasks, now / 1000);
-  if (active.some((t) => t.state === "waiting")) return "expectant";
+  const { waiting, active } = shownTasks(d.tasks, now / 1000);
+  if (waiting.length) return "expectant";
   if (active.length) return "proud";
   return "resting";
 }
@@ -58,10 +63,9 @@ export function headline(d: DenInput): string {
   if (d.link === "checking") return "Waking up.";
   const turn = Object.values(d.turns)[0];
   if (turn) return turn.state === "doing" ? `${turn.tool || turn.step || "Working on it"}.`.replace(/\.\.$/, ".") : "Thinking.";
-  const { active } = shownTasks(d.tasks, now / 1000);
-  const waiting = active.filter((t) => t.state === "waiting").length;
-  const owed = d.owed.length + waiting;
-  const running = active.length - waiting;
+  const { waiting, active } = shownTasks(d.tasks, now / 1000);
+  const owed = d.owed.length + waiting.length;
+  const running = active.length;
   if (owed && running) return `${count(owed, "One thing needs you", "things need you")}. ${count(running, "One job running", "jobs running")}.`;
   if (owed) return `${count(owed, "One thing needs you", "things need you")}.`;
   if (running) return `${count(running, "One job running", "jobs running")}. Nothing needs you.`;

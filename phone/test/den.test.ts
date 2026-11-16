@@ -26,11 +26,12 @@ const base = { link: "online" as const, turns: {}, tasks: [] as Task[], owed: []
 describe("the den", () => {
   test("waiting work comes first, finished work stays until put away", () => {
     const now = 2000;
-    const { active, finished } = shownTasks(
+    const { waiting, active, finished } = shownTasks(
       [task("a", "working"), task("b", "waiting"), task("c", "done", { finished_at: 1900 }), task("d", "done", { finished_at: 1900, seen_at: 1950 })],
       now,
     );
-    expect(active.map((t) => t.id)).toEqual(["b", "a"]);
+    expect(waiting.map((t) => t.id)).toEqual(["b"]);
+    expect(active.map((t) => t.id)).toEqual(["a"]);
     expect(finished.map((t) => t.id)).toEqual(["c"]);
   });
 

@@ -48,6 +48,10 @@ export function Shell() {
   if (last.current && !sameRects(last.current, layout)) glide();
   last.current = layout;
 
+  const denShown = !layout.drawer || view === "den";
+  const talkShown = !layout.drawer || view === "talk";
+  useEffect(() => model.setLooking(talkShown), [talkShown]);
+
   // Back steps back: on a phone the conversation returns to the den; a side room returns to
   // the main conversation first. Only the den, or the main room beside it, leaves the app.
   useFocusEffect(
@@ -73,7 +77,7 @@ export function Shell() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <View style={{ position: "absolute", left: pane.x, top: pane.y, width: pane.width, height: pane.height }}>
-        <Den width={pane.width} height={pane.height} bottom={keyboard > 0 ? 0 : insets.bottom} ask={layout.drawer} />
+        <Den width={pane.width} height={pane.height} bottom={keyboard > 0 ? 0 : insets.bottom} ask={layout.drawer} atTop={pane.y <= 0} live={denShown} />
       </View>
       <View style={{ position: "absolute", left: chat.x, top: chat.y, width: chat.width, height: chat.height, elevation: layout.drawer ? 8 : 0 }}>
         <ChatPane
@@ -83,6 +87,7 @@ export function Shell() {
           controlsLeft={layout.controlsLeft}
           onMenu={layout.drawer ? () => { Keyboard.dismiss(); model.show("den"); } : null}
           showSettings={false}
+          live={talkShown}
           keyboard={keyboard}
         />
       </View>

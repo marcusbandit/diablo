@@ -8,7 +8,7 @@ import { model } from "../model";
 import { fonts, sp, useTheme } from "../theme";
 import { useModel } from "../use";
 import { Button, Field, Reading, Status } from "../ui/parts";
-import { hostOf } from "./Sections";
+import { hostOf } from "../host";
 
 export function Step({ n, children }: { n: number; children: React.ReactNode }) {
   const { c } = useTheme();

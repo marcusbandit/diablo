@@ -237,13 +237,26 @@ class Model {
 
   // ---- navigation ------------------------------------------------------------------------
 
+  /** Whether the conversation is on screen: on a phone it is not while the den shows. */
+  private looking = true;
+
+  setLooking(on: boolean) {
+    if (on === this.looking) return;
+    this.looking = on;
+    if (on && this.foreground) {
+      this.store.markRead(this.state.current);
+      this.reload();
+    }
+    Listener?.setPresence(this.foreground, on ? this.state.current : null);
+  }
+
   select(id: string) {
     if (!this.state.sections.some((s) => s.id === id)) return;
     this.store.set("current", id);
-    this.store.markRead(id);
+    if (this.looking) this.store.markRead(id);
     this.set({ current: id });
     this.reload();
-    Listener?.setPresence(this.foreground, id);
+    Listener?.setPresence(this.foreground, this.looking ? id : null);
     void this.refreshSection(id);
   }
 
@@ -251,7 +264,7 @@ class Model {
   openModule(module: string) {
     const shows = this.state.sections.filter((s) => !s.deleted && s.panels?.includes(module));
     const target = shows.find((s) => s.id !== MAIN) ?? shows[0];
-    if (target) this.select(target.id);
+    if (target) this.show("talk", target.id);
   }
 
   /** Where a stored file lives, with the token header the hub wants, or null unpaired. */
@@ -270,9 +283,9 @@ class Model {
   // ---- talking ---------------------------------------------------------------------------
 
   send(text: string, section = this.state.current) {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     const line = text.trim();
     if (!line) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     this.store.enqueue(section, line);
     this.reload();
     void this.flush();
@@ -299,8 +312,7 @@ class Model {
     this.set({ draft: null });
   }
 
-  async act(act: Record<string, unknown>) {
-    const section = this.state.current;
+  async act(act: Record<string, unknown>, section = this.state.current) {
     const hub = this.hub;
     if (!hub || !this.token) {
       this.notice(section, "Offline: the hub has to answer for that.", true);
@@ -320,9 +332,8 @@ class Model {
     }
   }
 
-  async answer(questionId: string, answer: { choices?: number[]; text?: string }) {
+  async answer(questionId: string, answer: { choices?: number[]; text?: string }, section = this.state.current) {
     const hub = this.hub;
-    const section = this.state.current;
     if (!hub || !this.token) {
       this.notice(section, "Offline: answer once the hub is back.", true);
       return;
@@ -331,6 +342,7 @@ class Model {
     try {
       await hub.answerAndWait(questionId, answer, newClientId(), "phone");
       await this.pull(hub, section);
+      void this.refreshDen(hub);
     } catch (error) {
       this.notice(section, error instanceof HubError ? error.message : "The hub did not take the answer.", true);
     } finally {
@@ -381,7 +393,7 @@ class Model {
     const [tasks, owed] = await Promise.all([hub.tasks().catch(() => null), hub.questions().catch(() => null)]);
     const patch: Partial<State> = {};
     if (tasks) patch.tasks = tasks;
-    if (owed) patch.owed = owed.filter((q) => q.state === "pending" || q.state == null);
+    if (owed) patch.owed = owed.filter((q) => (q.state === "pending" || q.state == null) && !String(q.conv ?? "").startsWith("web-"));
     this.set(patch);
   }
 
@@ -568,7 +580,7 @@ class Model {
 
   private appState(active: boolean) {
     this.foreground = active;
-    Listener?.setPresence(active, active ? this.state.current : null);
+    Listener?.setPresence(active, active && this.looking ? this.state.current : null);
     if (active) {
       this.refreshNotify();
       this.kick();
@@ -674,7 +686,7 @@ class Model {
       cursor = top;
       if (batch.length < 200) break;
     }
-    if (section === this.state.current && this.foreground) this.store.markRead(section);
+    if (section === this.state.current && this.foreground && this.looking) this.store.markRead(section);
     if (added || section === this.state.current) this.reload();
   }
 

@@ -67,7 +67,7 @@ export type Task = {
 };
 
 /** A question Diablo asked that still waits, with where it was asked. */
-export type Pending = Block & { id: string; section?: string | null; message?: number | null };
+export type Pending = Block & { id: string; section?: string | null; message?: number | null; conv?: string | null };
 
 export type PairCode = { code: string; expires_at: number; ttl: number; url: string; link: string };
 
