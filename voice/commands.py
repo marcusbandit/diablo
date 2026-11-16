@@ -42,10 +42,23 @@ LOOP_STOP = re.compile(
 # "type": "write a script that ..." is a request for Claude, not text to paste.
 TYPE = re.compile(r"^\W*(?:diablo\W+)?type(?:\s+in)?[\s:,]+(.+?)\.?\s*$", re.I | re.S)
 # "Dictate", "take dictation", "start dictating": a long stretch of talk, typed once he ends it.
-DICTATE = re.compile(
-    r"^\W*(?:diablo\W+)?(?:(?:start|begin|take)\s+)?(?:dictate|dictation|dictating)(?:\s+(?:this|mode|now|that))?\W*$",
-    re.I,
+# Said again while he waits ("Dictate. Dictate. Dictate.") it still counts.
+_DICTATE_ONE = r"(?:(?:start|begin|take)\s+)?(?:dictate|dictation|dictating)(?:\s+(?:this|mode|now|that))?"
+DICTATE = re.compile(r"^\W*(?:diablo\W+)?" + _DICTATE_ONE + r"(?:\W+" + _DICTATE_ONE + r")*\W*$", re.I)
+# "Dictate. Hello there": the words in the same breath. Only the verb, or "start dictating": a line
+# that opens on the noun ("dictation is broken") is about dictation, not dictated. The words need
+# a pause after the verb (Whisper's comma, colon or full stop) or the closing "dictation done":
+# "dictate a mail to Alex saying I'm late" in one run is a request for Claude.
+DICTATE_WITH = re.compile(
+    r"^\W*(?:diablo\W+)?(?:dictate|(?:start|begin)\s+(?:dictating|dictation)|take\s+dictation)"
+    r"(?:\s+now)?(?:\s*(?P<pause>[,:.;!?-])\s*|\s+)(?P<words>\S.*)$",
+    re.I | re.S,
 )
+# "Dictate. Dictate. Dear Alex": the repeats in front of the words are not part of them.
+DICTATE_AGAIN = re.compile(r"^(?:" + _DICTATE_ONE + r"\W+)+", re.I)
+# The way out of any mode, and the only bare words that end a dictation: "done" or "finished"
+# alone can be a dictated sentence.
+LEAVE = re.compile(r"^\W*(?:diablo\W+)?(?:stop|that'?s all|that is all|i'?m done|i am done|we'?re done)\W*$", re.I)
 # Said at the end of the dictation, and cut from what gets typed.
 DICTATION_DONE = re.compile(
     r"\s*\b(?:dictation|dictating)\W+(?:done|over|stop|stopped|end|ended|finished|complete)\W*$"
@@ -103,7 +116,29 @@ def animation_end(text):
 
 
 def wants_dictation(text):
-    return bool(DICTATE.match(str(text or "")))
+    return dictation_start(text) is not None
+
+
+def dictation_start(text):
+    """None when the line does not start dictation, else (words, ended): the words said in the
+    same breath, and whether it already closed with "dictation done"."""
+    text = str(text or "").strip()
+    if DICTATE.match(text):
+        return "", False
+    found = DICTATE_WITH.match(text)
+    if not found:
+        return None
+    ended, words = dictation_end(DICTATE_AGAIN.sub("", found.group("words")))
+    if not ended and LEAVE.match(words):
+        return "", True
+    if not ended and not found.group("pause"):
+        return None
+    return words, ended
+
+
+def leaves_mode(text):
+    """A bare "stop", "that's all" or "I'm done": the one way out of any mode."""
+    return bool(LEAVE.match(str(text or "")))
 
 
 def dictation_end(text):
