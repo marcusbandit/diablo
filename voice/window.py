@@ -12,7 +12,6 @@ line and exits 0 when done. No target, or "it" or "this", means the focused wind
 side calls focus() and stage() with an address.
 """
 
-import functools
 import json
 import os
 import re
@@ -40,29 +39,36 @@ def _newest(paths):
 
 def fill_session(env):
     """Fills in the desktop session's WAYLAND_DISPLAY and HYPRLAND_INSTANCE_SIGNATURE from the
-    runtime dir when the process did not get them: ssh, or a service started before the
-    compositor exported them. Changes env in place and returns the names it filled."""
+    runtime dir when the process did not get them (ssh, or a service started before the
+    compositor exported them), or when the ones it has point at a compositor that is gone.
+    Changes env in place and returns the names it changed."""
     runtime = env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-    filled = []
-    if not env.get("WAYLAND_DISPLAY"):
+    changed = []
+    display = env.get("WAYLAND_DISPLAY")
+    if not display or not Path(runtime, display).exists():
         socket = _newest(p for p in Path(runtime).glob("wayland-*") if not p.name.endswith(".lock"))
-        if socket is not None:
+        if socket is not None and socket.name != display:
             env["WAYLAND_DISPLAY"] = socket.name
-            filled.append("WAYLAND_DISPLAY")
-    if not env.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            changed.append("WAYLAND_DISPLAY")
+    signature = env.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if not signature or not Path(runtime, "hypr", signature, ".socket.sock").exists():
         socket = _newest(Path(runtime, "hypr").glob("*/.socket.sock"))
-        if socket is not None:
+        if socket is not None and socket.parent.name != signature:
             env["HYPRLAND_INSTANCE_SIGNATURE"] = socket.parent.name
-            filled.append("HYPRLAND_INSTANCE_SIGNATURE")
-    return filled
+            changed.append("HYPRLAND_INSTANCE_SIGNATURE")
+    return changed
 
 
-@functools.lru_cache(maxsize=1)
-def _env():
-    """The Hyprland session's env, found from the runtime dir when ssh did not bring it."""
+def session_env():
+    """This process's env with the session read fresh: a compositor restart makes new sockets,
+    and a value read once at start would point at the old ones."""
     env = dict(os.environ)
     fill_session(env)
     return env
+
+
+def _env():
+    return session_env()
 
 
 def _hyprctl(*args):

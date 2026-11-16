@@ -789,11 +789,25 @@ def run_act(act, tl, cfg):
     return f"That didn't work: {why}."
 
 
+UNPASTED = vstate.STATE_DIR / "unpasted.jsonl"
+
+
 def keep_unpasted(cfg, text, what):
-    """Words he dictated or asked to have typed that could not be pasted go to the chat, so a
-    broken clipboard never loses them (2026-11-16: a whole dictation survived only in the log)."""
+    """Words he dictated or asked to have typed that could not be pasted are kept here at once,
+    then go to the Diablo chat, so a broken clipboard or a hub that is down never loses them
+    (2026-11-16: a whole dictation survived only in the log). In the chat they are a push of
+    their own, never paired as the answer to whatever he asked last."""
+    try:
+        UNPASTED.parent.mkdir(parents=True, exist_ok=True)
+        with UNPASTED.open("a") as out:
+            out.write(json.dumps({"at": time.time(), "what": what, "text": text}) + "\n")
+    except OSError:
+        log.exception("could not keep the unpasted words: %s", text)
+
     def send():
-        hubclient.post_message(cfg, "voice", "assistant", f"{what}, not pasted:\n\n{text}", meta={"kind": "unpasted"})
+        if not hubclient.post_message(cfg, "voice", "assistant", f"{what}, not pasted:\n\n{text}",
+                                      meta={"kind": "unpasted", "section": "diablo", "pushed": True}):
+            log.warning("the unpasted words did not reach the chat; they are in %s", UNPASTED)
 
     threading.Thread(target=send, name="unpasted", daemon=True).start()
 
@@ -1617,8 +1631,10 @@ def run():
     filled = window.fill_session(os.environ)
     if filled:
         log.info("the session did not hand over %s; found them in the runtime dir", ", ".join(filled))
-    elif not os.environ.get("WAYLAND_DISPLAY"):
-        log.warning("no Wayland session found: pasting, keys and windows will fail until a restart")
+    missing = [name for name in ("WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE") if not os.environ.get(name)]
+    if missing:
+        log.warning("no %s found: pasting, keys and windows may fail until the session is up",
+                    " or ".join(missing))
     cfg = load_config()
     REPORT = HubReport(cfg)
     atexit.register(REPORT.stop)

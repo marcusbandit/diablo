@@ -139,10 +139,13 @@ def _terminal(window_class):
 def _clipboard():
     """(mime, bytes) on the clipboard now, or None."""
     try:
-        types = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True, timeout=2).stdout.split()
+        env = window.session_env()
+        types = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True, timeout=2,
+                               env=env).stdout.split()
         if not types:
             return None
-        data = subprocess.run(["wl-paste", "--no-newline", "--type", types[0]], capture_output=True, timeout=3).stdout
+        data = subprocess.run(["wl-paste", "--no-newline", "--type", types[0]], capture_output=True, timeout=3,
+                              env=env).stdout
         return types[0], data
     except (OSError, subprocess.SubprocessError):
         return None
@@ -164,8 +167,9 @@ def type_text(text):
         window_class = ""
     shift = _terminal(window_class)
     held = _clipboard()
+    env = window.session_env()
     try:
-        subprocess.run(["wl-copy", "--", text], check=True, timeout=5)
+        subprocess.run(["wl-copy", "--", text], check=True, timeout=5, env=env)
     except (OSError, subprocess.SubprocessError) as error:
         log.warning("wl-copy failed: %s", str(error)[:200])
         return False, "the clipboard could not be reached"
@@ -186,9 +190,9 @@ def type_text(text):
     time.sleep(0.35)
     try:
         if held is None:
-            subprocess.run(["wl-copy", "--clear"], timeout=3)
+            subprocess.run(["wl-copy", "--clear"], timeout=3, env=env)
         else:
-            subprocess.run(["wl-copy", "--type", held[0]], input=held[1], timeout=5)
+            subprocess.run(["wl-copy", "--type", held[0]], input=held[1], timeout=5, env=env)
     except (OSError, subprocess.SubprocessError):
         pass
     return True, ""
@@ -331,7 +335,7 @@ def loop_intent(text, active=False):
 
 def _run(cmd, timeout=4.0):
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=window.session_env())
     except (OSError, subprocess.SubprocessError) as error:
         return False, str(error)[:160]
     out = (done.stdout or "") + (done.stderr or "")

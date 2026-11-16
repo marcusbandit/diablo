@@ -24,5 +24,5 @@ systemctl --user daemon-reload
 # reenable, not enable: an older install hangs off default.target and would still start at boot,
 # before the compositor, with no Wayland to paste into.
 systemctl --user reenable diablo-ears.service
-systemctl --user start diablo-ears.service
+systemctl --user restart diablo-ears.service
 echo "ears installed. First time: diablo-ears train"

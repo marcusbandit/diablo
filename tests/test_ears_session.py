@@ -45,13 +45,23 @@ class TestFillSession(unittest.TestCase):
         window.fill_session(env)
         self.assertEqual((env["WAYLAND_DISPLAY"], env["HYPRLAND_INSTANCE_SIGNATURE"]), ("wayland-1", "new"))
 
-    def test_what_the_session_handed_over_is_kept(self):
+    def test_what_the_session_handed_over_is_kept_while_it_lives(self):
+        self.touch("wayland-5", age=600)
         self.touch("wayland-1")
+        self.touch("hypr/given/.socket.sock", age=600)
         self.touch("hypr/new/.socket.sock")
         env = {"XDG_RUNTIME_DIR": str(self.runtime), "WAYLAND_DISPLAY": "wayland-5",
                "HYPRLAND_INSTANCE_SIGNATURE": "given"}
         self.assertEqual(window.fill_session(env), [])
         self.assertEqual((env["WAYLAND_DISPLAY"], env["HYPRLAND_INSTANCE_SIGNATURE"]), ("wayland-5", "given"))
+
+    def test_a_compositor_restart_replaces_what_went_stale(self):
+        self.touch("wayland-2")
+        self.touch("hypr/second/.socket.sock")
+        env = {"XDG_RUNTIME_DIR": str(self.runtime), "WAYLAND_DISPLAY": "wayland-1",
+               "HYPRLAND_INSTANCE_SIGNATURE": "first"}
+        self.assertEqual(window.fill_session(env), ["WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE"])
+        self.assertEqual((env["WAYLAND_DISPLAY"], env["HYPRLAND_INSTANCE_SIGNATURE"]), ("wayland-2", "second"))
 
     def test_no_session_fills_nothing(self):
         env = {"XDG_RUNTIME_DIR": str(self.runtime)}
@@ -107,15 +117,20 @@ class TestTypeText(unittest.TestCase):
 
 
 class TestKeepUnpasted(unittest.TestCase):
-    def test_the_words_go_to_the_chat(self):
+    def test_the_words_are_kept_here_and_go_to_the_diablo_chat_as_a_push(self):
         posted = []
-        with mock.patch.object(ears.hubclient, "post_message",
-                               side_effect=lambda cfg, source, role, text, meta=None: posted.append((role, text, meta))):
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(ears, "UNPASTED", Path(folder, "unpasted.jsonl")), \
+                mock.patch.object(ears.hubclient, "post_message",
+                                  side_effect=lambda cfg, source, role, text, meta=None: posted.append((role, text, meta))):
             ears.keep_unpasted({"hub_url": "http://hub.example"}, "hello there", "Dictated")
+            kept = Path(folder, "unpasted.jsonl").read_text()
             deadline = time.monotonic() + 2
             while not posted and time.monotonic() < deadline:
                 time.sleep(0.01)
-        self.assertEqual(posted, [("assistant", "Dictated, not pasted:\n\nhello there", {"kind": "unpasted"})])
+        self.assertIn('"text": "hello there"', kept)
+        self.assertEqual(posted, [("assistant", "Dictated, not pasted:\n\nhello there",
+                                   {"kind": "unpasted", "section": "diablo", "pushed": True})])
 
 
 class TestUnit(unittest.TestCase):
