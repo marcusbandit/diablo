@@ -379,7 +379,7 @@ class ClaudeSession:
             self.proc.kill()
 
     def current(self):
-        signature = hashlib.sha1(json.dumps(mcp_config(self.conv), sort_keys=True).encode()).hexdigest()
+        signature = hashlib.sha1(json.dumps([mcp_config(self.conv), charter.charter()], sort_keys=True).encode()).hexdigest()
         return self.alive() and self.signature == signature, signature
 
     async def control(self, request):

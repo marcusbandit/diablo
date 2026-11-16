@@ -438,6 +438,11 @@ def _execute(name, args, cfg):
             return f"could not arm the reboot: {error}"
         return "reboot armed: I will restart as soon as I finish this reply"
     if name == "save_fact":
+        from hub import character
+
+        if character.touches(args.get("text"), args.get("tags")):
+            character.log(name, args, "spoken aloud, voice agent", "voice agent")
+            return character.reason()
         hubclient.add_fact(cfg, args.get("text", ""), args.get("tags") or [])
         return "saved"
     if name == "recall_facts":
