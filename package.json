@@ -1,0 +1,9 @@
+{
+  "name": "diablo-apps",
+  "private": true,
+  "workspaces": ["packages/*", "web", "phone"],
+  "scripts": {
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun test packages && bun run --filter web test && bun run --filter diablo-phone test"
+  }
+}

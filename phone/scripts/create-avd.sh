@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create the template's foldable emulator, identically on any machine.
+# Create the foldable emulator the phone app is checked on, identically on any machine.
 # Usage: scripts/create-avd.sh [name] [device]   (default diablo_phone, pixel_10_pro_fold)
 set -euo pipefail
 SDK="${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}"

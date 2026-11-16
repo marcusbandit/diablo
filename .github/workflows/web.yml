@@ -1,0 +1,34 @@
+name: web
+
+# Builds the hub's web app. On main the build is kept as the web-dist artifact, which the hub's
+# autoship installs on diablo-pi (hub/autoship.py), since the Pi has no JavaScript toolchain.
+on:
+  pull_request:
+    paths: ["web/**", "packages/**", "package.json", "bun.lock", ".github/workflows/web.yml"]
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
+      - name: shared hub client tests
+        run: bun test packages
+      - name: web tests
+        run: bun run --filter web test
+      - name: typecheck and build
+        run: bun run --filter web build
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: web-dist
+          path: web/dist/
+          retention-days: 30

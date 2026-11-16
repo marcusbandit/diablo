@@ -1,0 +1,74 @@
+// The hub's wire types, as docs/api.md describes them.
+
+export type Section = {
+  id: string;
+  name: string;
+  icon: string;
+  accent: string;
+  brief: string;
+  position: number;
+  hidden: boolean;
+  deleted: boolean;
+  updated: number;
+  panels?: string[];
+};
+
+export type Role = "user" | "assistant" | "system" | string;
+
+export type Message = {
+  id: number;
+  role: Role;
+  text: string;
+  ts: number;
+  meta?: Record<string, unknown> | null;
+  threads?: string[];
+};
+
+/** A block from a reply's `objects` or a panel. Told apart by `kind`; unknown kinds are skipped. */
+export type Block = { kind: string; [field: string]: unknown };
+
+export type Paired = { token: string; deviceId: number; device: string; hub: string };
+
+export type ChatReply = {
+  reply: string;
+  id: number;
+  userId: number;
+  section: string;
+  objects: Block[];
+  threads: { id: string; title: string }[];
+};
+
+export type Device = {
+  id: number;
+  name: string;
+  kind?: string;
+  created?: number;
+  last_seen?: number | null;
+  current?: boolean;
+};
+
+export type PairCode = { code: string; expires_at: number; ttl: number; url: string; link: string };
+
+export type PairStatus =
+  | { state: "unknown" | "expired" }
+  | { state: "paired"; device: string }
+  | { state: "waiting"; expires_at: number };
+
+export type Health = { ok: boolean; role?: string; stt?: string; revision?: string };
+
+export type TurnEvent = {
+  kind: "turn";
+  section: string;
+  state: "thinking" | "doing" | "done" | "failed";
+  step?: string;
+  tool?: string;
+  id?: number;
+  source?: string;
+};
+
+export type HubEvent =
+  | { kind: "message"; section: string; id?: number; source?: string }
+  | { kind: "sections" }
+  | { kind: "panel"; modules: string[] }
+  | TurnEvent
+  | { kind: string; [field: string]: unknown };

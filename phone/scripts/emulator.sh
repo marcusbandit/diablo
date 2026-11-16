@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Launch the template's foldable emulator, headless, inside a hard memory/CPU cap.
+# Start the foldable emulator, headless, inside a hard memory and CPU cap. One emulator at a time:
+# if any emulator is attached already, reuse it instead.
 # Usage: scripts/emulator.sh [--window]   (AVD from $DIABLO_AVD, default diablo_phone)
 set -euo pipefail
 SDK="${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}"
@@ -17,6 +18,10 @@ avail=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
 if (( avail < MIN_FREE_MB )); then
   echo "emulator.sh: only ${avail} MB available (< ${MIN_FREE_MB} MB). Not starting; close something first." >&2
   exit 1
+fi
+if adb devices 2>/dev/null | grep -q '^emulator-[0-9]*[[:space:]]device$'; then
+  echo "emulator.sh: an emulator is already attached; reuse it ($(adb emu avd name 2>/dev/null | head -1 | tr -d '\r'))." >&2
+  exit 0
 fi
 if pgrep -f "qemu-system-x86_64 -avd ${AVD}( |$)" >/dev/null; then
   echo "emulator.sh: AVD ${AVD} is already running." >&2

@@ -19,3 +19,11 @@ captures/
 keystore.properties
 local.env
 room/docs/shots/
+
+# JS apps
+node_modules/
+dist/
+.expo/
+web-build/
+phone/android/
+phone/ios/

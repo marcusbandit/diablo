@@ -1,11 +1,7 @@
-.gradle/
-.kotlin/
-build/
-local.properties
+node_modules/
+.expo/
+android/
+ios/
 captures/
-.idea/
-*.iml
-.DS_Store
-.env*
-*.jks
-*.keystore
+expo-env.d.ts
+*.apk
