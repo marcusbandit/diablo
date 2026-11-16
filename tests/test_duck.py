@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -121,23 +122,51 @@ class DuckTest(unittest.TestCase):
         self.assertEqual(self.desk.vol(6), round(FULL * 0.2))
         self.assertNotIn(5, self.duck.held)
 
-    def test_a_chime_from_a_child_of_the_ears_is_his_too(self):
+    def test_an_app_the_ears_started_is_turned_down_like_any_other(self):
         child = subprocess.Popen(["sleep", "5"])
         try:
-            self.desk.add(5, "ALSA plug-in [pw-cat]", pid=child.pid)
+            self.desk.add(5, "Spotify", pid=child.pid)
             self.talk()
-            self.assertEqual(self.desk.vol(5), FULL)
+            self.assertEqual(self.desk.vol(5), round(FULL * 0.2))
         finally:
             child.kill()
             child.wait()
 
-    def test_descends_walks_up_to_the_root(self):
-        parents = {30: 20, 20: 10, 10: 1, 40: 1}
-        self.assertTrue(duck.descends(30, root=10, parent=parents.get))
-        self.assertTrue(duck.descends(10, root=10, parent=parents.get))
-        self.assertFalse(duck.descends(40, root=10, parent=parents.get))
-        self.assertFalse(duck.descends(None, root=10, parent=parents.get))
-        self.assertFalse(duck.descends(99, root=10, parent=parents.get))
+    def test_an_orphan_his_stream_does_not_match_stays_for_its_app(self):
+        self.duck.orphans["alsa plug-in [python3.12]"] = {"from": [40000, 40000], "to": [8000, 8000], "at": 1_000_000.0}
+        self.desk.add(5, "ALSA plug-in [python3.12]", pid=os.getpid())
+        self.tick(2.0)
+        self.assertEqual(self.desk.vol(5), FULL)
+        self.assertIn("alsa plug-in [python3.12]", self.duck.orphans)
+        self.desk.add(6, "ALSA plug-in [python3.12]", 8000, pid=os.getpid() + 100000)
+        self.tick(2.0)
+        self.assertEqual(self.desk.vol(6), 40000)
+
+    def test_the_sound_hold_leaves_a_source_only_the_ears_play(self):
+        ours = {"names": ["alsa plug-in [python3.12]"], "streams": [{"pid": os.getpid()}]}
+        theirs = {"names": ["alsa plug-in [python3.12]"], "streams": [{"pid": os.getpid() + 100000}]}
+        self.assertTrue(speakers.own(ours))
+        self.assertFalse(speakers.own(theirs))
+
+    def test_an_app_launched_while_the_voice_stream_opens_never_inherits_its_names(self):
+        launched, during = {}, {}
+
+        def launch():
+            launched["env"] = playback.launch_env()
+
+        def output_stream(*args, **kwargs):
+            during["env"] = os.environ.get("PULSE_PROP_OVERRIDE")
+            launched["thread"] = threading.Thread(target=launch)
+            launched["thread"].start()
+            return mock.Mock()
+
+        fake = mock.Mock(OutputStream=output_stream)
+        with mock.patch.dict(sys.modules, {"sounddevice": fake}):
+            playback._open_stream(24000, None)
+        launched["thread"].join(2)
+        self.assertIn("application.name='Diablo'", during["env"])
+        self.assertNotIn("PULSE_PROP_OVERRIDE", launched["env"])
+        self.assertNotIn("PULSE_PROP_OVERRIDE", os.environ)
 
     def test_his_own_stream_closing_leaves_no_orphan(self):
         self.desk.add(5, "ALSA plug-in [python3.12]", pid=os.getpid())

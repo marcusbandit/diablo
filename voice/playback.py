@@ -64,12 +64,21 @@ def stream_env(pid=None):
     """The names the voice stream carries, for both ways the ALSA default can reach PipeWire:
     pipewire-alsa reads PIPEWIRE_PROPS, the PulseAudio plugin reads PULSE_PROP_OVERRIDE. The
     plugin sets application.name to "ALSA plug-in [python3.12]" itself, which plain PULSE_PROP
-    does not replace."""
+    does not replace. They sit in the environment only while the stream opens, under
+    _env_lock; launch_env() takes the environment under the same lock, so an app started
+    meanwhile never inherits them."""
     pid = os.getpid() if pid is None else pid
     return {
         "PIPEWIRE_PROPS": '{ application.name = "%s" node.name = "diablo-voice" application.process.id = %d }' % (APP, pid),
         "PULSE_PROP_OVERRIDE": "application.name='%s' node.name='diablo-voice' application.process.id='%d'" % (APP, pid),
     }
+
+
+def launch_env():
+    """The environment for an app the ears start, as it is outside a stream opening, so an app
+    launched while a reply opens its stream never plays as Diablo."""
+    with _env_lock:
+        return dict(os.environ)
 
 
 def _open_stream(rate, callback):
