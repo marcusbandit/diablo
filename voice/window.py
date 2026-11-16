@@ -28,15 +28,40 @@ PUT = 'local s = require("{module}") if not s.window() then error("{off}") end s
 FOCUSED = ("", "it", "this", "that", "this window", "that window", "the window", "this one")
 
 
+def _newest(paths):
+    found = []
+    for path in paths:
+        try:
+            found.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    return max(found)[1] if found else None
+
+
+def fill_session(env):
+    """Fills in the desktop session's WAYLAND_DISPLAY and HYPRLAND_INSTANCE_SIGNATURE from the
+    runtime dir when the process did not get them: ssh, or a service started before the
+    compositor exported them. Changes env in place and returns the names it filled."""
+    runtime = env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    filled = []
+    if not env.get("WAYLAND_DISPLAY"):
+        socket = _newest(p for p in Path(runtime).glob("wayland-*") if not p.name.endswith(".lock"))
+        if socket is not None:
+            env["WAYLAND_DISPLAY"] = socket.name
+            filled.append("WAYLAND_DISPLAY")
+    if not env.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        socket = _newest(Path(runtime, "hypr").glob("*/.socket.sock"))
+        if socket is not None:
+            env["HYPRLAND_INSTANCE_SIGNATURE"] = socket.parent.name
+            filled.append("HYPRLAND_INSTANCE_SIGNATURE")
+    return filled
+
+
 @functools.lru_cache(maxsize=1)
 def _env():
     """The Hyprland session's env, found from the runtime dir when ssh did not bring it."""
     env = dict(os.environ)
-    runtime = env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-    if not env.get("HYPRLAND_INSTANCE_SIGNATURE"):
-        found = sorted(Path(runtime, "hypr").glob("*/.socket.sock"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if found:
-            env["HYPRLAND_INSTANCE_SIGNATURE"] = found[0].parent.name
+    fill_session(env)
     return env
 
 
