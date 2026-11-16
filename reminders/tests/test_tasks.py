@@ -4,6 +4,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+import urllib.error
 from datetime import datetime, timezone
 from unittest import mock
 
@@ -138,6 +139,70 @@ class TestTaskSender(unittest.TestCase):
     def test_the_unit_points_tasks_at_the_hub(self):
         unit = open(os.path.join(os.path.dirname(__file__), "..", "deploy", "diablo-reminders.service")).read()
         self.assertIn("Environment=REMIND_HUB_URL=", unit)
+
+
+class Answer:
+    def __init__(self, body):
+        self.body = body
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+HUB_ENV = {"REMIND_HUB_TOKEN": "t0ken", "REMIND_HUB_URL": "http://hub:8755"}
+META = {"reminder": 3, "delivery": 7, "kind": "remind", "client_id": "task-3-100-90"}
+
+
+class TestReminderToTheApp(unittest.TestCase):
+    def sender(self):
+        self.telegram = Recorder()
+        return telegram.Fallback(telegram.HubSender(), self.telegram)
+
+    def test_a_reminder_goes_to_the_hub_notify_and_not_to_telegram(self):
+        seen = {}
+
+        def urlopen(request, timeout=0):
+            seen.update(url=request.full_url, body=json.loads(request.data), token=request.get_header("X-diablo-token"))
+            return Answer(b'{"ok": true, "id": 12, "telegram": false}')
+
+        with mock.patch.dict(os.environ, HUB_ENV), mock.patch("urllib.request.urlopen", urlopen):
+            self.sender().send("Drink water", META)
+        self.assertEqual(seen["url"], "http://hub:8755/v1/notify")
+        self.assertEqual(seen["body"], {"text": "Drink water", "kind": "reminder", "client_id": "remind-task-3-100-90"})
+        self.assertEqual(seen["token"], "t0ken")
+        self.assertEqual(self.telegram.sent, [])
+
+    def test_a_hub_that_cannot_be_reached_hands_it_to_telegram(self):
+        down = urllib.error.URLError(ConnectionRefusedError("refused"))
+        with mock.patch.dict(os.environ, HUB_ENV), mock.patch("urllib.request.urlopen", side_effect=down):
+            self.sender().send("Drink water", META)
+        self.assertEqual(self.telegram.sent, [("Drink water", META)])
+        with mock.patch.dict(os.environ, {"REMIND_HUB_TOKEN": "t0ken", "REMIND_HUB_URL": ""}):
+            self.sender().send("Drink water", META)
+        self.assertEqual(len(self.telegram.sent), 1)
+
+    def test_a_hub_that_got_it_but_failed_is_retried_never_sent_on_telegram(self):
+        for failure in (urllib.error.HTTPError("http://hub:8755/v1/notify", 500, "boom", {}, io.BytesIO(b"boom")),
+                        TimeoutError("read timed out")):
+            sender = self.sender()
+            with mock.patch.dict(os.environ, HUB_ENV), mock.patch("urllib.request.urlopen", side_effect=failure):
+                with self.assertRaises(SendError) as caught:
+                    sender.send("Drink water", META)
+            self.assertNotIsInstance(caught.exception, telegram.HubDown)
+            self.assertEqual(self.telegram.sent, [])
+
+    def test_the_service_sends_reminders_through_the_hub(self):
+        router = telegram.make_sender()
+        first = router.senders["remind"]
+        self.assertIsInstance(first, telegram.Fallback)
+        self.assertIsInstance(first.first, telegram.HubSender)
+        self.assertIsInstance(first.then, telegram.TelegramSender)
 
 
 EM_DASH = chr(0x2014)

@@ -167,9 +167,18 @@ to date, so a client that fetches the message later sees the current state.
 - `POST /v1/questions` with the hub token is how the MCP server's `ask_user` reaches the hub.
 
 The events stream sends `{"kind": "question", "question": <block>, "message", "section"}` whenever
-a question changes, so a client patches the block under that message without a fetch. Telegram
-shows a pending question as a message with an inline keyboard; a tap answers it and edits the
-message to show the pick, and a reply to that message answers in his own words.
+a question changes, so a client patches the block under that message without a fetch. A question
+asked on a Telegram turn shows there too, as a message with an inline keyboard; a tap answers it
+and edits the message to show the pick, and a reply to that message answers in his own words.
+
+Some questions carry an action instead of a turn: a mail approval is a question of header `Mail`
+with the buttons the request offers (Approve and Deny, Send it and Don't send, Always and Keep
+asking, Let it continue and Stop it), in a conversation of its own (`mail-approval-<id>`) so it
+never replaces one Diablo asked, open for seven days, and options only. Answering it through
+`POST /v1/questions/{id}/answer` runs the same decision a Telegram button ran, stores his tap and
+the outcome line (`meta.kind` `mail`) in the main conversation, and answers `{"reply", "id",
+"section", "user_id", "objects": [], "answered"}` at once, with no brain turn. A decision made
+anywhere else, the Mail panel included, cancels the card.
 
 ## Files
 
@@ -195,8 +204,30 @@ The standby hub does not mirror them and refuses uploads while it serves.
 ## Scheduled tasks
 
 `POST /v1/scheduled {"text", "client_id"}` is for the reminder service on the Pi: it runs `text` as
-a brain turn in the main conversation in the background and pushes the result to Telegram. Each
-`client_id` runs once; a repeat answers `{"ok": true, "queued": false}`.
+a brain turn in the main conversation in the background and delivers the result to the app (see
+Messages he sends on his own). Each `client_id` runs once; a repeat answers
+`{"ok": true, "queued": false}`.
+
+## Messages he sends on his own
+
+Everything Diablo says outside a reply lands in the app: T3 events, wake and restart notes, a failed
+self update, scheduled task results, reminders, important mail and mail approvals, and the `notify`
+tool. hub/deliver.py stores each one in the main conversation (section `diablo`) as an assistant
+message with `meta.pushed: true` and `meta.kind` (`t3`, `wake`, `restart`, `autoship`,
+`scheduled`, `reminder`, `mail`, `voice`, `report`), with any question in `meta.objects`. The
+`message` event goes out with `section: "diablo"`, which the phone's listener turns into a
+notification.
+
+Telegram only answers Telegram: a message he writes there gets its reply there, and so does a
+`notify` or `send_voice` during that turn. Nothing else goes to Telegram. The setting
+`delivery.telegram` (`replies`, the default, or `all`) brings the old behaviour back without a
+deploy: with `all` every message above also goes to Telegram, mail approvals with their buttons.
+
+`POST /v1/notify {"text", "kind", "origin", "client_id"}` with any token delivers one such message
+and answers `{"ok": true, "id", "telegram", "repeat"}`. `kind` defaults to `report`; `origin`
+names the turn it belongs to (a Telegram origin also sends it there); a `client_id` already
+delivered is not stored again and answers `repeat: true`. The reminder service, the MCP server's
+`notify` and the desktop's task-notify use it.
 
 ## Restarting himself
 
@@ -391,8 +422,8 @@ creates or updates a card with any of the fields above plus `id`; it takes the h
 is how the MCP server's `update_task` and `watch_t3_thread` reach the hub so the event goes out at
 once.
 
-A finished self-improvement thread only updates its card: Diablo gets a turn, and Telegram a
-push, only when a watched thread waits on Marcus, fails, or is partner work that finished.
+A finished self-improvement thread only updates its card: Diablo gets a turn, and the app a
+message, only when a watched thread waits on Marcus, fails, or is partner work that finished.
 
 ## Block kinds
 

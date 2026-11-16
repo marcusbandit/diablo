@@ -1,4 +1,8 @@
-"""Sending through the hub's own Telegram bot.
+"""Sending a reminder: to Marcus's app through the hub, with the hub's own Telegram bot as the fallback.
+
+A reminder goes to the hub's POST /v1/notify (HubSender), which stores it in the app and lets the phone
+ping. Only when the hub cannot be reached at all does it go straight to Telegram (TelegramSender), so a
+reminder still arrives while the hub is down.
 
 The bot token and chat id are read from the hub's database at send time, the
 same settings the hub's notify tool uses (telegram_bot_token, telegram_chat_id),
@@ -156,8 +160,66 @@ class TaskSender:
         return None
 
 
+class HubDown(SendError):
+    pass
+
+
+class HubSender:
+    """Hands a reminder to the hub's POST /v1/notify, which puts it in Marcus's app and lets his phone ping.
+
+    Raises HubDown when the request never reached the hub (no URL, refused, no route, a connect timeout),
+    which is the one case Fallback may send it on Telegram instead. Anything after that, a bad answer or a
+    read that timed out, is a SendError and retried here: the delivery's client id makes a repeat at the
+    hub a no-op, so the reminder is stored once and never also sent on Telegram.
+    """
+
+    def __init__(self, timeout=20):
+        self.timeout = timeout
+
+    def send(self, text, meta=None):
+        hub_url = os.environ.get("REMIND_HUB_URL", "").rstrip("/")
+        if not hub_url:
+            raise HubDown("REMIND_HUB_URL is not set")
+        try:
+            token = TaskSender().token()
+        except SendError as error:
+            raise HubDown(str(error)) from None
+        meta = meta or {}
+        client_id = f"remind-{meta.get('client_id') or meta.get('delivery')}"
+        body = json.dumps({"text": text, "kind": "reminder", "client_id": client_id}).encode()
+        request = urllib.request.Request(
+            f"{hub_url}/v1/notify", data=body, method="POST",
+            headers={"Content-Type": "application/json", "X-Diablo-Token": token},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                reply = json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as error:
+            raise SendError(f"the hub refused the reminder with {error.code}: {error.read()[:200].decode(errors='replace')}") from None
+        except urllib.error.URLError as error:
+            raise HubDown(f"the hub is unreachable: {error.reason}") from None
+        except (OSError, ValueError) as error:
+            raise SendError(f"the hub did not answer: {error}") from None
+        if not reply.get("ok"):
+            raise SendError(f"the hub said no: {str(reply)[:200]}")
+        return None
+
+
+class Fallback:
+    """The app through the hub first; Telegram only while the hub cannot be reached."""
+
+    def __init__(self, first, then):
+        self.first, self.then = first, then
+
+    def send(self, text, meta=None):
+        try:
+            return self.first.send(text, meta)
+        except HubDown:
+            return self.then.send(text, meta)
+
+
 class Router:
-    """Reminders go to Telegram, tasks go to the hub."""
+    """Reminders go to the app through the hub (Telegram while it is down), tasks go to the hub."""
 
     def __init__(self, remind, task):
         self.senders = {"remind": remind, "task": task}
@@ -170,7 +232,7 @@ def make_sender():
     outbox = os.environ.get("REMIND_OUTBOX")
     if outbox:
         return OutboxSender(outbox)
-    return Router(TelegramSender(), TaskSender())
+    return Router(Fallback(HubSender(), TelegramSender()), TaskSender())
 
 
 def record_in_hub(text, meta=None):

@@ -1,8 +1,9 @@
 # diablo-reminders
 
 Durable reminders for Diablo, Marcus's butler agent on diablo-pi. Diablo sets a
-reminder with a tool call, and at the due time a small systemd unit sends it on
-Telegram in Diablo's voice. The reminders live in sqlite on disk, so restarting
+reminder with a tool call, and at the due time a small systemd unit sends it to
+Marcus's app in Diablo's voice, through the hub, with Telegram as the fallback
+while the hub is down. The reminders live in sqlite on disk, so restarting
 diablo-hub.service, a crash or a Pi reboot loses nothing and repeats nothing.
 
 Before this, Diablo could only remind through a session cron job, which lived in
@@ -18,11 +19,20 @@ Diablo (claude session in diablo-hub)
               └ ~/.local/state/diablo/reminders.db   (sqlite, WAL)
                     ▲
 diablo-reminders.service (systemd user unit, own process)
-  └ `remind run`: claims due reminders, sends them with the hub's Telegram bot
+  └ `remind run`: claims due reminders, hands them to the hub's POST /v1/notify
+                 (the app, and a ping on the phone); the hub's Telegram bot only
+                 while the hub cannot be reached
 ```
 
 - Store: `~/.local/state/diablo/reminders.db`, overridden by `REMIND_DB`.
-- Telegram: the scheduler reads `telegram_bot_token` and `telegram_chat_id` from
+- The app: each reminder goes to the hub's `POST /v1/notify` with kind `reminder`
+  and the delivery's own client id, using the hub's `hub_token` from
+  `config.toml` and `REMIND_HUB_URL`. The hub stores it in the main
+  conversation, so the phone and web apps show it and the phone posts a
+  notification. A repeat of the same client id is stored once.
+- Telegram, the fallback: when the request never reaches the hub (no URL, no
+  token, refused, no route, a connect timeout) the reminder goes straight to
+  Telegram instead. The scheduler reads `telegram_bot_token` and `telegram_chat_id` from
   the hub's `diablo.db` settings at every send, the same values the hub's
   `notify` tool uses, with the hub's `config.toml` as the fallback for the token.
   After a send it adds the message to the hub's history as `notify` does, so
@@ -36,7 +46,7 @@ A reminder can be a task instead: something Diablo does himself at the due time,
 Jorbis in five hours". Set it with `add_reminder` and `task: true`, or `remind add --task`. At the
 due time the scheduler hands the instruction to the hub (`POST /v1/scheduled`, the hub's own
 `hub_token` from `config.toml`), which runs it as a brain turn in the main conversation and sends
-Marcus one Telegram line with the result. The hub answers at once and works in the background, so
+Marcus the result in the app. The hub answers at once and works in the background, so
 a long task never holds up a reminder.
 
 Tasks keep every guarantee below. The delivery id is the request's `client_id`, and the hub runs
@@ -68,8 +78,8 @@ Each occurrence goes through two committed steps:
    occurrence, or marks a one-off done. A unique key on (reminder, due time)
    means no occurrence can be claimed twice, even by two processes. A file
    lock also keeps a second `remind run` from starting at all.
-2. Deliver. It marks the attempt `sending`, calls Telegram, then marks it
-   `sent`.
+2. Deliver. It marks the attempt `sending`, hands it to the hub (or, with the
+   hub unreachable, Telegram), then marks it `sent`.
 
 Missed reminders: whatever came due while nothing ran is claimed on startup and
 sent marked as late, saying when it was due. A recurring reminder that came due
@@ -77,14 +87,18 @@ several times while the Pi was down is sent once, for the most recent missed
 time, and says how many more it missed; the series then carries on from the
 next future time.
 
-When a send fails (no network, Telegram down or refusing), the delivery goes
+When a send fails (the hub answers badly or too late, or the Telegram fallback
+is down or refusing), the delivery goes
 back to pending and is retried with backoff: 30 s, doubling, at most 30 min
 apart, longer if Telegram asks for it with `retry_after`. A message that only
 gets through after more than two minutes says it is late. After 24 hours of
 failures it is marked `failed` and stays visible in `remind list --all`.
 Cancelling a reminder also stops a delivery that is waiting for a retry.
 
-The one gap no design closes: Telegram has no idempotency key, so if the
+A hub that got the request but answered badly or timed out is retried through
+the hub, never on Telegram: the client id makes the retry a no-op there, so a
+reminder never lands twice. The one gap no design closes is on the Telegram
+fallback: Telegram has no idempotency key, so if the
 process dies in the instant after Telegram accepted a message and before the
 `sent` mark is written, the outcome is unknown. Recovery treats `sending` as
 not sent and retries it once on the next start. That trades a rare duplicate

@@ -13,7 +13,7 @@ Diablo acts on one kind of mail only: mail from an allowlisted agent address tha
 for that address's own domain and that the agent signed (trust "agent"). Anything else, whatever it
 claims to be, is only sorted.
 
-Telegram hears only about mail the sorter calls important and about approvals that wait for Marcus.
+Marcus hears, in the app, only about mail the sorter calls important and about approvals that wait for him.
 The protocol with Jorbis lives in the brain vault note jorbis-mail-protocol; PROTOCOL below is the
 part the model needs.
 """
@@ -618,13 +618,49 @@ def send(account, raw):
 
 
 async def notify(text, buttons=None):
-    from . import bot
+    """A mail line for Marcus, in the app (hub/deliver.py). Buttons become a question card there whose
+    answer runs decide(), the same as the Telegram buttons they still are when Telegram gets the line."""
+    from . import deliver
 
     try:
-        return await bot.push_card(text, buttons)
+        objects = [card(text, buttons)] if buttons else None
+    except Exception:
+        log.exception("mail card question failed")
+        objects = None
+    try:
+        return bool(await deliver.deliver(text, "mail", objects=objects, buttons=buttons, markup="html"))
     except Exception:
         log.exception("mail ping failed")
         return False
+
+
+def card_conv(approval_id):
+    return f"mail-approval-{int(approval_id)}"
+
+
+def card(text, buttons):
+    """The question block for a row of mail:<decision>:<approval id> buttons."""
+    from . import deliver
+
+    labels, decisions, approval_id = [], [], None
+    for label, data in (pair for row in buttons for pair in row):
+        _, decision, number = str(data).split(":")
+        labels.append(label)
+        decisions.append(decision)
+        approval_id = int(number)
+    head = deliver.plain(text, markdown=False).split("\n")[0]
+    return deliver.choice(card_conv(approval_id), "Mail", head, labels,
+                          {"kind": "mail", "id": approval_id, "decisions": decisions})
+
+
+def close_cards(approval_id):
+    """A decision made anywhere closes the app's open card for that request."""
+    from . import questions
+
+    try:
+        questions.cancel(conv=card_conv(approval_id))
+    except Exception as error:
+        log.info("mail: could not close the card for request %s: %s", approval_id, error)
 
 
 def panel_changed():
@@ -1146,6 +1182,7 @@ async def decide(approval_id, decision, by="marcus"):
         check_decision(row, decision)
     except (LookupError, ValueError) as error:
         return str(error)
+    close_cards(row["id"])
     if decision in ("always", "keep-asking"):
         return set_always(row, decision == "always")
     payload = json.loads(row["payload"] or "{}")
@@ -1285,7 +1322,7 @@ async def run_task(approval_id, resumed=False):
     else:
         prompt = TASK_PROMPT.format(
             id=row["id"], name=agent_name(row["sender"]), task=row["task"],
-            by="always rule" if row["decided_by"] == "always" else "on Telegram or in the app",
+            by="always rule" if row["decided_by"] == "always" else "by his own tap",
             when=dt.datetime.fromtimestamp(row["decided"] or time.time()).strftime("%d %b %H:%M"),
             protocol=PROTOCOL, mail=mail_prompt(headers, payload.get("body", ""), 6000),
         )
