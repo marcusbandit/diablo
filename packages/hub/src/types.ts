@@ -72,3 +72,10 @@ export type HubEvent =
   | { kind: "panel"; modules: string[] }
   | TurnEvent
   | { kind: string; [field: string]: unknown };
+
+/** Marcus's own words on Diablo's character, the default he falls back to, and recent spoken attempts that were refused. */
+export type Character = {
+  text: string;
+  default: string;
+  refused: { ts?: number; said?: string; tool?: string; [field: string]: unknown }[];
+};

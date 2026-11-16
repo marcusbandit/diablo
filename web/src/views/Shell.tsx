@@ -5,6 +5,7 @@ import { parseRoute, routeHash, type Route } from "../lib/route";
 import { useToast } from "../lib/toast";
 import { Brand } from "../ui/Brand";
 import { Icon } from "../ui/Icon";
+import { Character } from "./Character";
 import { Devices } from "./Devices";
 import { IntroAgain } from "./Onboarding";
 import { SectionView } from "./Section";
@@ -80,13 +81,14 @@ export function Shell() {
 
   const section = openId ? sections?.find((s) => s.id === openId) : undefined;
   useEffect(() => {
-    document.title = route.view === "devices" ? "Devices, Diablo" : section ? `${section.name}, Diablo` : "Diablo";
+    document.title = route.view === "devices" ? "Devices, Diablo" : route.view === "character" ? "Character, Diablo" : section ? `${section.name}, Diablo` : "Diablo";
   }, [route.view, section]);
 
   const goSection = useCallback((id: string) => go({ view: "section", id }), [go]);
 
   let main;
   if (route.view === "devices") main = <Devices />;
+  else if (route.view === "character") main = <Character />;
   else if (route.view === "intro") main = <IntroAgain onClose={() => goSection(MAIN)} />;
   else if (!sections) main = <div className="page"><div className="empty-line">Reaching the hub</div></div>;
   else if (!section)
@@ -102,7 +104,7 @@ export function Shell() {
     );
   else main = <SectionView key={section.id} section={section} turn={turns[section.id]} sections={sections} go={goSection} />;
 
-  const title = route.view === "devices" ? "Devices" : section?.name ?? "Diablo";
+  const title = route.view === "devices" ? "Devices" : route.view === "character" ? "Character" : section?.name ?? "Diablo";
 
   return (
     <div className={`shell ${drawer ? "drawer-open" : ""}`}>

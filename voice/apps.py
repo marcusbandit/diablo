@@ -15,7 +15,7 @@ import urllib.parse
 from functools import partial
 from pathlib import Path
 
-from . import window
+from . import playback, window
 
 APP_DIRS = [Path(p).expanduser() for p in ("/usr/share/applications", "~/.local/share/applications",
             "/var/lib/flatpak/exports/share/applications", "~/.local/share/flatpak/exports/share/applications")]
@@ -25,7 +25,8 @@ _CACHE = {"stamp": None, "apps": []}
 def _launch(cmd, stdin_text=None):
     null, pipe = subprocess.DEVNULL, subprocess.PIPE
     try:
-        proc = subprocess.Popen(cmd, start_new_session=True, stdin=null if stdin_text is None else pipe, stdout=null, stderr=null)
+        proc = subprocess.Popen(cmd, start_new_session=True, stdin=null if stdin_text is None else pipe, stdout=null, stderr=null,
+                                env=playback.launch_env())
         if stdin_text is not None:
             proc.communicate(stdin_text.encode(), timeout=10)
     except (OSError, subprocess.TimeoutExpired) as error:

@@ -5,6 +5,7 @@ import { ago, countdown, fullDate } from "../lib/format";
 import { errorText, useHub, useHubEvents } from "../lib/hub";
 import { useToast } from "../lib/toast";
 import { Icon } from "../ui/Icon";
+import { routeHash } from "../lib/route";
 import { SpeakingSwitch } from "./Speaking";
 
 type Me = { master: boolean; device: { id: number; name: string } | null; hub: string };
@@ -213,6 +214,10 @@ export function Devices() {
           </div>
         )}
       </section>
+
+      <a className="quietlink" href={routeHash({ view: "character" })}>
+        character
+      </a>
     </div>
   );
 }

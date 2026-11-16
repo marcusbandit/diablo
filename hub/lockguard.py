@@ -214,8 +214,11 @@ def state_path(conv):
 def arm(conv, guard):
     """Leave this turn's guard where the tool layers can read it. A restricted turn that cannot be armed fails."""
     path = state_path(conv)
+    from . import character
+
     body = json.dumps({"restricted": guard.restricted, "screen": guard.screen, "kind": guard.kind,
-                       "origin": guard.origin[:160], "host": guard.host, "ts": time.time()})
+                       "origin": guard.origin[:160], "host": guard.host, "spoken": character.spoken(guard.origin),
+                       "ts": time.time()})
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
@@ -310,7 +313,10 @@ def hook_command(conv, root=None, python=None):
 
 def hook_settings(conv):
     """The --settings json that puts the PreToolUse guard in front of every tool in a claude session."""
-    return json.dumps({"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": hook_command(conv)}]}]}})
+    from . import character
+
+    return json.dumps({"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": hook_command(conv)}]},
+                                                character.hook_entry(conv)]}})
 
 
 def hook(conv, stdin=sys.stdin, stderr=sys.stderr):

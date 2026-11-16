@@ -381,13 +381,14 @@ def launch_app(app):
     app = app.strip()
     if not app or any(item in app for item in FORBIDDEN):
         return "refused"
-    uid = os.getuid()
-    sockets = sorted(Path(f"/run/user/{uid}").glob("wayland-*"))
-    if not sockets:
+    from . import window
+
+    wayland = window.session_env().get("WAYLAND_DISPLAY")
+    if not wayland:
         return "no graphical session found"
     display = next((f":{p.name[1:]}" for p in Path("/tmp/.X11-unix").glob("X*")), ":0")
     envs = (
-        f"export WAYLAND_DISPLAY={sockets[0].name} DISPLAY={display} "
+        f"export WAYLAND_DISPLAY={shlex.quote(wayland)} DISPLAY={display} "
         f"XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Hyprland QT_QPA_PLATFORM=wayland"
     )
     quoted = shlex.quote(app)
@@ -437,6 +438,11 @@ def _execute(name, args, cfg):
             return f"could not arm the reboot: {error}"
         return "reboot armed: I will restart as soon as I finish this reply"
     if name == "save_fact":
+        from hub import character
+
+        if character.touches(args.get("text"), args.get("tags")):
+            character.log(name, args, "spoken aloud, voice agent", "voice agent")
+            return character.reason()
         hubclient.add_fact(cfg, args.get("text", ""), args.get("tags") or [])
         return "saved"
     if name == "recall_facts":

@@ -4,7 +4,11 @@ From the moment the ears listen until a few seconds after the exchange ends, eve
 app's stream (a PipeWire sink input: a video in the browser, Spotify, a call) is turned down
 to `level` percent of its own volume. His master volume is never touched. Streams that start
 while the conversation is on are turned down within a fraction of a second, so a video he
-starts mid-exchange never plays over him. Diablo's own voice and chimes are never touched.
+starts mid-exchange never plays over him. Diablo's own voice and chimes are never touched:
+a stream is his when it carries his name, or when its process id is the ears' own. The pid
+is what holds on a box whose ALSA default goes through the PulseAudio plugin, where the voice
+once showed up as "ALSA plug-in [python3.12]" and was turned down as he spoke (2026-11-16).
+Children do not count: the ears start real apps, and those are turned down like any other.
 
 When it ends, each stream gets the exact volume it had, but only where nobody moved it since:
 a volume he changed while it was down stays where he put it.
@@ -113,6 +117,7 @@ class Pactl:
                 "app": str(props.get("application.name") or ""),
                 "binary": str(props.get("application.process.binary") or ""),
                 "node": str(props.get("node.name") or ""),
+                "pid": _pid(props.get("application.process.id")),
                 "title": str(props.get("media.name") or ""),
                 "volume": [int(ch.get("value", 0)) for ch in (item.get("volume") or {}).values()],
             })
@@ -122,10 +127,26 @@ class Pactl:
         self._run(["pactl", "set-sink-input-volume", str(index), *[str(int(round(v))) for v in values]])
 
 
-def own(stream):
-    """Diablo's voice and chimes: application.name Diablo (or a bare pw-play), or his voice node.
-    pw-play names every node it makes pw-play, so the node name only counts when it is his."""
-    return str(stream.get("app") or "").lower().startswith(OWN) or str(stream.get("node") or "").lower().startswith("diablo")
+def _pid(value):
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def mine(stream, pid=None):
+    """A stream the ears' own process plays."""
+    return _pid(stream.get("pid")) == (os.getpid() if pid is None else pid)
+
+
+def own(stream, pid=None):
+    """Diablo's voice and chimes: application name Diablo (or a bare pw-play), his voice node,
+    or a stream from the ears' own process. pw-play names every node it makes pw-play, so the
+    node name only counts when it is his."""
+    if str(stream.get("app") or "").lower().startswith(OWN) or str(stream.get("node") or "").lower().startswith("diablo"):
+        return True
+    return mine(stream, pid)
 
 
 def app_key(stream):
@@ -321,7 +342,10 @@ class Ducker:
         moves = []
         for stream in streams:
             index, volume = stream["index"], stream["volume"]
-            if index in self.held or index in self.his or index in foreign or own(stream) or not volume:
+            if own(stream):
+                changed = self._mend(stream) or changed
+                continue
+            if index in self.held or index in self.his or index in foreign or not volume:
                 continue
             names = (stream["app"].lower(), stream["binary"].lower())
             if any(m in n for m in exempt for n in names if n):
@@ -410,11 +434,16 @@ class Ducker:
             if stale:
                 self._save()
             return
-        healed = []
+        healed, mended = [], False
         for stream in streams:
             key = app_key(stream)
             orphan = self.orphans.get(key)
-            if orphan is None or own(stream) or len(stream["volume"]) != len(orphan["from"]):
+            if orphan is None:
+                continue
+            if own(stream):
+                mended = self._mend(stream) or mended
+                continue
+            if len(stream["volume"]) != len(orphan["from"]):
                 continue
             if near(stream["volume"], orphan["to"]):
                 self.backend.set_volume(stream["index"], orphan["from"])
@@ -422,8 +451,21 @@ class Ducker:
             self.orphans.pop(key, None)
         if healed:
             log.info("gave back the saved volume of %s", ", ".join(healed))
-        if healed or stale:
+        if healed or mended or stale:
             self._save()
+
+    def _mend(self, stream):
+        """His own stream starting at the low level an earlier run left saved for its name gets
+        its volume back, and that orphan goes. An orphan his stream does not match may belong to
+        another app of the same name, so it stays for that app."""
+        key = app_key(stream)
+        orphan = self.orphans.get(key)
+        if orphan is None or len(stream["volume"]) != len(orphan["from"]) or not near(stream["volume"], orphan["to"]):
+            return False
+        self.orphans.pop(key)
+        self.backend.set_volume(stream["index"], orphan["from"])
+        log.info("gave back the volume of his own %s", stream["app"] or stream["binary"] or stream["index"])
+        return True
 
     def _ramp(self, moves, steps, seconds):
         for step in range(1, steps + 1):

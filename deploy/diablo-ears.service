@@ -1,6 +1,7 @@
 [Unit]
 Description=Diablo ears: say his name, he listens, he answers
-After=pipewire.service gvoice.service
+After=graphical-session.target pipewire.service gvoice.service
+PartOf=graphical-session.target
 Wants=pipewire.service
 
 [Service]
@@ -13,4 +14,4 @@ MemoryMax=1500M
 MemorySwapMax=0
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

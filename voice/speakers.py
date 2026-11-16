@@ -237,7 +237,10 @@ OWN = {"diablo", "pw-play"}
 
 def own(source):
     """A sound Diablo plays himself: a chime or a reply. Holding it would dim his own voice."""
-    return bool(OWN.intersection(str(n).lower() for n in source.get("names") or []))
+    if OWN.intersection(str(n).lower() for n in source.get("names") or []):
+        return True
+    streams = source.get("streams") or []
+    return bool(streams) and all(duck.mine(s) for s in streams)
 
 
 def rules_for(media, mode, dim_to=None):

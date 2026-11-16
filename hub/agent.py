@@ -6,7 +6,7 @@ import re
 import subprocess
 import time
 
-from . import brain, db, fleet, fleetview, hue, llm, lockguard, modules, persona, questions
+from . import brain, character, db, fleet, fleetview, hue, llm, lockguard, modules, persona, questions
 
 logger = logging.getLogger(__name__)
 
@@ -701,6 +701,9 @@ def run_agent(user_text, cfg, brain=None, ctx=None):
     if voice:
         system += "\n\n" + voice
     system += "\n\n" + BRAIN_PROMPT
+    from . import charter
+
+    system += "\n\n" + charter.character_section()
     if facts:
         system += "\n\nKnown facts:\n" + "\n".join("- " + fact["text"] for fact in facts)
     ctx = ctx or {}
@@ -742,7 +745,8 @@ def run_agent(user_text, cfg, brain=None, ctx=None):
                 if ctx.get("chat"):
                     publish_step(ctx["chat"], step)
                 try:
-                    refused = lockguard.refusal(function.get("name", ""), ctx["guard_conv"], "api", arguments) if ctx.get("guard_conv") else None
+                    refused = (lockguard.refusal(function.get("name", ""), ctx["guard_conv"], "api", arguments)
+                               or character.refusal(function.get("name", ""), ctx["guard_conv"], arguments, "api")) if ctx.get("guard_conv") else None
                     result = refused or _call_tool(function.get("name", ""), arguments, ctx)
                 except Exception as exc:
                     result = f"tool error: {exc}"

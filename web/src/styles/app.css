@@ -2086,3 +2086,9 @@ button:disabled {
     font-size: 28px;
   }
 }
+
+/* Character: a tucked-away page under Devices */
+.quietlink { display: inline-block; margin-top: calc(var(--sp, 4px) * 10); color: var(--faint); font-size: 12px; text-decoration: none; letter-spacing: 0.08em; text-transform: uppercase; }
+.quietlink:hover { color: var(--muted); }
+.charbox { width: 100%; min-height: 14em; resize: vertical; padding: 12px; font: inherit; background: var(--sunken); color: var(--ink); border: 1px solid var(--line-strong); }
+.charbox:focus { outline: none; border-color: var(--accent); }

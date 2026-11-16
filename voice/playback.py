@@ -14,7 +14,8 @@ before the sound (tests/live_tts_sync.py).
 The stream opens on prime(), which the speaker calls when it starts fetching a reply, so a
 sleeping sink wakes during the fetch. It closes IDLE_S after the last clip, so the sink can go
 back to sleep; once primed it waits up to PRIMED_S for the first clip, since a reply can take
-that long to fetch. It plays as application.name "Diablo", the name the sound hold leaves alone.
+that long to fetch. It plays as application.name "Diablo", the name the sound hold leaves alone,
+on pipewire-alsa and on the PulseAudio plugin alike (stream_env).
 """
 
 import collections
@@ -59,21 +60,43 @@ class Clip:
         return len(self.samples) / self.rate
 
 
+def stream_env(pid=None):
+    """The names the voice stream carries, for both ways the ALSA default can reach PipeWire:
+    pipewire-alsa reads PIPEWIRE_PROPS, the PulseAudio plugin reads PULSE_PROP_OVERRIDE. The
+    plugin sets application.name to "ALSA plug-in [python3.12]" itself, which plain PULSE_PROP
+    does not replace. They sit in the environment only while the stream opens, under
+    _env_lock; launch_env() takes the environment under the same lock, so an app started
+    meanwhile never inherits them."""
+    pid = os.getpid() if pid is None else pid
+    return {
+        "PIPEWIRE_PROPS": '{ application.name = "%s" node.name = "diablo-voice" application.process.id = %d }' % (APP, pid),
+        "PULSE_PROP_OVERRIDE": "application.name='%s' node.name='diablo-voice' application.process.id='%d'" % (APP, pid),
+    }
+
+
+def launch_env():
+    """The environment for an app the ears start, as it is outside a stream opening, so an app
+    launched while a reply opens its stream never plays as Diablo."""
+    with _env_lock:
+        return dict(os.environ)
+
+
 def _open_stream(rate, callback):
     import sounddevice as sd
 
-    props = '{ application.name = "%s" node.name = "diablo-voice" application.process.id = %d }' % (APP, os.getpid())
     with _env_lock:
-        before = os.environ.get("PIPEWIRE_PROPS")
-        os.environ["PIPEWIRE_PROPS"] = props
+        env = stream_env()
+        before = {key: os.environ.get(key) for key in env}
+        os.environ.update(env)
         try:
             stream = sd.OutputStream(samplerate=rate, channels=1, dtype="float32", latency=LATENCY_S,
                                      callback=callback)
         finally:
-            if before is None:
-                os.environ.pop("PIPEWIRE_PROPS", None)
-            else:
-                os.environ["PIPEWIRE_PROPS"] = before
+            for key, value in before.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
     stream.start()
     return stream
 

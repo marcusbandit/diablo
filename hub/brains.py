@@ -379,7 +379,7 @@ class ClaudeSession:
             self.proc.kill()
 
     def current(self):
-        signature = hashlib.sha1(json.dumps(mcp_config(self.conv), sort_keys=True).encode()).hexdigest()
+        signature = hashlib.sha1(json.dumps([mcp_config(self.conv), charter.charter()], sort_keys=True).encode()).hexdigest()
         return self.alive() and self.signature == signature, signature
 
     async def control(self, request):
@@ -1178,7 +1178,9 @@ async def ask(conv, text, origin="telegram", images=None, on_step=None, **kwargs
 
 
 def spoken(origin):
-    return "spoken aloud" in str(origin or "") or "voice note" in str(origin or "")
+    from . import character
+
+    return character.spoken(origin)
 
 
 def lamps_line(lamps):

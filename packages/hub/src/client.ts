@@ -7,6 +7,7 @@ import type {
   HubEvent,
   Message,
   PairCode,
+  Character,
   PairStatus,
   Paired,
   Section,
@@ -95,6 +96,15 @@ export class Hub {
 
   async revokeDevice(id: number): Promise<void> {
     await this.request("DELETE", `/v1/devices/${id}`);
+  }
+
+  character(): Promise<Character> {
+    return this.request("GET", "/v1/character");
+  }
+
+  /** Only a paired device may save it; the machine token gets 403. */
+  saveCharacter(text: string): Promise<Character> {
+    return this.request("PUT", "/v1/character", { text });
   }
 
   async sections(): Promise<Section[]> {

@@ -7,13 +7,16 @@ and the reply carries it back as "act" for run() to do with hyprctl, playerctl a
 
 import collections
 import json
+import logging
 import os
 import re
 import subprocess
 import time
 from pathlib import Path
 
-from . import apps, desktop, window
+from . import apps, desktop, playback, window
+
+log = logging.getLogger("diablo.commands")
 
 ADDRESS = re.compile(r"^0x[0-9a-fA-F]+$")
 PLAYER = re.compile(r"^[\w.\-]+$")
@@ -39,10 +42,23 @@ LOOP_STOP = re.compile(
 # "type": "write a script that ..." is a request for Claude, not text to paste.
 TYPE = re.compile(r"^\W*(?:diablo\W+)?type(?:\s+in)?[\s:,]+(.+?)\.?\s*$", re.I | re.S)
 # "Dictate", "take dictation", "start dictating": a long stretch of talk, typed once he ends it.
-DICTATE = re.compile(
-    r"^\W*(?:diablo\W+)?(?:(?:start|begin|take)\s+)?(?:dictate|dictation|dictating)(?:\s+(?:this|mode|now|that))?\W*$",
-    re.I,
+# Said again while he waits ("Dictate. Dictate. Dictate.") it still counts.
+_DICTATE_ONE = r"(?:(?:start|begin|take)\s+)?(?:dictate|dictation|dictating)(?:\s+(?:this|mode|now|that))?"
+DICTATE = re.compile(r"^\W*(?:diablo\W+)?" + _DICTATE_ONE + r"(?:\W+" + _DICTATE_ONE + r")*\W*$", re.I)
+# "Dictate. Hello there": the words in the same breath. Only the verb, or "start dictating": a line
+# that opens on the noun ("dictation is broken") is about dictation, not dictated. The words need
+# a pause after the verb (Whisper's comma, colon or full stop) or the closing "dictation done":
+# "dictate a mail to Alex saying I'm late" in one run is a request for Claude.
+DICTATE_WITH = re.compile(
+    r"^\W*(?:diablo\W+)?(?:dictate|(?:start|begin)\s+(?:dictating|dictation)|take\s+dictation)"
+    r"(?:\s+now)?(?:\s*(?P<pause>[,:.;!?-])\s*|\s+)(?P<words>\S.*)$",
+    re.I | re.S,
 )
+# "Dictate. Dictate. Dear Alex": the repeats in front of the words are not part of them.
+DICTATE_AGAIN = re.compile(r"^(?:" + _DICTATE_ONE + r"\W+)+", re.I)
+# The way out of any mode, and the only bare words that end a dictation: "done" or "finished"
+# alone can be a dictated sentence.
+LEAVE = re.compile(r"^\W*(?:diablo\W+)?(?:stop|that'?s all|that is all|i'?m done|i am done|we'?re done)\W*$", re.I)
 # Said at the end of the dictation, and cut from what gets typed.
 DICTATION_DONE = re.compile(
     r"\s*\b(?:dictation|dictating)\W+(?:done|over|stop|stopped|end|ended|finished|complete)\W*$"
@@ -100,7 +116,29 @@ def animation_end(text):
 
 
 def wants_dictation(text):
-    return bool(DICTATE.match(str(text or "")))
+    return dictation_start(text) is not None
+
+
+def dictation_start(text):
+    """None when the line does not start dictation, else (words, ended): the words said in the
+    same breath, and whether it already closed with "dictation done"."""
+    text = str(text or "").strip()
+    if DICTATE.match(text):
+        return "", False
+    found = DICTATE_WITH.match(text)
+    if not found:
+        return None
+    ended, words = dictation_end(DICTATE_AGAIN.sub("", found.group("words")))
+    if not ended and LEAVE.match(words):
+        return "", True
+    if not ended and not found.group("pause"):
+        return None
+    return words, ended
+
+
+def leaves_mode(text):
+    """A bare "stop", "that's all" or "I'm done": the one way out of any mode."""
+    return bool(LEAVE.match(str(text or "")))
 
 
 def dictation_end(text):
@@ -136,10 +174,13 @@ def _terminal(window_class):
 def _clipboard():
     """(mime, bytes) on the clipboard now, or None."""
     try:
-        types = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True, timeout=2).stdout.split()
+        env = window.session_env()
+        types = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True, timeout=2,
+                               env=env).stdout.split()
         if not types:
             return None
-        data = subprocess.run(["wl-paste", "--no-newline", "--type", types[0]], capture_output=True, timeout=3).stdout
+        data = subprocess.run(["wl-paste", "--no-newline", "--type", types[0]], capture_output=True, timeout=3,
+                              env=env).stdout
         return types[0], data
     except (OSError, subprocess.SubprocessError):
         return None
@@ -161,10 +202,12 @@ def type_text(text):
         window_class = ""
     shift = _terminal(window_class)
     held = _clipboard()
+    env = window.session_env()
     try:
-        subprocess.run(["wl-copy", "--", text], check=True, timeout=5)
+        subprocess.run(["wl-copy", "--", text], check=True, timeout=5, env=env)
     except (OSError, subprocess.SubprocessError) as error:
-        return False, f"could not use the clipboard: {error}"
+        log.warning("wl-copy failed: %s", str(error)[:200])
+        return False, "the clipboard could not be reached"
     chords = ([["wtype", "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"],
                ["ydotool", "key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]] if shift else
               [["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"], ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]])
@@ -174,16 +217,20 @@ def type_text(text):
         if ok:
             pasted = True
             break
+    if not pasted:
+        # The words stay on the clipboard, so a paste by hand still gets them.
+        log.warning("the paste keys failed: %s", why[:200])
+        return False, "the paste keys did not go through, so the words are on the clipboard"
     # The app reads the clipboard after the keystroke lands; give it that moment first.
     time.sleep(0.35)
     try:
         if held is None:
-            subprocess.run(["wl-copy", "--clear"], timeout=3)
+            subprocess.run(["wl-copy", "--clear"], timeout=3, env=env)
         else:
-            subprocess.run(["wl-copy", "--type", held[0]], input=held[1], timeout=5)
+            subprocess.run(["wl-copy", "--type", held[0]], input=held[1], timeout=5, env=env)
     except (OSError, subprocess.SubprocessError):
         pass
-    return (True, "") if pasted else (False, f"pasting failed: {why[:120]}")
+    return True, ""
 
 
 def _closed_info(address):
@@ -223,7 +270,7 @@ def reopen(last=None):
     if last["cmd"]:
         try:
             subprocess.Popen(last["cmd"], start_new_session=True, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, cwd=os.path.expanduser("~"))
+                             stderr=subprocess.DEVNULL, cwd=os.path.expanduser("~"), env=playback.launch_env())
             return True, f"reopened {last['class'] or 'it'}"
         except OSError as error:
             return False, f"could not start {last['class']}: {error}"
@@ -323,7 +370,7 @@ def loop_intent(text, active=False):
 
 def _run(cmd, timeout=4.0):
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=window.session_env())
     except (OSError, subprocess.SubprocessError) as error:
         return False, str(error)[:160]
     out = (done.stdout or "") + (done.stderr or "")
