@@ -22,18 +22,21 @@ class TestDictationStart(unittest.TestCase):
                          ("Something random.", True))
         self.assertEqual(commands.dictation_start("Diablo, dictate: see you at eight"), ("see you at eight", False))
         self.assertEqual(commands.dictation_start("Start dictating, dear Alex"), ("dear Alex", False))
+        self.assertEqual(commands.dictation_start("Dictate. Dictate. Dear Alex,"), ("Dear Alex,", False))
+        self.assertEqual(commands.dictation_start("Dictate? Hello"), ("Hello", False))
 
     def test_talk_about_dictation_is_not_a_dictation(self):
         for line in ("dictation is hard", "Dictation is broken on the laptop, can you check?",
                      "I don't know something more dictation and", "Can you dictate this for me?",
-                     "dictated words go missing", "Diablo, dictate a mail to Alex saying I'm late"):
+                     "dictated words go missing", "Diablo, dictate a mail to Alex saying I'm late",
+                     "Dictate this, for me"):
             self.assertIsNone(commands.dictation_start(line), line)
             self.assertFalse(commands.wants_dictation(line), line)
 
     def test_one_way_out(self):
         for line in ("Stop.", "That's all", "I'm done.", "Diablo, stop"):
             self.assertTrue(commands.leaves_mode(line), line)
-        for line in ("Stop the music", "the bus stop", "I'm done with the report, send it"):
+        for line in ("Stop the music", "the bus stop", "I'm done with the report, send it", "Done.", "Finished."):
             self.assertFalse(commands.leaves_mode(line), line)
 
 
@@ -79,9 +82,28 @@ class TestDictateTakesItsStart(unittest.TestCase):
     def test_a_bare_stop_ends_it_and_types_what_it_has(self):
         self.assertEqual(self.run_dictate(["The build is green.", "Stop."]), ["The build is green."])
 
+    def test_a_lone_done_is_dictated_not_obeyed(self):
+        self.assertEqual(self.run_dictate(["Step one.", "Done.", "Dictation done."]), ["Step one. Done."])
+
+    def test_it_reads_the_mic_from_where_the_line_that_started_it_stopped(self):
+        import time
+
+        afters = []
+        heard = ears.Heard(np.ones(16000, dtype=np.float32), True)
+        since = time.monotonic() - 0.4
+        with mock.patch.object(ears, "record", side_effect=lambda mic, cfg, after, *a, **k: afters.append(after) or heard), \
+                mock.patch.object(ears, "talk_ok", return_value=(True, 0.9)), \
+                mock.patch.object(ears, "transcribe", return_value="Hello. Dictation done."), \
+                mock.patch.object(ears, "listening", return_value=True), \
+                mock.patch.object(ears, "set_state"), mock.patch.object(ears.chime, "play"), \
+                mock.patch.object(commands, "desktop_state", return_value=DESKTOP), \
+                mock.patch.object(commands, "type_text", return_value=(True, "")):
+            ears.dictate(None, mock.Mock(get=mock.Mock(return_value={})), None, timeline.Timeline(), since=since)
+        self.assertEqual(afters[0], since)
+
 
 class TestCommandsOnly(unittest.TestCase):
-    def loop_line(self, text, cfg=None):
+    def loop_line(self, text, cfg=None, control=None):
         heard = ears.Heard(np.zeros(1600, dtype=np.float32), True, text)
         played = []
         patches = [
@@ -91,7 +113,7 @@ class TestCommandsOnly(unittest.TestCase):
             mock.patch.object(ears.recordings, "keep", return_value=None),
             mock.patch.object(ears, "local_line", return_value=None),
             mock.patch.object(ears.commands, "desktop_state", return_value={"windows": []}),
-            mock.patch.object(ears, "control", return_value={}),
+            mock.patch.object(ears, "control", **({"side_effect": control} if control else {"return_value": {}})),
             mock.patch.object(ears, "note_control"),
             mock.patch.object(ears.surroundings, "lines", return_value=[]),
             mock.patch.object(ears.surroundings, "points_at_screen", return_value=False),
@@ -114,9 +136,24 @@ class TestCommandsOnly(unittest.TestCase):
         self.assertIs(got, True)
         self.assertTrue(asked)
 
+    def test_whisper_spellings_of_his_name_count(self):
+        for line in ("Diabolo, what is the time", "Dia blo, what is the time"):
+            self.assertTrue(self.loop_line(line)[1], line)
+        self.assertFalse(self.loop_line("So Diablo said no")[1])
+
     def test_the_setting_brings_back_every_line_to_claude(self):
-        got, asked, _ = self.loop_line("what is the time", {"ears.loop_commands_only": "0"})
-        self.assertIs(got, True)
+        for value in ("0", "Off", "False"):
+            got, asked, _ = self.loop_line("what is the time", {"ears.loop_commands_only": value})
+            self.assertIs(got, True)
+            self.assertTrue(asked, value)
+
+    def test_a_hub_that_does_not_answer_sends_the_line_on_as_before(self):
+        import httpx
+
+        def down(*args, **kwargs):
+            raise httpx.ConnectError("down")
+
+        got, asked, _ = self.loop_line("close the window", control=down)
         self.assertTrue(asked)
 
 

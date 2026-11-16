@@ -62,21 +62,25 @@ A line goes, in order, to:
    Closing a window or a tab and pressing enter need Jev at 0.8; the rest act at 0.6. Measured on
    34 lines: 32 right, about 250 ms each.
 3. The whole turn, Claude included, when Jev finds no plain command and the line starts with
-   "Diablo". Any other line plays the low note and nothing else: speech control takes commands, and
+   "Diablo" (as Whisper spells it), or when the Jev call itself failed. Any other line plays the
+   low note and nothing else: speech control takes commands, and
    a sentence to someone in the room used to get Claude's "I can't find anything for me to do" a
    minute later. `ears.loop_commands_only` set to 0 sends every line to Claude, as before.
 
 "Diablo, type ..." and "Diablo, dictate" also work from a normal turn.
 
-The mode words end a line at its first pause, before the full quiet, because the ears read them
-on the words so far: "dictate", "speech control" from a turn, a bare "stop" inside speech
-control. On a box whose speech to text runs through the hub, "Diablo, dictate" used to wait so
-long that he said it four times.
+The mode words end a line after 0.8 s of quiet (`EARLY_LOCAL_S`), not the full quiet plus a
+second speech to text, because the ears read them on the words so far: "dictate", "speech
+control" from a turn, a bare "stop" inside speech control. Jev is not asked for them. On a box
+whose speech to text runs through the hub, "Diablo, dictate" used to wait so long that he said
+it four times. Dictation then reads the mic from where that line stopped, so words he goes
+straight on with are kept.
 
 ### One way out
 
 A bare "stop", "that's all" or "I'm done" leaves whatever mode he is in: speech control ends with
-its falling notes, and dictation ends and pastes what it has. The orb keeps a ring around him for
+its falling notes, and dictation ends and pastes what it has. Speech control also takes "done",
+"enough" and "finished" alone; dictation does not, since those can be a sentence he dictates. The orb keeps a ring around him for
 as long as a mode is on, violet for speech control and gold for dictation.
 
 ### What he plays
