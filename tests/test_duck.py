@@ -6,15 +6,18 @@ touches real audio.
 """
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from voice import duck, speakers
+from voice import duck, playback, speakers
 
 FULL = 65536
 
@@ -24,9 +27,9 @@ class Desk:
         self.streams = {}
         self.down = False
 
-    def add(self, index, app, volume=FULL, node=""):
+    def add(self, index, app, volume=FULL, node="", pid=None):
         self.streams[index] = {"index": index, "app": app, "binary": app.lower(), "node": node, "title": "",
-                               "volume": [volume, volume]}
+                               "pid": pid, "volume": [volume, volume]}
 
     def vol(self, index):
         return self.streams[index]["volume"][0]
@@ -110,6 +113,110 @@ class DuckTest(unittest.TestCase):
         self.talk()
         self.assertEqual([self.desk.vol(i) for i in (1, 2, 3)], [FULL] * 3)
         self.assertEqual(self.desk.vol(4), round(FULL * 0.2))
+
+    def test_his_voice_through_the_pulse_plugin_is_known_by_the_ears_pid(self):
+        self.desk.add(5, "ALSA plug-in [python3.12]", pid=os.getpid())
+        self.desk.add(6, "ALSA plug-in [python3.12]", pid=os.getpid() + 100000)
+        self.talk()
+        self.assertEqual(self.desk.vol(5), FULL)
+        self.assertEqual(self.desk.vol(6), round(FULL * 0.2))
+        self.assertNotIn(5, self.duck.held)
+
+    def test_an_app_the_ears_started_is_turned_down_like_any_other(self):
+        child = subprocess.Popen(["sleep", "5"])
+        try:
+            self.desk.add(5, "Spotify", pid=child.pid)
+            self.talk()
+            self.assertEqual(self.desk.vol(5), round(FULL * 0.2))
+        finally:
+            child.kill()
+            child.wait()
+
+    def test_an_orphan_his_stream_does_not_match_stays_for_its_app(self):
+        self.duck.orphans["alsa plug-in [python3.12]"] = {"from": [40000, 40000], "to": [8000, 8000], "at": 1_000_000.0}
+        self.desk.add(5, "ALSA plug-in [python3.12]", pid=os.getpid())
+        self.tick(2.0)
+        self.assertEqual(self.desk.vol(5), FULL)
+        self.assertIn("alsa plug-in [python3.12]", self.duck.orphans)
+        self.desk.add(6, "ALSA plug-in [python3.12]", 8000, pid=os.getpid() + 100000)
+        self.tick(2.0)
+        self.assertEqual(self.desk.vol(6), 40000)
+
+    def test_the_sound_hold_leaves_a_source_only_the_ears_play(self):
+        ours = {"names": ["alsa plug-in [python3.12]"], "streams": [{"pid": os.getpid()}]}
+        theirs = {"names": ["alsa plug-in [python3.12]"], "streams": [{"pid": os.getpid() + 100000}]}
+        self.assertTrue(speakers.own(ours))
+        self.assertFalse(speakers.own(theirs))
+
+    def test_an_app_launched_while_the_voice_stream_opens_never_inherits_its_names(self):
+        launched, during = {}, {}
+
+        def launch():
+            launched["env"] = playback.launch_env()
+
+        def output_stream(*args, **kwargs):
+            during["env"] = os.environ.get("PULSE_PROP_OVERRIDE")
+            launched["thread"] = threading.Thread(target=launch)
+            launched["thread"].start()
+            return mock.Mock()
+
+        fake = mock.Mock(OutputStream=output_stream)
+        with mock.patch.dict(sys.modules, {"sounddevice": fake}):
+            playback._open_stream(24000, None)
+        launched["thread"].join(2)
+        self.assertIn("application.name='Diablo'", during["env"])
+        self.assertNotIn("PULSE_PROP_OVERRIDE", launched["env"])
+        self.assertNotIn("PULSE_PROP_OVERRIDE", os.environ)
+
+    def test_his_own_stream_closing_leaves_no_orphan(self):
+        self.desk.add(5, "ALSA plug-in [python3.12]", pid=os.getpid())
+        self.desk.add(7, "Zen")
+        self.talk()
+        del self.desk.streams[5]
+        self.end()
+        self.assertEqual(self.duck.orphans, {})
+        self.assertFalse(self.state.exists())
+
+    def test_his_stream_an_earlier_run_left_turned_down_gets_its_volume_back(self):
+        low = round(FULL * 0.0075)
+        self.state.write_text(json.dumps({"at": 1.0, "held": [
+            {"index": 3, "app": "alsa plug-in [python3.12]", "name": "ALSA plug-in [python3.12]",
+             "from": [FULL, FULL], "to": [low, low]}], "orphans": {}}))
+        fresh = self.make()
+        fresh.recover()
+        self.assertIn("alsa plug-in [python3.12]", fresh.orphans)
+        self.desk.add(5, "ALSA plug-in [python3.12]", low, pid=os.getpid())
+        self.duck = fresh
+        self.tick(2.0)
+        self.assertEqual(self.desk.vol(5), FULL)
+        self.assertEqual(fresh.orphans, {})
+        self.assertFalse(self.state.exists())
+
+    def test_his_left_down_stream_is_mended_mid_conversation_too(self):
+        low = round(FULL * 0.0075)
+        self.duck.orphans["alsa plug-in [python3.12]"] = {"from": [FULL, FULL], "to": [low, low], "at": 1_000_000.0}
+        self.talk()
+        self.desk.add(5, "ALSA plug-in [python3.12]", low, pid=os.getpid())
+        self.tick(0.25)
+        self.assertEqual(self.desk.vol(5), FULL)
+        self.assertEqual(self.duck.orphans, {})
+
+    def test_pactl_reads_the_process_id(self):
+        raw = [{"index": 5, "properties": {"application.name": "ALSA plug-in [python3.12]",
+                                            "application.process.id": str(os.getpid())},
+                "volume": {"front-left": {"value": FULL}}}]
+        done = mock.Mock(returncode=0, stdout=json.dumps(raw))
+        with mock.patch.object(duck.subprocess, "run", return_value=done):
+            stream = duck.Pactl().streams()[0]
+        self.assertEqual(stream["pid"], os.getpid())
+        self.assertTrue(duck.own(stream))
+
+    def test_the_voice_stream_is_named_on_both_alsa_paths(self):
+        env = playback.stream_env(pid=4242)
+        self.assertIn('application.name = "Diablo"', env["PIPEWIRE_PROPS"])
+        self.assertIn("application.process.id = 4242", env["PIPEWIRE_PROPS"])
+        self.assertIn("application.name='Diablo'", env["PULSE_PROP_OVERRIDE"])
+        self.assertIn("node.name='diablo-voice'", env["PULSE_PROP_OVERRIDE"])
 
     def test_it_holds_through_the_linger_and_lets_go_after(self):
         self.desk.add(7, "Zen")

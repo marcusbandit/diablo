@@ -32,7 +32,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from . import burst, chime, commands, duck, ears_api, endturn, feedback, hubclient, jevfast, mouth, panel, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake
+from . import burst, chime, commands, duck, ears_api, endturn, feedback, hubclient, jevfast, mouth, panel, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake, window
 from . import state as vstate
 from .dictation import NAME as SAID_NAME
 from .config import load_config
@@ -825,6 +825,29 @@ def run_act(act, tl, cfg):
     return f"That didn't work: {why}."
 
 
+UNPASTED = vstate.STATE_DIR / "unpasted.jsonl"
+
+
+def keep_unpasted(cfg, text, what):
+    """Words he dictated or asked to have typed that could not be pasted are kept here at once,
+    then go to the Diablo chat, so a broken clipboard or a hub that is down never loses them
+    (2026-11-16: a whole dictation survived only in the log). In the chat they are a push of
+    their own, never paired as the answer to whatever he asked last."""
+    try:
+        UNPASTED.parent.mkdir(parents=True, exist_ok=True)
+        with UNPASTED.open("a") as out:
+            out.write(json.dumps({"at": time.time(), "what": what, "text": text}) + "\n")
+    except OSError:
+        log.exception("could not keep the unpasted words: %s", text)
+
+    def send():
+        if not hubclient.post_message(cfg, "voice", "assistant", f"{what}, not pasted:\n\n{text}",
+                                      meta={"kind": "unpasted", "section": "diablo", "pushed": True}):
+            log.warning("the unpasted words did not reach the chat; they are in %s", UNPASTED)
+
+    threading.Thread(target=send, name="unpasted", daemon=True).start()
+
+
 def local_line(mic, settings, vad, text, tl, speaker=None, since=None):
     """Lines the ears handle on their own: "never mind" while he thinks, "type ...", and
     "dictate". The words to say, or None when the line is not one of them."""
@@ -845,8 +868,9 @@ def local_line(mic, settings, vad, text, tl, speaker=None, since=None):
             commands.remember("type", f"typed {typed[:40]}")
             feedback.done(f"Typed: {typed[:60]}")
             return ""
+        keep_unpasted(settings.get(), typed, "Typed")
         feedback.failed(why)
-        return f"That didn't work: {why}."
+        return f"That didn't work: {why}. The words are in the chat."
     if duck.wants_sound_up(text):
         duck.DUCK.suspend(True)
         if duck.only_sound_up(text):
@@ -1094,8 +1118,9 @@ def dictate(mic, settings, vad, tl, speaker=None, first="", ended=False, since=N
         commands.remember("dictation", f"dictated {len(text.split())} words")
         feedback.dictation(False)
         return ""
+    keep_unpasted(cfg, text, "Dictated")
     feedback.failed()
-    return f"That didn't work: {why}."
+    return f"That didn't work: {why}. The words are in the chat."
 
 
 def speaks_direct(cfg):
@@ -1666,6 +1691,15 @@ def run():
     from .vad import SileroVAD
 
     global LIVE, REPORT
+    # Before any thread starts: a service started ahead of the compositor has no WAYLAND_DISPLAY,
+    # and every paste, key and hyprctl call would fail until a restart (2026-11-16).
+    filled = window.fill_session(os.environ)
+    if filled:
+        log.info("the session did not hand over %s; found them in the runtime dir", ", ".join(filled))
+    missing = [name for name in ("WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE") if not os.environ.get(name)]
+    if missing:
+        log.warning("no %s found: pasting, keys and windows may fail until the session is up",
+                    " or ".join(missing))
     cfg = load_config()
     REPORT = HubReport(cfg)
     atexit.register(REPORT.stop)
