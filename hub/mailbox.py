@@ -13,7 +13,7 @@ Diablo acts on one kind of mail only: mail from an allowlisted agent address tha
 for that address's own domain and that the agent signed (trust "agent"). Anything else, whatever it
 claims to be, is only sorted.
 
-Telegram hears only about mail the sorter calls important and about approvals that wait for Marcus.
+Marcus hears, in the app, only about mail the sorter calls important and about approvals that wait for him.
 The protocol with Jorbis lives in the brain vault note jorbis-mail-protocol; PROTOCOL below is the
 part the model needs.
 """
@@ -34,6 +34,7 @@ import urllib.parse
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid, parseaddr
 from pathlib import Path
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from . import events, localenv, settings
@@ -617,14 +618,62 @@ def send(account, raw):
     himalaya("message", "send", "-a", account, stdin=raw, timeout=120)
 
 
-async def notify(text, buttons=None):
-    from . import bot
+class Choice(NamedTuple):
+    """What Marcus may decide about one approval: (label, decision) pairs, in order."""
+    approval_id: int
+    options: tuple
 
+
+def choice(approval_id, *options):
+    return Choice(int(approval_id), tuple(options))
+
+
+def buttons(choice):
+    """The Telegram keyboard for a choice: one row, callback data mail:<decision>:<id>."""
+    return [[(label, f"mail:{decision}:{choice.approval_id}") for label, decision in choice.options]]
+
+
+def card_conv(approval_id):
+    return f"mail-approval-{int(approval_id)}"
+
+
+def card(text, choice):
+    """The question block the app draws for a choice; its answer goes to queue_decision."""
+    from . import deliver
+
+    head = deliver.plain(text, markdown=False).split("\n")[0]
+    return deliver.choice(card_conv(choice.approval_id), "Mail", head, [label for label, _ in choice.options],
+                          {"kind": "mail", "id": choice.approval_id,
+                           "decisions": [decision for _, decision in choice.options]})
+
+
+async def notify(text, choice=None):
+    """A mail line for Marcus, in the app (hub/deliver.py). A choice becomes a question card there whose
+    answer takes the Mail panel's path to decide(), and the same buttons on Telegram when it gets the line."""
+    from . import deliver
+
+    objects = None
+    if choice is not None:
+        try:
+            objects = [card(text, choice)]
+        except Exception:
+            log.exception("mail card question failed")
     try:
-        return await bot.push_card(text, buttons)
+        return bool(await deliver.deliver(text, "mail", objects=objects, buttons=buttons(choice) if choice else None,
+                                          markup="html"))
     except Exception:
         log.exception("mail ping failed")
         return False
+
+
+def close_cards(approval_id):
+    """A decision made anywhere closes the app's open card for that request."""
+    from . import questions
+
+    try:
+        questions.cancel(conv=card_conv(approval_id))
+    except Exception as error:
+        log.info("mail: could not close the card for request %s: %s", approval_id, error)
 
 
 def panel_changed():
@@ -670,7 +719,7 @@ async def outgoing(row, headers, text, context=None, automatic=True):
         await notify(
             f"<b>{html.escape(row['sender_name'])}</b> keeps writing. Diablo answered three times in half an hour,"
             f" so this answer waits for you:\n\n{html.escape(text[:700])}",
-            [[("Send it", f"mail:approve:{approval_id}"), ("Don't send", f"mail:deny:{approval_id}")]],
+            choice(approval_id, ("Send it", "approve"), ("Don't send", "deny")),
         )
         return False
     if context is not None:
@@ -683,7 +732,7 @@ async def outgoing(row, headers, text, context=None, automatic=True):
             await notify(
                 f"<b>Diablo held a reply</b> to {html.escape(row['sender_name'])}: {html.escape(why)}\n\n"
                 f"{html.escape(text[:700])}",
-                [[("Send it", f"mail:approve:{approval_id}"), ("Don't send", f"mail:deny:{approval_id}")]],
+                choice(approval_id, ("Send it", "approve"), ("Don't send", "deny")),
             )
             return False
     await asyncio.to_thread(send, row["account"], build_reply(accounts()[row["account"]], row["sender"], headers, text))
@@ -1104,7 +1153,7 @@ async def open_request(row, headers, body, verdict, link):
     await notify(
         f"<b>{html.escape(row['sender_name'])} asks</b>: {html.escape(task)}\n"
         f"<a href=\"{html.escape(link)}\">Open the mail</a>",
-        [[("Approve", f"mail:approve:{approval_id}"), ("Deny", f"mail:deny:{approval_id}")]],
+        choice(approval_id, ("Approve", "approve"), ("Deny", "deny")),
     )
     await outgoing(row, headers, f"Hi {row['sender_name']},\n\nI've passed your request on to Marcus for approval: "
                                  f"{task}\nYou'll hear from me once he has decided.\n\nDiablo")
@@ -1146,6 +1195,7 @@ async def decide(approval_id, decision, by="marcus"):
         check_decision(row, decision)
     except (LookupError, ValueError) as error:
         return str(error)
+    close_cards(row["id"])
     if decision in ("always", "keep-asking"):
         return set_always(row, decision == "always")
     payload = json.loads(row["payload"] or "{}")
@@ -1175,7 +1225,7 @@ async def decide(approval_id, decision, by="marcus"):
             await notify(
                 f"You have approved <b>{html.escape(row['task_kind'])}</b> from {html.escape(agent_name(row['sender']))} "
                 f"{rule['approved']} times. Approve it always?",
-                [[("Always", f"mail:always:{row['id']}"), ("Keep asking", f"mail:keep-asking:{row['id']}")]],
+                choice(row["id"], ("Always", "always"), ("Keep asking", "keep-asking")),
             )
     start_task(row["id"])
     return said
@@ -1197,6 +1247,7 @@ def queue_decision(approval_id, decision, by="marcus"):
         raise LookupError(f"You already answered \"{row['task']}\". Diablo is carrying it out.")
     write("INSERT INTO decisions (approval_id, decision, by, created) VALUES (?, ?, ?, ?)",
           (row["id"], decision, by, time.time()))
+    close_cards(row["id"])
     return {
         "approve": "Sent." if row["what"] == "send-reply" else f"Allowed: {row['task']}. Diablo starts on it within a few seconds.",
         "deny": "Not sent." if row["what"] == "send-reply" else f"Denied: {row['task']}.",
@@ -1211,8 +1262,12 @@ async def drain_decisions():
         write("UPDATE decisions SET done = ? WHERE id = ?", (time.time(), item["id"]))
         try:
             await decide(item["approval_id"], item["decision"], by=item["by"])
-        except Exception:
+        except Exception as error:
             log.exception("mail decision %s failed", item["id"])
+            row = approval(item["approval_id"])
+            what = row["task"] if row else f"request #{item['approval_id']}"
+            await notify(f"<b>That did not go through</b>: {html.escape(item['decision'])} on {html.escape(what)}\n"
+                         f"{html.escape(str(error)[:200])}. The Mail panel shows where it stands.")
 
 
 def set_always(row, always):
@@ -1285,7 +1340,7 @@ async def run_task(approval_id, resumed=False):
     else:
         prompt = TASK_PROMPT.format(
             id=row["id"], name=agent_name(row["sender"]), task=row["task"],
-            by="always rule" if row["decided_by"] == "always" else "on Telegram or in the app",
+            by="always rule" if row["decided_by"] == "always" else "by his own tap",
             when=dt.datetime.fromtimestamp(row["decided"] or time.time()).strftime("%d %b %H:%M"),
             protocol=PROTOCOL, mail=mail_prompt(headers, payload.get("body", ""), 6000),
         )
@@ -1306,7 +1361,7 @@ async def run_task(approval_id, resumed=False):
         await finish(row, "held", state["held"])
         await notify(
             f"<b>Diablo paused task #{row['id']}</b>: {html.escape(state['held'])}\n{html.escape(row['task'])}",
-            [[("Let it continue", f"mail:continue:{row['id']}"), ("Stop it", f"mail:deny:{row['id']}")]],
+            choice(row["id"], ("Let it continue", "continue"), ("Stop it", "deny")),
         )
         return
     answer = (turn.text or "").strip()
@@ -1339,7 +1394,7 @@ async def recover():
         write("UPDATE approvals SET status = 'held', note = ? WHERE id = ?", ("the hub restarted mid task", row["id"]))
         await notify(
             f"<b>Task #{row['id']} stopped</b> when the hub restarted: {html.escape(row['task'])}",
-            [[("Let it continue", f"mail:continue:{row['id']}"), ("Stop it", f"mail:deny:{row['id']}")]],
+            choice(row["id"], ("Let it continue", "continue"), ("Stop it", "deny")),
         )
     panel_changed()
 

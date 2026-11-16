@@ -30,6 +30,7 @@ DEFAULTS = {
     "rank.duke": "",
     "rank.lord": "",
     "telegram_bot_token": "",
+    "delivery.telegram": "replies",
     "speaking_mode": "off",
     "brain.backend": "claude",
     "brain.claude.model": "claude-sonnet-5-5",

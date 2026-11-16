@@ -48,7 +48,7 @@ def judge(watch, data):
 
 
 def wakes(kind, state):
-    """Whether a task change is worth a model turn and a Telegram push. Otherwise its card says it all."""
+    """Whether a task change is worth a model turn and a message in the app. Otherwise its card says it all."""
     if state in ("waiting", "failed"):
         return True
     if state == "done":

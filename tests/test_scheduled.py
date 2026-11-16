@@ -99,12 +99,19 @@ class TestScheduledEndpoint(Case):
         with mock.patch.object(brains, "ask", new=mock.AsyncMock(return_value=turn)) as ask, \
                 mock.patch("hub.bot.push", side_effect=push):
             asyncio.run(server._run_scheduled("[scheduled task #1] mail Jorbis", "task-9"))
-        ask.assert_awaited_once()
-        self.assertEqual(ask.await_args.kwargs["origin"], "scheduled task")
-        self.assertEqual(pushed, ["Scheduled task done. Mailed Jorbis."])
-        stored = db.get_messages(5)
-        self.assertEqual(stored[-1]["text"], "Mailed Jorbis.")
-        self.assertEqual(stored[-1]["meta"]["did"], "used mail_agent: Jorbis")
+            ask.assert_awaited_once()
+            self.assertEqual(ask.await_args.kwargs["origin"], "scheduled task")
+            self.assertEqual(pushed, [])
+            stored = db.get_messages(5)
+            self.assertEqual(len(stored), 1)
+            self.assertEqual(stored[-1]["text"], "Mailed Jorbis.")
+            self.assertEqual(stored[-1]["source"], "schedule")
+            self.assertEqual(stored[-1]["meta"]["did"], "used mail_agent: Jorbis")
+            self.assertEqual(stored[-1]["meta"]["section"], "diablo")
+            self.assertEqual(stored[-1]["meta"]["kind"], "scheduled")
+            settings.set_setting("delivery.telegram", "all")
+            asyncio.run(server._run_scheduled("[scheduled task #2] mail Jorbis", "task-10"))
+            self.assertEqual(pushed, ["Scheduled task done. Mailed Jorbis."])
 
     def test_it_needs_a_token(self):
         response = TestClient(server.app).post("/v1/scheduled", json={"text": "x", "client_id": "task-1"})

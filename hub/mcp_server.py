@@ -3,10 +3,11 @@ import logging
 import os
 import sys
 import time
+import uuid
 
 import httpx
 
-from . import agent, character, db, devices, lockguard, modules, questions, settings, t3link, tasks, tts
+from . import agent, character, db, deliver, devices, lockguard, modules, questions, settings, t3link, tasks, tts
 from .config import get_config
 
 logger = logging.getLogger("diablo.mcp")
@@ -78,7 +79,7 @@ EXTRA = [
     },
     {
         "name": "notify",
-        "description": "Send Marcus a Telegram message right now, outside the current reply. For reports he should see on his phone when the reply itself goes elsewhere, like the web app.",
+        "description": "Send Marcus a message in his app right now, outside the current reply; his phone shows it as a notification. For reports he should see when the reply itself goes elsewhere. It reaches Telegram only when the turn came from Telegram.",
         "inputSchema": {
             "type": "object",
             "properties": {"text": {"type": "string"}},
@@ -87,7 +88,7 @@ EXTRA = [
     },
     {
         "name": "send_voice",
-        "description": "Send Marcus a Telegram voice note in your own voice, spoken from text. Use it whenever he asks you to say, read or speak something aloud, or to answer as a voice note. Write the text in the script of its language, Japanese in kana and kanji, never romaji.",
+        "description": "Send Marcus a Telegram voice note in your own voice, spoken from text, on a turn he wrote on Telegram; on any other turn the text goes to his app instead. Use it whenever he asks you to say, read or speak something aloud, or to answer as a voice note. Write the text in the script of its language, Japanese in kana and kanji, never romaji.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -181,26 +182,35 @@ def tools():
     return listed + EXTRA
 
 
-def notify(text):
+def turn_origin():
+    """Where the current turn came from, read from this session's own turn file (hub/brains.py writes it
+    as each turn starts), so a turn running beside it in another session never changes it."""
+    path = os.environ.get("DIABLO_TURN_FILE")
+    if path:
+        return lockguard.turn_origin(path)
+    return str(lockguard.armed(os.environ.get("DIABLO_CONVERSATION") or "main").get("origin") or "")
+
+
+def notify(text, kind="report"):
+    """Through the hub's POST /v1/notify, so it lands in the app and the phone hears of it at once
+    (hub/deliver.py); straight into the main conversation when the hub is away. Both carry the same
+    client_id, so a hub that stored it but answered late never leaves two copies."""
     text = str(text or "").strip()[:3900]
     if not text:
         return "nothing to send"
-    token = settings.get("telegram_bot_token")
-    chat_id = settings.get("telegram_chat_id")
-    if not token or not chat_id:
-        return "telegram is not set up, no chat to send to"
+    token = str(get_config().get("hub_token") or "")
+    client_id = "notify-" + uuid.uuid4().hex
     try:
-        response = httpx.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": int(chat_id), "text": text},
-            timeout=15,
-        )
-    except httpx.HTTPError as error:
-        return f"telegram failed: {error}"
-    if response.status_code != 200:
-        return f"telegram refused: {response.text[:200]}"
-    db.add_message("telegram", "assistant", text, {"pushed": True})
-    return "sent"
+        response = httpx.post(f"{devices.public_url()}/v1/notify", headers={"X-Diablo-Token": token},
+                              json={"text": text, "kind": kind, "origin": turn_origin(), "client_id": client_id},
+                              timeout=20)
+        if response.status_code == 200:
+            return "sent to Telegram and the app" if response.json().get("telegram") else "sent to his app"
+        logger.info("hub refused the notify (%s): %s", response.status_code, response.text[:200])
+    except (httpx.HTTPError, ValueError) as error:
+        logger.info("hub not reachable for the notify: %s", error)
+    deliver.store(text, kind, client_id=client_id)
+    return "saved in his app; the hub did not answer, so his phone gets no ping until he opens it"
 
 
 def send_voice(text, language):
@@ -208,6 +218,9 @@ def send_voice(text, language):
     language = str(language or "en").strip().lower()[:2] or "en"
     if not text:
         return "nothing to say"
+    if not deliver.to_telegram(turn_origin()):
+        said = notify(text, "voice")
+        return f"{said}, as text: voice notes go to Telegram only on a turn he wrote there"
     token = settings.get("telegram_bot_token")
     chat_id = settings.get("telegram_chat_id")
     if not token or not chat_id:
@@ -227,7 +240,7 @@ def send_voice(text, language):
         return f"telegram failed: {error}"
     if response.status_code != 200:
         return f"telegram refused: {response.text[:200]}"
-    db.add_message("telegram", "assistant", text, {"voice_reply": True, "pushed": True})
+    deliver.store(text, "voice", meta={"voice_reply": True})
     return "voice note sent"
 
 

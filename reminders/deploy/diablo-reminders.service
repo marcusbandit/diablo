@@ -1,5 +1,5 @@
 [Unit]
-Description=Diablo reminders, fires durable reminders on Telegram
+Description=Diablo reminders, fires durable reminders in the app
 Documentation=https://github.com/marcusbandit/diablo-reminders
 After=network-online.target
 StartLimitIntervalSec=0

@@ -233,11 +233,13 @@ def public(question):
 turns = {}
 
 
-def ask(conv, arguments, now=None, turn=None):
+def ask(conv, arguments, now=None, turn=None, ttl_s=None, action=None):
     """Store a new pending question in conv; any pending one there is superseded. Raises ValueError.
 
     turn names the brain turn that asked, so only that turn's reply carries it; in the hub process it
-    comes from turns, which the brain fills while a turn holds the conversation."""
+    comes from turns, which the brain fills while a turn holds the conversation. ttl_s overrides
+    questions.ttl_s. action, like {"kind": "mail", "id": 4, "decisions": ["approve", "deny"]}, makes an
+    answer run that action (hub/deliver.py) instead of a brain turn."""
     now = time.time() if now is None else now
     body = clean(arguments)
     conv = str(conv or "main")
@@ -245,7 +247,9 @@ def ask(conv, arguments, now=None, turn=None):
     for old in pending(conv, now):
         _change(old, "superseded", now, expect="pending")
     question = dict(body, id=new_id(), conv=conv, state="pending", created=now, updated=now, turn=turn,
-                    expires=now + ttl(), claimed=False, message=None, section=None, threads=[])
+                    expires=now + (ttl_s or ttl()), claimed=False, message=None, section=None, threads=[])
+    if action:
+        question["action"] = action
     _put(question, now)
     _announce(question)
     return question

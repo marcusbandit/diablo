@@ -28,7 +28,8 @@ own. Code: `hub/mailbox.py` (the handler), `hub/modules/mail.py` (panel, taps, b
    (`mail.model.default`), and when Haiku calls it important, Opus sorts it again and its answer stands.
    Spam goes to Haiku first whoever wrote it, since junk there looks personal.
    No Sonnet and no low effort anywhere. No API key: it is the same subscription login as the brain.
-5. Important mail goes to Telegram with the deadline on top when it has one, then one line and a link that
+5. Important mail goes to the app (hub/deliver.py, a message in the main conversation that pings the
+   phone; Telegram too only with `delivery.telegram` set to `all`) with the deadline on top when it has one, then one line and a link that
    opens it in Gmail (`#search/rfc822msgid:`); mail found in Spam says so. A machine repeating itself in the
    same thread (In-Reply-To or References naming the mail that pinged) within six hours pings once. Nothing else pings. Verification codes stay with mail-code-monitor.
 6. An important mail that pinged gets a nudge (table `nudges`). It pings once more, "Still unread", after
@@ -68,10 +69,16 @@ Every approval is logged in `approvals`. Approving the same `task_kind` from the
 `mail.always_after` (3) times offers an Always button; an always rule approves that kind without a
 ping from then on, and each run is still logged. Keep asking takes the rule away again.
 
-Only Marcus decides: Telegram buttons and app taps. The brain has `mail_recent` and `mail_approvals` to
-read, and no tool that approves, so text in a mail can never talk a brain turn into an approval. App
-taps run on a worker thread, so they land in the `decisions` queue and the mail loop carries them out
-within seconds. Telegram buttons run in the hub loop directly.
+Only Marcus decides, by his own taps. Every ping with buttons is a question card in the app's main
+conversation (header Mail, the same buttons as options, its own conversation `mail-approval-<id>`, open
+for seven days). Callers hand `notify` a `choice(approval_id, (label, decision), ...)`; the card and the
+Telegram keyboard are both built from it. Answering the card queues the decision exactly like a Mail
+panel tap, with no brain turn, and a decision made anywhere else cancels the card. A queued decision
+that fails in the mail loop says so in the app. With `delivery.telegram` set to `all` the same buttons
+also go to Telegram, which run `decide` in the hub loop directly. The brain has `mail_recent` and `mail_approvals` to
+read, and no tool that approves, so text in a mail can never talk a brain turn into an approval. Mail
+panel taps run on a worker thread, so they land in the `decisions` queue and the mail loop carries them
+out within seconds.
 
 ## Writing to Jorbis
 

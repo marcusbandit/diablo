@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Relay a finished worker task report to the hub; the hub pushes it to Telegram.
+"""Relay a finished worker task report to the hub; the hub puts it in the app.
 
 Called by oc-think.sh reap with the task id and name as arguments, the report on stdin.
 Best effort by design: a missed push never breaks the task itself.

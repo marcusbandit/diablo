@@ -19,7 +19,7 @@ TOOLS = [
     {
         "name": "add_reminder",
         "description": (
-            "Set a reminder for Marcus. It is stored on disk and the reminder service sends it to him on Telegram "
+            "Set a reminder for Marcus. It is stored on disk and the reminder service sends it to his app "
             "in your voice at the due time, even across hub restarts and Pi reboots; one missed while the Pi was "
             "down arrives late, never not at all. Use this for every remind me order, never a session cron job, "
             "which dies with the hub. Weekly repeats on the weekday of due. Confirm the time the tool returns."

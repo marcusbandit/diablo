@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+from . import deliver as delivery
 from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, questions, releases, route, sections, selfrestart, standby, stt, t3link, t3threads, tasks, threads, usage, voicemerge, watch
 from . import settings as app_settings
 from .config import get_config
@@ -129,6 +130,9 @@ class SectionsIn(BaseModel):
 
 class NotifyIn(BaseModel):
     text: str
+    kind: str = "report"
+    origin: str = ""
+    client_id: Optional[str] = None
 
 
 class ScheduledIn(BaseModel):
@@ -741,6 +745,11 @@ async def answer_question(question_id: str, body: AnswerIn, caller: dict = Depen
     source = body.source.strip() or "fleet"
     if found["state"] == "pending" and not await may_answer(found, devices.origin_for(caller, source)):
         raise HTTPException(status_code=423, detail="banditbox is locked: unlock it to answer this, or answer from your phone or Telegram")
+    if found.get("action"):
+        try:
+            return await delivery.answer_action(found, body.choices, body.text, source, body.client_id)
+        except questions.Problem as problem:
+            raise HTTPException(status_code=problem.status, detail=problem.detail)
     preview = dict(found, answer={"labels": [o["label"] for i, o in enumerate(found.get("options") or [])
                                              if i in set(body.choices or [])],
                                   "text": " ".join(body.text.split())})
@@ -1249,12 +1258,14 @@ def post_fact(body: FactIn, _: None = Depends(require_token)):
 
 @app.post("/v1/notify")
 async def notify(body: NotifyIn, _: None = Depends(require_token)):
-    from . import bot
-
+    """A message for Marcus from outside a reply: the notify tool, the reminder service, task-notify.
+    It lands in the app (hub/deliver.py); Telegram gets it only for a Telegram origin or delivery.telegram all."""
     text = body.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="empty text")
-    return {"ok": await bot.push(text)}
+    kind = " ".join(body.kind.split())[:24] or "report"
+    done = await delivery.deliver(text, kind, origin=body.origin, client_id=body.client_id)
+    return {"ok": True, "id": done["id"], "telegram": done["telegram"], "repeat": done["repeat"]}
 
 
 _scheduled = set()
@@ -1264,7 +1275,7 @@ _scheduled_ids = set()
 @app.post("/v1/scheduled")
 async def scheduled(body: ScheduledIn, _: None = Depends(require_token)):
     """A task Marcus scheduled with the reminder service comes due. Runs it as a brain turn in the background,
-    once per client_id, and tells Marcus the outcome on Telegram."""
+    once per client_id, and tells Marcus the outcome in the app (hub/deliver.py)."""
     text = body.text.strip()
     if not text or not body.client_id.strip():
         raise HTTPException(status_code=400, detail="text and client_id are needed")
@@ -1283,8 +1294,6 @@ async def scheduled(body: ScheduledIn, _: None = Depends(require_token)):
 
 
 async def _run_scheduled(text, client_id, said_id=None):
-    from . import bot
-
     filed, objects = [], []
     try:
         turn = await brains.ask(brains.MAIN, text, origin="scheduled task", message_id=said_id)
@@ -1295,15 +1304,14 @@ async def _run_scheduled(text, client_id, said_id=None):
         logger.exception("scheduled task %s failed", client_id)
         reply, did = f"A scheduled task failed: {str(error)[:300]}", ""
     asked = [o for o in (objects or []) if isinstance(o, dict) and o.get("kind") == "question"]
-    db.add_message("schedule", "assistant", reply, {"section": sections.MAIN_ID, "client_id": client_id, "did": did,
-                                                     **({"threads": filed} if filed else {}),
-                                                     **({"objects": asked} if asked else {})})
-    _scheduled_ids.discard(client_id)
     try:
-        await bot.push(f"Scheduled task done. {reply}")
-        await bot.push_questions(brains.MAIN)
+        await delivery.deliver(reply, "scheduled", objects=asked or None, client_id=client_id, source="schedule",
+                               meta={"did": did, "pushed": False, **({"threads": filed} if filed else {})},
+                               telegram_text=f"Scheduled task done. {reply}")
     except Exception:
         logger.exception("could not tell Marcus about scheduled task %s", client_id)
+    finally:
+        _scheduled_ids.discard(client_id)
 
 
 @app.get("/v1/facts")
@@ -1618,22 +1626,24 @@ async def ears_duck(body: EarsDuckIn, caller: dict = Depends(require_token)):
     return {"ok": True, "keep_up": body.keep_up}
 
 
-async def deliver(text, watched):
-    """A turn the hub started itself, like a T3 event: stored and pushed, with any question it asked
-    hung under the stored message, so every app draws its card."""
-    from . import bot
+EVENT_KINDS = {"wake": "wake", "autoship": "autoship", "restart": "restart"}
 
+
+async def deliver(text, watched):
+    """A turn the hub started itself, like a T3 event: delivered to the app (hub/deliver.py), with any
+    question it asked hung under the stored message, so every app draws its card. A web chat's event
+    also stays in that chat."""
     conv = watched.get("conv") or brains.MAIN
+    kind = EVENT_KINDS.get(watched.get("thread_id"), "t3")
     asked = [questions.public(q) for q in reversed(questions.unlinked(conv))]
     if conv.startswith("web-"):
         chat_id = conv[4:]
         db.add_message("api", "assistant", text, {"chat": chat_id, "t3_event": watched["thread_id"],
                                                   **({"objects": asked} if asked else {})})
         publish({"kind": "message", "chat": chat_id, "role": "assistant"})
-        await bot.push(text)
+        await delivery.deliver(text, kind)
         return
-    await bot.push(text, objects=asked or None)
-    await bot.push_questions(conv)
+    await delivery.deliver(text, kind, objects=asked or None)
 
 
 # The fleet phone app posts its reports here and listens on /api/events for {"cmd":"report"}.

@@ -275,7 +275,8 @@ async def send_question(chat_id, question, bot=None):
 
 
 async def push_questions(conv=None):
-    """Send the questions a turn that did not come from Telegram asked, like a T3 event, when it is pushed here."""
+    """Send the questions a turn that did not come from Telegram asked, like a T3 event, when hub/deliver.py
+    sends that turn here too."""
     chat_id = settings.get("telegram_chat_id") or owner()
     if _app is None or not chat_id or (conv or brains.MAIN) != brains.MAIN:
         return 0
@@ -569,16 +570,13 @@ def _speaks():
     return str(settings.get("speaking_mode") or "off").strip().lower() in ("on", "1", "true", "yes") and settings.get("tts_provider") not in ("", "none")
 
 
-async def push(text, objects=None):
-    """Send a finished task report to the chat Diablo was last written from. objects (a question it
-    asked) are kept on the stored message even when Telegram cannot be reached, so the apps show them."""
-    kept = {"objects": objects} if objects else {}
+async def push(text):
+    """Send plain text to Marcus's Telegram chat. Stores nothing: hub/deliver.py decides what reaches
+    Telegram and keeps the app copy."""
     chat_id = settings.get("telegram_chat_id") or owner()
     if _app is None or not chat_id:
         if _app is not None:
             logger.warning("telegram push skipped: no chat id yet")
-        if kept:
-            db.add_message("telegram", "assistant", text.strip(), dict(kept, pushed=False))
         return False
     sent = False
     for part in split(text):
@@ -587,10 +585,7 @@ async def push(text, objects=None):
             sent = True
         except Exception:
             logger.exception("telegram push failed")
-            if kept:
-                db.add_message("telegram", "assistant", text.strip(), dict(kept, pushed=sent))
             return sent
-    db.add_message("telegram", "assistant", text.strip(), dict(kept, pushed=True))
     return sent
 
 
