@@ -13,7 +13,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import apps, desktop, window
+from . import apps, desktop, playback, window
 
 ADDRESS = re.compile(r"^0x[0-9a-fA-F]+$")
 PLAYER = re.compile(r"^[\w.\-]+$")
@@ -223,7 +223,7 @@ def reopen(last=None):
     if last["cmd"]:
         try:
             subprocess.Popen(last["cmd"], start_new_session=True, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, cwd=os.path.expanduser("~"))
+                             stderr=subprocess.DEVNULL, cwd=os.path.expanduser("~"), env=playback.launch_env())
             return True, f"reopened {last['class'] or 'it'}"
         except OSError as error:
             return False, f"could not start {last['class']}: {error}"
