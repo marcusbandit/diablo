@@ -806,6 +806,15 @@ def talk_score(audio):
     None for under 1.2 s of speech: the bar was set on 1.6 s pieces, and one word of
     his scores near 0.59, so "stop" alone would be refused. A short request passes.
     """
+    emb = talk_embedding(audio)
+    if emb is None:
+        return None
+    return float(np.load(TALK_PRINT) @ emb)
+
+
+def talk_embedding(audio):
+    """The unit voiceprint of audio for the talk check, or None: no talk print yet, under
+    TALK_MIN_S of speech, or the voiceprint thread held up."""
     if not TALK_PRINT.exists():
         return None
     from resemblyzer import preprocess_wav
@@ -815,7 +824,7 @@ def talk_score(audio):
     emb = _voice_embed(audio, timeout=voiceid.LIVE_TIMEOUT_S)
     if emb is None:
         return None
-    return float(np.load(TALK_PRINT) @ emb / (np.linalg.norm(emb) + 1e-9))
+    return emb / (np.linalg.norm(emb) + 1e-9)
 
 
 def speaker_score(audio):

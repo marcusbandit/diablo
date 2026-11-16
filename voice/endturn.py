@@ -10,6 +10,7 @@ a hard cap on the whole turn keeps them from waiting forever.
     ears.silence_short_s   quiet that ends a short command like "next song" (default 1.0)
     ears.turn_max_s        longest turn in seconds (default 90)
     ears.adaptive          1 to read the words, 0 for the plain base quiet always (default 1)
+    ears.own_voice_end     1 lets only his voice keep a turn open (voice/ownvoice.py) (default 1)
 
 They are hub settings, read each minute by voice/ears.py, and fall back to the same names
 in ~/.config/diablo/config.toml, flat or as an [ears] table. The old silence_tail_s sets the
@@ -25,6 +26,7 @@ DEFAULTS = {
     "ears.silence_short_s": "1.0",
     "ears.turn_max_s": "90",
     "ears.adaptive": "1",
+    "ears.own_voice_end": "1",
 }
 
 OFF = ("0", "false", "no", "off")
@@ -56,6 +58,7 @@ class Policy:
     max_s: float = 90.0
     short_s: float = 1.0
     adaptive: bool = True
+    own_voice: bool = True
 
     @classmethod
     def from_cfg(cls, cfg):
@@ -79,13 +82,16 @@ class Policy:
 
         base = number(("ears.silence_s", "silence_tail_s"), cls.base_s, 0.3, 10.0)
         longer = number(("ears.silence_open_s",), cls.open_s, 0.3, 15.0)
-        flag = str(lookup("ears.adaptive") if lookup("ears.adaptive") is not None else "1").strip().lower()
+        def flag(key):
+            return str(lookup(key) if lookup(key) is not None else "1").strip().lower() not in OFF
+
         return cls(
             base_s=base,
             open_s=max(longer, base),
             short_s=min(number(("ears.silence_short_s",), cls.short_s, 0.3, 10.0), base),
             max_s=number(("ears.turn_max_s",), cls.max_s, 5.0, 600.0),
-            adaptive=flag not in OFF,
+            adaptive=flag("ears.adaptive"),
+            own_voice=flag("ears.own_voice_end"),
         )
 
 

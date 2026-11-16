@@ -50,6 +50,7 @@ DEFAULTS = {
     "ears.silence_short_s": "1.0",
     "ears.turn_max_s": "90",
     "ears.adaptive": "1",
+    "ears.own_voice_end": "1",
 }
 
 

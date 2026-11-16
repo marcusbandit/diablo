@@ -226,6 +226,7 @@ Take your time." No sound is added.
 | `ears.silence_short_s` | 1.0 | quiet that ends a short command: 4 words or fewer, said in under 1.8 s, not ending on "and", "the" or a comma |
 | `ears.turn_max_s` | 90 | longest turn, in seconds |
 | `ears.adaptive` | 1 | 0 reads no words and always waits the base quiet |
+| `ears.own_voice_end` | 1 | 0 lets any voice keep a turn open, as before (next section) |
 
 Change one with `PUT /v1/settings/ears.silence_s` and `{"value": "2.4"}`. The ears reread the
 hub's settings every minute, so it is live within one. The same keys in
@@ -233,6 +234,63 @@ hub's settings every minute, so it is live within one. The same keys in
 when the hub is down. The old `silence_tail_s` only counts when no `ears.silence_s` is set,
 and the hub always sends one, so change the hub setting. A restart of `diablo-ears` is needed once, to
 load this code; the settings need none after that.
+
+## Only his voice keeps a turn open
+
+Any voice used to break the quiet. With people talking in the room a turn stayed open until
+`ears.turn_max_s`, and Whisper wrote their sentences into the request. `voice/ownvoice.py`
+now judges whose talk it is while he speaks:
+
+- Every 0.64 s of new speech, the last 1.6 s of speech is scored on a thread of its own, so
+  the mic loop never waits. A window at 0.75 or more against `talk.npy` is his for certain,
+  and those windows make a print of the turn itself: the same mic, room and music. Once there
+  is one, a window is someone else's when it is under 0.68 against it and under `talk_min`
+  plus 0.06 against `talk.npy`; before that, when it is under `talk_min` less 0.05. On 1.6 s windows strangers in a room scored 0.50 to
+  0.70 against `talk.npy`, too close to his 0.66 to 0.90, but against his windows in the same
+  turn 95% of theirs sat at 0.66 or under and 99% of his at 0.78 or over.
+- With sound from the speakers during the window, or before the name, `talk.npy` alone never
+  calls a window someone else's: his talk over a song scored 0.43, and a song alone 0.44 to
+  0.56. The turn's own print still can, with the barge-in slack of 0.1.
+- Each window votes on the speech in it; most votes wins, and a tie is his. Their talk counts
+  as quiet. Talk that runs straight on from theirs, with no pause, is theirs until a window
+  says otherwise, or a stranger who never pauses would hold the turn open. Quiet that comes
+  from their talk ends a turn 1.6 s later than real quiet: when he picks up again over them,
+  his voice needs about that long to win a window back.
+- Before speech to text their stretches are cut out, but only where two windows called the
+  speech someone else's and none called it his, keeping 0.16 s next to any other speech; a
+  stretch under 0.5 s stays. So his reply straight after a stranger, which only the newest
+  window has heard, is never cut. The end of turn
+  check and the voice check read the cut audio. A turn with nothing of his left counts as
+  nothing said.
+- Unknown is his: a window the voiceprint could not score within 3 s, one with too little
+  speech in it after resemblyzer's own trim, and one that came while the voiceprint thread
+  was busy, which is skipped rather than queued in front of the request's own voice check.
+- Normal turns, speech control lines and dictation pieces all use it. A dictation piece needs
+  1.6 s of speech before it gets a window, so short pieces are as before; a long one ends on
+  his own pause, and the room's talk is not typed.
+
+Measured with `scripts/ownvoice_eval.py` on 12 of his held out dictations of 5 to 14 s,
+each mixed in a room with a LibriSpeech stranger or a song, cleaned with RNNoise and replayed
+through `record()` in real time with a probe that reads every line as finished. Seconds from
+his last word to the end of the turn, median and worst:
+
+| Case | Before | After | Cut off | His speech kept | Their speech left in |
+|---|---|---|---|---|---|
+| him alone | 2.2, 2.2 | 2.2, 2.2 | none | all | |
+| a stranger talks on for 10 s after him | 12.2, 15.5 | 6.2, 9.2 | none | all | 80% |
+| a stranger 9 dB under him, and on for 10 s | 8.4, 15.5 | 4.6, 12.3 | none | all | 96% |
+| a song 9 dB under him, and on for 10 s | 2.5, 12.8 | 2.5, 12.8 | 1 of 12, both | 94%, both | 99% |
+
+Before, a stranger who kept talking held the turn until they stopped, 90 s at the most. With
+them talking on, a turn now ends about 4 s past the usual quiet: the 1.6 s above, and the
+first second of their talk, which still counts as his while the windows over it are mostly
+him. That first second and their last 1.3 s, which fewer than two windows have heard, are
+what is left of them in the audio; the shorter turn is most of the gain. The one cut off
+under the song is a clip with a 6.7 s pause of his own, the same before and after; under a
+song the print abstains, so nothing changes there.
+
+`ears.own_voice_end` set to 0 turns it off. Each turn's timeline notes `own_windows`,
+`own_others` (the windows that were someone else) and `own_cut_s`.
 
 ## He never answers the speakers
 
