@@ -173,6 +173,21 @@ def host_line():
     return f"[running on {socket.gethostname()}{role}]"
 
 
+def mail_note(conv, machine, guard):
+    """Important mail Marcus has not opened, for a turn he is part of. Never on a locked screen, where someone else
+    may hear it, never on the standby, and never in a turn of its own that a mail started. A mail named in a turn
+    that never finished comes back a few hours later while it stays unread."""
+    if machine or guard.restricted or str(conv).startswith("mail-") or standby.is_standby():
+        return ""
+    try:
+        from . import mailbox
+
+        return mailbox.unread_note()
+    except Exception:
+        logger.exception("unread mail note failed")
+        return ""
+
+
 def prefix(origin, notes=None):
     stamp = datetime.datetime.now().strftime("%a %d %b %H:%M")
     head = f"[{origin}, {stamp}]\n{host_line()}"
@@ -1254,6 +1269,9 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
     guard = await looking
     if guard.line:
         notes = [guard.line] + list(notes or [])
+    waiting_mail = await asyncio.to_thread(mail_note, conv, machine, guard)
+    if waiting_mail:
+        notes = list(notes or []) + [waiting_mail]
     if guard.restricted and chosen == "opencode":
         chosen = "api"
     picked = await picking if picking is not None else None
