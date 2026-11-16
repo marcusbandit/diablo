@@ -1339,7 +1339,9 @@ def read_character(_: None = Depends(require_token)):
 
 
 @app.put("/v1/character")
-def write_character(body: CharacterIn, _: None = Depends(require_token)):
+def write_character(body: CharacterIn, caller: dict = Depends(require_token)):
+    if caller.get("master"):
+        raise HTTPException(status_code=403, detail="only a paired device changes his character, never the machine token")
     return {"text": character.save(body.text), "default": character.DEFAULT, "refused": character.refused()}
 
 

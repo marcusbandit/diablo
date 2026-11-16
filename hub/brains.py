@@ -1178,7 +1178,9 @@ async def ask(conv, text, origin="telegram", images=None, on_step=None, **kwargs
 
 
 def spoken(origin):
-    return "spoken aloud" in str(origin or "") or "voice note" in str(origin or "")
+    from . import character
+
+    return character.spoken(origin)
 
 
 def lamps_line(lamps):

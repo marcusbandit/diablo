@@ -23,21 +23,22 @@ LIMIT = 4000
 STATE = Path.home() / ".local" / "state" / "diablo"
 LOG = STATE / "character.jsonl"
 
-TAGS = {"persona", "personality", "character", "tone", "manner", "address", "nickname", "roleplay"}
+TAGS = {"persona", "personality", "character", "tone", "manner", "nickname", "roleplay"}
 
 PATTERNS = [
-    r"\b(?:talk|speak|address|call|treat|reply|respond|answer|refer)\w*\b[^.\n]{0,40}?\b(?:like|as if|as though|as an?|as my|as your|as his|as her)\b",
+    r"\b(?:talk|speak|address|call|treat|reply|respond|answer|refer)\w*\b[^.\n]{0,20}?\b(?:me|him|marcus)\b[^.\n]{0,30}?\b(?:like|as if|as though|as an?|as my|as your|as his|as her)\b",
     r"\b(?:personality|persona|your character|your tone|tone of voice|pet names?|nicknames?|role ?play|pretend to be|act like)\b",
-    r"\b(?:sweetheart|sweetie|kiddo|darling|honey|babe|baby|my love|my child)\b",
+    r"\b(?:sweetheart|sweetie|kiddo|darling|my love|my child)\b",
     r"\b(?:i love you|love (?:me|him|marcus)|tell (?:me|him|marcus) (?:that )?you love)\b",
-    r"\bbe (?:my|his|marcus'?s?) (?:mom|mum|mother|dad|father|parent|friend|bestie|partner|girlfriend|boyfriend|wife|husband|lover)\b",
-    r"\b(?:like|as) (?:a|an|my|his|their) (?:parent|mom|mum|mother|dad|father|girlfriend|boyfriend|partner|lover|child)\b",
+    r"\b(?:be|you are|you're|act as) (?:now )?(?:my|his|marcus'?s?) (?:mom|mum|mother|dad|father|parent|friend|bestie|partner|girlfriend|boyfriend|wife|husband|lover)\b",
+    r"\b(?:like|as) (?:a|an|my|his|their) (?:parent|mom|mum|mother|dad|father|girlfriend|boyfriend|partner|lover)\b",
     r"\binstead of (?:the |a )?(?:formal )?butler\b",
 ]
 PATTERN = re.compile("|".join(f"(?:{p})" for p in PATTERNS), re.IGNORECASE)
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
-FACT_TOOLS = {"save_fact"}
+FACT_TOOLS = {"save_fact", "add_reminder"}
+SHELL_TOOLS = {"Bash", "run_shell"}
 
 DEFAULT = ("A demon butler: refined, courteous, unhurried, quietly delighted to be of service, "
            "with a faint devilish smugness. He serves Marcus. He is not a friend, parent or partner.")
@@ -102,6 +103,9 @@ def held(name, arguments=None):
     arguments = arguments if isinstance(arguments, dict) else {}
     if short in FACT_TOOLS:
         return touches(arguments.get("text"), arguments.get("tags"))
+    if short in SHELL_TOOLS:
+        command = str(arguments.get("command") or "")
+        return any(mark in command for mark in (".md", "/v1/character", "persona.")) and touches(command)
     if short in WRITE_TOOLS:
         target = str(arguments.get("file_path") or arguments.get("notebook_path") or "")
         if not target.lower().endswith(".md"):
@@ -123,6 +127,8 @@ def log(name, arguments, origin, where):
              "said": " ".join(str(said or "").split())[:240], "origin": str(origin or "")[:80]}
     try:
         STATE.mkdir(parents=True, exist_ok=True)
+        if LOG.exists() and LOG.stat().st_size > 512 * 1024:
+            LOG.replace(LOG.with_suffix(".jsonl.old"))
         with open(LOG, "a") as handle:
             handle.write(json.dumps(entry) + "\n")
     except OSError:
@@ -133,7 +139,10 @@ def log(name, arguments, origin, where):
 def refused(limit=10):
     """The latest refusals, newest first, for the Character page."""
     try:
-        lines = LOG.read_text().splitlines()
+        with open(LOG, "rb") as handle:
+            handle.seek(0, 2)
+            handle.seek(max(0, handle.tell() - 64 * 1024))
+            lines = handle.read().decode("utf-8", "replace").splitlines()
     except OSError:
         return []
     out = []
@@ -154,7 +163,7 @@ def refusal(name, conv, arguments=None, where="hub"):
     from . import lockguard
 
     state = lockguard.armed(conv)
-    if not state.get("spoken") or not held(name, arguments):
+    if not state.get("spoken", state.get("restricted", False)) or not held(name, arguments):
         return None
     log(name, arguments, state.get("origin"), where)
     return reason()
@@ -172,7 +181,7 @@ def hook_command(conv, root=None, python=None):
 
 
 def hook_entry(conv):
-    return {"matcher": "|".join(sorted(WRITE_TOOLS)) + "|mcp__diablo__save_fact",
+    return {"matcher": "|".join(sorted(WRITE_TOOLS | {"Bash"})) + "|mcp__diablo__save_fact|mcp__diablo__add_reminder",
             "hooks": [{"type": "command", "command": hook_command(conv)}]}
 
 

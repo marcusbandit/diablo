@@ -696,6 +696,9 @@ def run_agent(user_text, cfg, brain=None, ctx=None):
     if voice:
         system += "\n\n" + voice
     system += "\n\n" + BRAIN_PROMPT
+    from . import charter
+
+    system += "\n\n" + charter.character_section()
     if facts:
         system += "\n\nKnown facts:\n" + "\n".join("- " + fact["text"] for fact in facts)
     ctx = ctx or {}
