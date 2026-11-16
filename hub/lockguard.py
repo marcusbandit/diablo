@@ -233,6 +233,35 @@ def arm(conv, guard):
             pass
 
 
+def turn_path(conv, key="main"):
+    """Where one claude session's current turn is described for its own MCP server. The main session
+    of a conversation has key main; a side session running beside it has a key of its own, so a turn
+    beside never rewrites the origin of the turn it runs beside."""
+    conv = str(conv or "main")
+    safe = re.sub(r"[^\w.-]", "_", f"{conv}-{key}")[:80]
+    return STATE / "turns" / f"{safe}-{hashlib.sha1(f'{conv}|{key}'.encode()).hexdigest()[:10]}.json"
+
+
+def note_turn(path, origin):
+    """Write the origin of the turn a session is about to run, where its MCP server reads it."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"origin": str(origin or "")[:160], "ts": time.time()}))
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+def turn_origin(path):
+    """The origin a session's MCP server reads for its current turn, empty when unknown."""
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError, TypeError):
+        return ""
+    return str(data.get("origin") or "") if isinstance(data, dict) else ""
+
+
 def armed(conv):
     """The armed state for a conversation; a missing file is unrestricted, a broken one restricted."""
     path = state_path(conv)

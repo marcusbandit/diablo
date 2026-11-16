@@ -141,11 +141,12 @@ def executable(name):
     return None
 
 
-def mcp_config(conv):
+def mcp_config(conv, turn_key="main"):
     env = {key: value for key, value in os.environ.items() if key.startswith("DIABLO_")}
     env.update({
         "DIABLO_HUB_DB": os.environ.get("DIABLO_HUB_DB", str(HUB_ROOT / "diablo.db")),
         "DIABLO_CONVERSATION": conv,
+        "DIABLO_TURN_FILE": str(lockguard.turn_path(conv, turn_key)),
         "PYTHONPATH": str(HUB_ROOT),
     })
     servers = {
@@ -280,8 +281,9 @@ def step_label(name, arguments):
 
 
 class ClaudeSession:
-    def __init__(self, conv, lane=False, fork_from=None):
+    def __init__(self, conv, lane=False, fork_from=None, turn_key="main"):
         self.conv = conv
+        self.turn_key = turn_key
         self.laned = lane
         # A side session runs beside a busy one: resumed from it with --fork-session, so it
         # knows the conversation, and never stored as the conversation's session.
@@ -320,7 +322,7 @@ class ClaudeSession:
         if not binary:
             raise RuntimeError("claude is not installed on this machine")
         config_path = STATE / f"mcp-{self.conv}.json"
-        write_private(config_path, json.dumps(mcp_config(self.conv)))
+        write_private(config_path, json.dumps(mcp_config(self.conv, self.turn_key)))
         argv = [
             binary, "-p",
             "--input-format", "stream-json",
@@ -379,7 +381,7 @@ class ClaudeSession:
             self.proc.kill()
 
     def current(self):
-        signature = hashlib.sha1(json.dumps([mcp_config(self.conv), charter.charter()], sort_keys=True).encode()).hexdigest()
+        signature = hashlib.sha1(json.dumps([mcp_config(self.conv, self.turn_key), charter.charter()], sort_keys=True).encode()).hexdigest()
         return self.alive() and self.signature == signature, signature
 
     async def control(self, request):
@@ -681,13 +683,16 @@ def take_handover(conv):
     return note or None
 
 
-async def run_side(conv, text, images, on_step, decision=None, on_text=None):
+async def run_side(conv, text, images, on_step, decision=None, on_text=None, origin=""):
     """A spoken request that has nothing to do with what Claude is busy on: a fork of the busy
-    session answers it at once, beside the first, and is closed after the one turn."""
+    session answers it at once, beside the first, and is closed after the one turn. It has a turn
+    file of its own, so its origin never replaces the busy turn's."""
     busy = _lanes[conv].busy_session() if conv in _lanes else None
     busy = busy or _sessions.get(conv)
     base = (busy.session_id if busy is not None and busy.session_id else "") or settings.get(session_key("claude", conv)) or ""
-    session = ClaudeSession(conv, fork_from=base)
+    key = "side-" + uuid.uuid4().hex[:10]
+    lockguard.note_turn(lockguard.turn_path(conv, key), origin)
+    session = ClaudeSession(conv, fork_from=base, turn_key=key)
     _side[conv].add(session)
     model, effort_level = (decision.model, decision.effort) if decision else (model_for("claude"), effort())
     try:
@@ -695,6 +700,7 @@ async def run_side(conv, text, images, on_step, decision=None, on_text=None):
     finally:
         _side[conv].discard(session)
         await session.close()
+        lockguard.turn_path(conv, key).unlink(missing_ok=True)
 
 
 def parallel_ok():
@@ -1291,6 +1297,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
         async with (contextlib.nullcontext() if beside else lock(conv)):
             lockguard.arm(conv, guard)
             if not beside:
+                lockguard.note_turn(lockguard.turn_path(conv), origin)
                 asking = questions.turns[conv] = uuid.uuid4().hex
             session, seeded = None, False
             if chosen == "claude" and laned(conv) and not beside:
@@ -1310,7 +1317,8 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
             if notes:
                 text = "\n".join(notes) + "\n" + text
             if beside:
-                turn = await run_side(conv, message, images, on_step, decision, **({"on_text": on_text} if on_text else {}))
+                turn = await run_side(conv, message, images, on_step, decision, origin=origin,
+                                      **({"on_text": on_text} if on_text else {}))
             elif chosen == "claude":
                 turn = await run_claude(conv, message, images, on_step, decision,
                                         **({"session": session} if session else {}), **({"on_text": on_text} if on_text else {}))

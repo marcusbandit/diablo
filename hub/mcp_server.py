@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 
 import httpx
 
@@ -182,25 +183,33 @@ def tools():
 
 
 def turn_origin():
+    """Where the current turn came from, read from this session's own turn file (hub/brains.py writes it
+    as each turn starts), so a turn running beside it in another session never changes it."""
+    path = os.environ.get("DIABLO_TURN_FILE")
+    if path:
+        return lockguard.turn_origin(path)
     return str(lockguard.armed(os.environ.get("DIABLO_CONVERSATION") or "main").get("origin") or "")
 
 
 def notify(text, kind="report"):
     """Through the hub's POST /v1/notify, so it lands in the app and the phone hears of it at once
-    (hub/deliver.py); straight into the main conversation when the hub is away."""
+    (hub/deliver.py); straight into the main conversation when the hub is away. Both carry the same
+    client_id, so a hub that stored it but answered late never leaves two copies."""
     text = str(text or "").strip()[:3900]
     if not text:
         return "nothing to send"
     token = str(get_config().get("hub_token") or "")
+    client_id = "notify-" + uuid.uuid4().hex
     try:
         response = httpx.post(f"{devices.public_url()}/v1/notify", headers={"X-Diablo-Token": token},
-                              json={"text": text, "kind": kind, "origin": turn_origin()}, timeout=20)
+                              json={"text": text, "kind": kind, "origin": turn_origin(), "client_id": client_id},
+                              timeout=20)
         if response.status_code == 200:
             return "sent to Telegram and the app" if response.json().get("telegram") else "sent to his app"
         logger.info("hub refused the notify (%s): %s", response.status_code, response.text[:200])
     except (httpx.HTTPError, ValueError) as error:
         logger.info("hub not reachable for the notify: %s", error)
-    deliver.store(text, kind)
+    deliver.store(text, kind, client_id=client_id)
     return "saved in his app; the hub did not answer, so his phone gets no ping until he opens it"
 
 
