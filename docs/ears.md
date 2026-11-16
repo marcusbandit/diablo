@@ -1,7 +1,12 @@
 # The ears
 
 Say "Diablo", hear a rising chime, talk, stop, hear a falling chime, and he answers out loud.
-It runs at login on banditbox as `diablo-ears.service`, with no window.
+It runs with the desktop session as `diablo-ears.service`, with no window: it starts after
+`graphical-session.target` and stops with it. Started at boot instead, ahead of the compositor, it
+got no `WAYLAND_DISPLAY` and every paste, key and window command failed until a restart. When the
+session hands over no `WAYLAND_DISPLAY` or `HYPRLAND_INSTANCE_SIGNATURE`, the ears find the newest
+of each in `XDG_RUNTIME_DIR` as they start (`window.fill_session`). `deploy/ears-install.sh` moves
+an older install, which hung off `default.target`, over to the session.
 
 ## A turn
 
@@ -118,6 +123,10 @@ whole text is pasted into the window that had focus when dictation began, then t
 put back. Typed key by key with wtype, it lost the last letter and full stop of every sentence in
 T3. Terminals get ctrl+shift+v, by gvoice's own `terminal-classes`. He says "Dictating." first. Nothing goes
 to the hub. A minute with nothing said gives up.
+
+A dictation or a "type" that cannot be pasted is never lost: its words go to the Diablo chat
+(`kind: unpasted`), and when only the paste keys failed they stay on the clipboard too. He says
+which in one short line.
 
 ## He listens while he thinks
 

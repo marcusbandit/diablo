@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the ears on banditbox: the wake word library into .venv-voice, the diablo-ears
-# command with its completion, and diablo-ears.service started at login. Run it again
-# after a pull. It never touches the old diablo-voice.service.
+# command with its completion, and diablo-ears.service started with the desktop session. Run it
+# again after a pull. It never touches the old diablo-voice.service.
 set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 py="$repo/.venv-voice/bin/python"
@@ -21,5 +21,8 @@ ln -sf "$repo/voice/completions/_diablo-act" "$HOME/.local/share/zsh/site-functi
 ln -sf "$repo/voice/completions/diablo-act.bash" "$HOME/.local/share/bash-completion/completions/diablo-act"
 cp "$repo/deploy/diablo-ears.service" "$HOME/.config/systemd/user/diablo-ears.service"
 systemctl --user daemon-reload
-systemctl --user enable --now diablo-ears.service
+# reenable, not enable: an older install hangs off default.target and would still start at boot,
+# before the compositor, with no Wayland to paste into.
+systemctl --user reenable diablo-ears.service
+systemctl --user restart diablo-ears.service
 echo "ears installed. First time: diablo-ears train"

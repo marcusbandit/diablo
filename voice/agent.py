@@ -381,13 +381,14 @@ def launch_app(app):
     app = app.strip()
     if not app or any(item in app for item in FORBIDDEN):
         return "refused"
-    uid = os.getuid()
-    sockets = sorted(Path(f"/run/user/{uid}").glob("wayland-*"))
-    if not sockets:
+    from . import window
+
+    wayland = window.session_env().get("WAYLAND_DISPLAY")
+    if not wayland:
         return "no graphical session found"
     display = next((f":{p.name[1:]}" for p in Path("/tmp/.X11-unix").glob("X*")), ":0")
     envs = (
-        f"export WAYLAND_DISPLAY={sockets[0].name} DISPLAY={display} "
+        f"export WAYLAND_DISPLAY={shlex.quote(wayland)} DISPLAY={display} "
         f"XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Hyprland QT_QPA_PLATFORM=wayland"
     )
     quoted = shlex.quote(app)

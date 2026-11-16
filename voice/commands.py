@@ -7,6 +7,7 @@ and the reply carries it back as "act" for run() to do with hyprctl, playerctl a
 
 import collections
 import json
+import logging
 import os
 import re
 import subprocess
@@ -14,6 +15,8 @@ import time
 from pathlib import Path
 
 from . import apps, desktop, playback, window
+
+log = logging.getLogger("diablo.commands")
 
 ADDRESS = re.compile(r"^0x[0-9a-fA-F]+$")
 PLAYER = re.compile(r"^[\w.\-]+$")
@@ -136,10 +139,13 @@ def _terminal(window_class):
 def _clipboard():
     """(mime, bytes) on the clipboard now, or None."""
     try:
-        types = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True, timeout=2).stdout.split()
+        env = window.session_env()
+        types = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True, timeout=2,
+                               env=env).stdout.split()
         if not types:
             return None
-        data = subprocess.run(["wl-paste", "--no-newline", "--type", types[0]], capture_output=True, timeout=3).stdout
+        data = subprocess.run(["wl-paste", "--no-newline", "--type", types[0]], capture_output=True, timeout=3,
+                              env=env).stdout
         return types[0], data
     except (OSError, subprocess.SubprocessError):
         return None
@@ -161,10 +167,12 @@ def type_text(text):
         window_class = ""
     shift = _terminal(window_class)
     held = _clipboard()
+    env = window.session_env()
     try:
-        subprocess.run(["wl-copy", "--", text], check=True, timeout=5)
+        subprocess.run(["wl-copy", "--", text], check=True, timeout=5, env=env)
     except (OSError, subprocess.SubprocessError) as error:
-        return False, f"could not use the clipboard: {error}"
+        log.warning("wl-copy failed: %s", str(error)[:200])
+        return False, "the clipboard could not be reached"
     chords = ([["wtype", "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"],
                ["ydotool", "key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]] if shift else
               [["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"], ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]])
@@ -174,16 +182,20 @@ def type_text(text):
         if ok:
             pasted = True
             break
+    if not pasted:
+        # The words stay on the clipboard, so a paste by hand still gets them.
+        log.warning("the paste keys failed: %s", why[:200])
+        return False, "the paste keys did not go through, so the words are on the clipboard"
     # The app reads the clipboard after the keystroke lands; give it that moment first.
     time.sleep(0.35)
     try:
         if held is None:
-            subprocess.run(["wl-copy", "--clear"], timeout=3)
+            subprocess.run(["wl-copy", "--clear"], timeout=3, env=env)
         else:
-            subprocess.run(["wl-copy", "--type", held[0]], input=held[1], timeout=5)
+            subprocess.run(["wl-copy", "--type", held[0]], input=held[1], timeout=5, env=env)
     except (OSError, subprocess.SubprocessError):
         pass
-    return (True, "") if pasted else (False, f"pasting failed: {why[:120]}")
+    return True, ""
 
 
 def _closed_info(address):
@@ -323,7 +335,7 @@ def loop_intent(text, active=False):
 
 def _run(cmd, timeout=4.0):
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=window.session_env())
     except (OSError, subprocess.SubprocessError) as error:
         return False, str(error)[:160]
     out = (done.stdout or "") + (done.stderr or "")
