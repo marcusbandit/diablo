@@ -15,20 +15,7 @@ URL=${DIABLO_HUB_URL:-http://diablo-pi:8755}
 DRY=()
 [[ "${1:-}" == "--dry-run" ]] && DRY=(--dry-run)
 
-# The web build reads the shared client and the design tokens too.
-BUILT_FROM=(hub web packages design package.json bun.lock)
-if [[ -n "$(git status --porcelain -- "${BUILT_FROM[@]}")" ]]; then
-  echo "ship-hub: ${BUILT_FROM[*]} has uncommitted changes; commit first so the Pi runs a known commit." >&2
-  exit 1
-fi
-
-if ! command -v bun >/dev/null; then
-  echo "ship-hub: bun is needed to build the web app (https://bun.sh)." >&2
-  exit 1
-fi
-bun install --frozen-lockfile
-bun run --filter web build
-[[ -f web/dist/index.html ]] || { echo "ship-hub: the web build left no web/dist/index.html" >&2; exit 1; }
+deploy/build-web.sh ship-hub
 
 rev=$(git rev-parse --short HEAD)
 stamp=$(date +%Y%m%d-%H%M%S)

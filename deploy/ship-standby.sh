@@ -16,22 +16,21 @@ DEST=diablo-hub
 DRY=()
 [[ "${1:-}" == "--dry-run" ]] && DRY=(--dry-run)
 
-if [[ -n "$(git status --porcelain -- hub web packages design package.json bun.lock deploy/diablo-standby.service)" ]]; then
-  echo "ship-standby: hub/ or web/ has uncommitted changes; commit first so the standby runs a known commit." >&2
+if [[ -n "$(git status --porcelain -- deploy/diablo-standby.service)" ]]; then
+  echo "ship-standby: deploy/diablo-standby.service has uncommitted changes; commit first." >&2
   exit 1
 fi
+# Build before anything reaches the standby, so a failed build leaves it as it was.
+deploy/build-web.sh ship-standby
 
 rev=$(git rev-parse --short HEAD)
 opts=(-a --delete --exclude __pycache__ --exclude '*.pyc')
 
 ssh "$HOST" "mkdir -p $DEST/hub $DEST/web .config/systemd/user"
 rsync "${opts[@]}" "${DRY[@]}" -i hub/ "$HOST:$DEST/hub/"
-# web/ is React source; the standby serves the build, the way ship-hub.sh does.
-command -v bun >/dev/null || { echo "ship-standby: bun is needed to build the web app" >&2; exit 1; }
-bun install --frozen-lockfile >/dev/null
-bun run --filter web build >/dev/null
-[[ -f web/dist/index.html ]] || { echo "ship-standby: the web build made no web/dist/index.html" >&2; exit 1; }
+# The standby serves the build, not web/'s React source. Fonts go without --delete, as in ship-hub.sh.
 rsync "${opts[@]}" "${DRY[@]}" -i --exclude fonts web/dist/ "$HOST:$DEST/web/"
+rsync -a "${DRY[@]}" -i web/dist/fonts/ "$HOST:$DEST/web/fonts/"
 [[ ${#DRY[@]} -gt 0 ]] && exit 0
 
 if ! ssh "$HOST" "test -f $DEST/config.toml"; then
