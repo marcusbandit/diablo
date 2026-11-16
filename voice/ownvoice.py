@@ -40,22 +40,18 @@ MIN_CUT = 16
 JOIN_S = 0.15
 HIS, OTHER = 1, -1
 
-DEFAULTS = {"ears.own_voice_end": "1"}
-OFF = ("0", "false", "no", "off")
-
-
-def setting(cfg, key, default="1"):
-    if key in cfg:
-        return cfg[key]
-    group, _, name = key.partition(".")
-    nested = cfg.get(group)
-    return nested.get(name, default) if isinstance(nested, dict) else default
+# A judge's thread with nothing to do for this long ends; the next window starts another.
+IDLE_S = 10.0
 
 
 def enabled(cfg):
-    if str(cfg.get("ears_speaker_check", "1")).strip().lower() in OFF:
+    """ears.own_voice_end, read like the other end of turn settings, and off with the voice
+    check (ears_speaker_check)."""
+    from . import endturn
+
+    if str(cfg.get("ears_speaker_check", "1")).strip().lower() in endturn.OFF:
         return False
-    return str(setting(cfg, "ears.own_voice_end", DEFAULTS["ears.own_voice_end"])).strip().lower() not in OFF
+    return endturn.Policy.from_cfg(cfg).own_voice
 
 
 class Judge:
@@ -71,8 +67,8 @@ class Judge:
         self.wake = threading.Condition(self.lock)
         self.pos, self.chunks, self.at, self.run = [], [], [], []
         self.votes, self.label = [], []
-        self.last_his = -1
-        self.version = 0
+        self.last_his, self.his_count = -1, 0
+        self.spans, self.version = [], 0
         self.next_window = WINDOW
         self.pending = None
         self.closed = False
@@ -96,6 +92,10 @@ class Judge:
             self.label.append(label)
             if label == HIS:
                 self.last_his = len(self.pos) - 1
+                self.his_count += 1
+            if len(self.pos) > 1 and self._cut(len(self.pos) - 2):
+                # A cut that ran to the end now has speech after it, so it keeps PAD there.
+                self._refresh()
             if len(self.pos) >= self.next_window:
                 start = len(self.pos) - WINDOW
                 window = (start, len(self.pos), np.concatenate(self.chunks[start:]), self.at[start], at)
@@ -118,9 +118,10 @@ class Judge:
     def _work(self):
         while True:
             with self.lock:
-                while self.pending is None and not self.closed:
-                    self.wake.wait()
-                if self.closed:
+                if self.pending is None and not self.closed:
+                    self.wake.wait(IDLE_S)
+                if self.closed or self.pending is None:
+                    self.thread = None
                     return
                 window, self.pending = self.pending, None
             self._judge(window)
@@ -150,11 +151,38 @@ class Judge:
                 else:
                     label = OTHER if p and self.run[p] == self.run[p - 1] and self.label[p - 1] == OTHER else HIS
                 if label != self.label[p]:
+                    self.his_count += 1 if label == HIS else -1
                     self.label[p] = label
                     changed = True
             if changed:
-                self.version += 1
                 self.last_his = next((p for p in range(len(self.pos) - 1, -1, -1) if self.label[p] == HIS), -1)
+            self._refresh()
+
+    def _cut(self, p):
+        """Whether speech frame p may be cut: two windows called it someone else's and none his.
+        Talk that only runs on from theirs, or that one window has judged so far, stays: his
+        reply straight after a stranger sits in the newest window, which is mostly theirs."""
+        return self.votes[p][0] == 0 and self.votes[p][1] >= 2
+
+    def _refresh(self):
+        """The cut spans again; version counts each change, so record() knows the words it
+        read were of other audio. Called with the lock held."""
+        spans, i, n = [], 0, len(self.pos)
+        while i < n:
+            if not self._cut(i):
+                i += 1
+                continue
+            j = i
+            while j + 1 < n and self._cut(j + 1):
+                j += 1
+            start = self.pos[i] + (PAD if i > 0 else 0)
+            end = self.pos[j] + 1 - (PAD if j + 1 < n else 0)
+            if end - start >= MIN_CUT:
+                spans.append((start * FRAME, end * FRAME))
+            i = j + 1
+        if spans != self.spans:
+            self.spans = spans
+            self.version += 1
 
     def close(self):
         with self.lock:
@@ -173,7 +201,7 @@ class Judge:
 
     def his_seconds(self):
         with self.lock:
-            return sum(1 for label in self.label if label == HIS) * STEP_S
+            return self.his_count * STEP_S
 
     def quiet(self, frames, raw):
         """Quiet that counts for the end of the turn after `frames` frames, given `raw`, the
@@ -184,24 +212,10 @@ class Judge:
         return max(raw, own - LAG_S)
 
     def cuts(self):
-        """(start, end) sample spans of other people's talk: speech no window called his."""
+        """(start, end) sample spans of other people's talk: speech two windows called someone
+        else's and no window called his, less PAD next to any other speech."""
         with self.lock:
-            pos = list(self.pos)
-            cut = [label == OTHER and votes[0] == 0 for label, votes in zip(self.label, self.votes)]
-        spans, i = [], 0
-        while i < len(pos):
-            if not cut[i]:
-                i += 1
-                continue
-            j = i
-            while j + 1 < len(pos) and cut[j + 1]:
-                j += 1
-            start = pos[i] + (PAD if i > 0 else 0)
-            end = pos[j] + 1 - (PAD if j + 1 < len(pos) else 0)
-            if end - start >= MIN_CUT:
-                spans.append((start * FRAME, end * FRAME))
-            i = j + 1
-        return spans
+            return list(self.spans)
 
     def trim(self, audio):
         """audio without the spans of other people's talk."""
@@ -234,10 +248,12 @@ MARGIN = 0.05
 # held out dictations mixed with LibriSpeech strangers in a room: strangers scored 0.50 to 0.70
 # against talk.npy and his own 0.66 to 0.90, but against his windows in the same turn his sat
 # at 0.78 and over, and strangers at 0.66 and under. Once there is such a print, a window is
-# someone else's only when it is under TURN_MIN against both: 97% of stranger windows were,
-# and 2% of windows that were half him or more.
+# someone else's only when it is under TURN_MIN against it and under talk_min plus TALK_OVER
+# against talk.npy: with talk_min at 0.62, 97% of stranger windows were, and 2% of windows
+# that were half him or more.
 SURE = 0.75
 TURN_MIN = 0.68
+TALK_OVER = 0.06
 
 
 class Voice:
@@ -248,14 +264,17 @@ class Voice:
     either and no window of his yet, there is no verdict."""
 
     def __init__(self, minimum, talk, slack=0.0, sound=None):
-        from . import wake
+        from . import voiceid, wake
 
-        self.wake = wake
+        self.wake, self.voiceid = wake, voiceid
         self.minimum, self.slack, self.sound = minimum, slack, sound
         self.talk = np.asarray(talk, dtype=np.float32)
         self.mine = None
 
     def __call__(self, clip, since, until):
+        if self.voiceid.busy():
+            # Never queue behind another check: the request's own voice check comes next.
+            return None
         emb = self.wake.talk_embedding(clip)
         if emb is None:
             return None
@@ -272,7 +291,7 @@ class Voice:
         # Both have to say someone else: a window that is half him scores low against his
         # windows but stays high against talk.npy.
         near = float(self.mine @ emb) / (np.linalg.norm(self.mine) + 1e-9)
-        return bool(near >= TURN_MIN - sound or score >= TURN_MIN - slack)
+        return bool(near >= TURN_MIN - sound or score >= min(self.minimum + TALK_OVER, SURE) - slack)
 
 
 def for_turn(cfg, slack=0.0, sound=None):

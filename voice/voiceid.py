@@ -207,10 +207,30 @@ def _worker():
 LIVE_TIMEOUT_S = 3.0
 
 
+_queued = [0]
+_queued_lock = threading.Lock()
+
+
 def embed(wav, timeout=None, **kwargs):
     """encoder.embed_utterance on the voiceprint thread. Call after _load_encoder(). Raises
     TimeoutError when the thread is held up longer than `timeout`."""
-    return _worker().submit(_encoder.embed_utterance, wav, **kwargs).result(timeout=timeout)
+    with _queued_lock:
+        _queued[0] += 1
+
+    def run():
+        try:
+            return _encoder.embed_utterance(wav, **kwargs)
+        finally:
+            with _queued_lock:
+                _queued[0] -= 1
+
+    return _worker().submit(run).result(timeout=timeout)
+
+
+def busy():
+    """True while an embed waits or runs on the voiceprint thread, one that timed out included."""
+    with _queued_lock:
+        return _queued[0] > 0
 
 
 def warm():

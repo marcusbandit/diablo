@@ -533,14 +533,15 @@ def record(mic, cfg, after, vad, start_audio=None, probe=None, hold=None, no_spe
         quiet, talk_s = quiet_s, heard_s
         if judge is not None:
             if judge.version != seen:
-                # A window changed whose speech it was: the words read so far are of other audio.
+                # The cuts changed: the words read so far are of other audio.
                 seen = judge.version
                 text, checked = None, False
                 if job is not None:
                     job["stale"] = True
                     job = None
-                if judge.his_end() > his_end:
-                    went_on()
+            if judge.his_end() > his_end:
+                # A window gave him back talk that had counted as someone else's.
+                went_on()
             his_end = judge.his_end()
             quiet, talk_s = judge.quiet(frames, quiet_s), judge.his_seconds()
         if (early is not None and probe is not None and spoke and job is None and not checked
