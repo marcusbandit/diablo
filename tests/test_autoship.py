@@ -60,8 +60,55 @@ def test_revisions_match_on_a_shared_prefix():
     assert not autoship.same("abc", SHA)
 
 
-def test_only_hub_and_web_count():
-    assert autoship.touches(["hub/a.py", "web/x.css", "desktop/y.rs", "hubby.txt"]) == ["hub/a.py", "web/x.css"]
+def test_only_hub_web_and_packages_count():
+    assert autoship.touches(["hub/a.py", "web/x.css", "packages/hub/src/client.ts", "desktop/y.rs", "hubby.txt"]) == [
+        "hub/a.py",
+        "web/x.css",
+        "packages/hub/src/client.ts",
+    ]
+
+
+def make_zip(files):
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        for name, text in files.items():
+            archive.writestr(name, text)
+    return buf.getvalue()
+
+
+SOURCE = {**GOOD, "web/index.html": "<script src=/src/main.tsx>", "web/package.json": "{}", "web/src/main.tsx": "x"}
+
+
+def test_web_source_is_replaced_by_the_ci_build(root):
+    asked = []
+    built = make_zip({"index.html": "built", "assets/app.js": "js"})
+    autoship.ship(SHA, root=root, fetch=lambda sha: make_tarball(SOURCE), web=lambda sha: asked.append(sha) or built)
+    assert asked == [SHA]
+    assert (root / "web" / "index.html").read_text() == "built"
+    assert (root / "web" / "assets" / "app.js").read_text() == "js"
+    assert not (root / "web" / "package.json").exists()
+    assert (root / "web" / "fonts" / "Local.woff2").exists()
+
+
+def test_a_web_build_not_ready_yet_is_tried_again_and_leaves_the_live_code(root):
+    def pending(sha):
+        raise autoship.ShipError("not finished", transient=True)
+
+    with pytest.raises(autoship.ShipError) as error:
+        autoship.ship(SHA, root=root, fetch=lambda sha: make_tarball(SOURCE), web=pending)
+    assert error.value.transient
+    assert (root / "web" / "index.html").read_text() == "old"
+    assert (root / "hub" / "server.py").read_text() == "VALUE = 1\n"
+
+
+def test_a_web_build_with_a_path_outside_is_refused(root):
+    bad = make_zip({"index.html": "x", "../escape.txt": "no"})
+    with pytest.raises(autoship.ShipError):
+        autoship.ship(SHA, root=root, fetch=lambda sha: make_tarball(SOURCE), web=lambda sha: bad)
+    assert not (root.parent / "escape.txt").exists()
+    assert (root / "web" / "index.html").read_text() == "old"
 
 
 def test_ship_swaps_in_the_new_code_and_keeps_a_backup(root):
@@ -297,3 +344,9 @@ def test_autoship_follows_the_public_repo_not_the_release_archive():
 
     assert autoship.REPO == "marcusbandit/diablo"
     assert autoship.REPO != releases.REPO
+
+
+def test_with_no_web_build_the_hub_ships_and_the_live_web_app_stays(root):
+    autoship.ship(SHA, root=root, fetch=lambda sha: make_tarball(SOURCE), web=lambda sha: None)
+    assert (root / "hub" / "server.py").read_text() == "VALUE = 2\n"
+    assert (root / "web" / "index.html").read_text() == "old"

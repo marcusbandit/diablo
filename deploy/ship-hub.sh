@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Ships hub/ and web/ from this checkout to the live hub on diablo-pi.
+# Ships hub/ and the web app from this checkout to the live hub on diablo-pi.
 # Usage: deploy/ship-hub.sh [--dry-run]
-# Keeps a dated copy of the live hub/ and web/ first (the newest 5 are kept),
+# Builds the web app (web/, React) into web/dist here, keeps a dated copy of the
+# live hub/ and web/ first (the newest 5 are kept), sends hub/ and web/dist/,
 # restarts diablo-hub and waits for /v1/health.
 set -euo pipefail
 LOCAL_ENV="${DIABLO_LOCAL_ENV:-$HOME/.config/diablo/local.env}"
@@ -14,10 +15,20 @@ URL=${DIABLO_HUB_URL:-http://diablo-pi:8755}
 DRY=()
 [[ "${1:-}" == "--dry-run" ]] && DRY=(--dry-run)
 
-if [[ -n "$(git status --porcelain -- hub web)" ]]; then
-  echo "ship-hub: hub/ or web/ has uncommitted changes; commit first so the Pi runs a known commit." >&2
+# The web build reads the shared client and the design tokens too.
+BUILT_FROM=(hub web packages design package.json bun.lock)
+if [[ -n "$(git status --porcelain -- "${BUILT_FROM[@]}")" ]]; then
+  echo "ship-hub: ${BUILT_FROM[*]} has uncommitted changes; commit first so the Pi runs a known commit." >&2
   exit 1
 fi
+
+if ! command -v bun >/dev/null; then
+  echo "ship-hub: bun is needed to build the web app (https://bun.sh)." >&2
+  exit 1
+fi
+bun install --frozen-lockfile
+bun run --filter web build
+[[ -f web/dist/index.html ]] || { echo "ship-hub: the web build left no web/dist/index.html" >&2; exit 1; }
 
 rev=$(git rev-parse --short HEAD)
 stamp=$(date +%Y%m%d-%H%M%S)
@@ -29,7 +40,9 @@ if [[ ${#DRY[@]} -eq 0 ]]; then
     && ls -1d $DEST/web.bak-2* | sort | head -n -5 | xargs -r rm -rf"
 fi
 rsync "${opts[@]}" "${DRY[@]}" -i hub/ "$HOST:$DEST/hub/"
-rsync "${opts[@]}" "${DRY[@]}" -i --exclude fonts web/ "$HOST:$DEST/web/"
+# The live web/ is the build alone. Fonts go without --delete, so fonts only the Pi has stay.
+rsync "${opts[@]}" "${DRY[@]}" -i --exclude fonts web/dist/ "$HOST:$DEST/web/"
+rsync -a "${DRY[@]}" -i web/dist/fonts/ "$HOST:$DEST/web/fonts/"
 [[ ${#DRY[@]} -gt 0 ]] && exit 0
 
 ssh "$HOST" "echo $rev > $DEST/hub/REVISION && sudo -n systemctl restart diablo-hub"

@@ -2,7 +2,8 @@
 
 The primary hub (diablo-pi) asks GitHub every few minutes for the head of main. When that commit
 changes hub/ or web/ against the REVISION it runs, it waits until restart_self would call a restart
-safe, fetches the commit's tarball, installs a changed requirements.txt, checks that the new hub
+safe, fetches the commit's tarball and the web app CI built from it (.github/workflows/web.yml,
+since web/ in the tree is React source), installs a changed requirements.txt, checks that the new hub
 imports, keeps the live hub/ and web/ as dated backups (the newest 5), swaps the new ones in and
 asks selfrestart for the restart, which tells Marcus in one line which PR he restarted for.
 
@@ -37,7 +38,9 @@ logger = logging.getLogger(__name__)
 REPO = "marcusbandit/diablo"
 BRANCH = "main"
 ROOT = Path(__file__).resolve().parent.parent
-SHIPPED = ("hub/", "web/")
+SHIPPED = ("hub/", "web/", "packages/")
+WEB_WORKFLOW = "web.yml"
+WEB_ARTIFACT = "web-dist"
 KEEP_BACKUPS = 5
 SHORT = 7
 
@@ -145,17 +148,71 @@ def tarball(sha):
     return r.content
 
 
+def web_build(sha):
+    """The zip of web/dist that CI built for sha, or None when there is none to have: no push run for
+    sha (a branch shipped by hand) or a failed build. Then the live web app stays and the hub still
+    ships. A build still running is transient."""
+    import zipfile
+
+    try:
+        runs = gh(f"actions/workflows/{WEB_WORKFLOW}/runs", head_sha=sha, event="push").get("workflow_runs") or []
+    except httpx.HTTPError as error:
+        raise ShipError(f"could not ask GitHub for the web build of {sha[:SHORT]}: {error}", transient=True)
+    if not runs:
+        logger.warning("autoship: no web build for %s, the live web app stays", sha[:SHORT])
+        return None
+    done = [r for r in runs if r.get("status") == "completed"]
+    if len(done) < len(runs) and not any(r.get("conclusion") == "success" for r in done):
+        raise ShipError(f"the web build of {sha[:SHORT]} is not finished yet", transient=True)
+    good = [r for r in done if r.get("conclusion") == "success"]
+    if not good:
+        logger.warning("autoship: the web build of %s failed, the live web app stays", sha[:SHORT])
+        return None
+    run = max(good, key=lambda r: r.get("run_attempt") or 0)
+    try:
+        artifacts = gh(f"actions/runs/{run['id']}/artifacts").get("artifacts") or []
+        found = next((a for a in artifacts if a.get("name") == WEB_ARTIFACT and not a.get("expired")), None)
+        if not found:
+            raise ShipError(f"the web build of {sha[:SHORT]} has no {WEB_ARTIFACT} artifact")
+        r = httpx.get(found["archive_download_url"], headers=headers(), timeout=120, follow_redirects=True)
+        r.raise_for_status()
+    except httpx.HTTPError as error:
+        raise ShipError(f"could not download the web build of {sha[:SHORT]}: {error}", transient=True)
+    try:
+        zipfile.ZipFile(io.BytesIO(r.content)).testzip()
+    except zipfile.BadZipFile as error:
+        raise ShipError(f"the web build of {sha[:SHORT]} is not a zip: {error}", transient=True)
+    return r.content
+
+
+def built_web(stage, blob):
+    """Replace the staged web/ source with the built app from blob, a zip of web/dist."""
+    import zipfile
+
+    web = stage / "web"
+    shutil.rmtree(web, ignore_errors=True)
+    web.mkdir(parents=True)
+    with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+        for name in archive.namelist():
+            target = (web / name).resolve()
+            if not target.is_relative_to(web.resolve()):
+                raise ShipError(f"the web build holds a path outside web/: {name}")
+        archive.extractall(web)
+    if not (web / "index.html").is_file():
+        raise ShipError("the web build has no index.html")
+
+
 # The swap -------------------------------------------------------------------------------------
 
 
 def unpack(blob, into):
-    """hub/ and web/ of a GitHub tarball, written under into/."""
+    """hub/ and web/ of a GitHub tarball, written under into/. packages/ only decides whether to ship."""
     into.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as archive:
         wanted = []
         for member in archive.getmembers():
             parts = member.name.split("/", 1)
-            if len(parts) != 2 or not parts[1].startswith(SHIPPED):
+            if len(parts) != 2 or not parts[1].startswith(("hub/", "web/")):
                 continue
             member.name = parts[1]
             wanted.append(member)
@@ -197,7 +254,7 @@ def swap(stage, root, sha):
     lacks stay, the way ship-hub.sh leaves web/fonts alone."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     old_fonts, new_fonts = root / "web" / "fonts", stage / "web" / "fonts"
-    if old_fonts.is_dir():
+    if old_fonts.is_dir() and (stage / "web").is_dir():
         new_fonts.mkdir(parents=True, exist_ok=True)
         for font in old_fonts.iterdir():
             if font.is_file() and not (new_fonts / font.name).exists():
@@ -226,7 +283,7 @@ def swap(stage, root, sha):
     return stamp
 
 
-def ship(sha, root=None, python=None, fetch=tarball):
+def ship(sha, root=None, python=None, fetch=tarball, web=web_build):
     """Fetch sha, install, check and swap it in. Raises ShipError and leaves the live code alone on failure."""
     root, python = root or ROOT, python or sys.executable
     stage = root / f".autoship-{sha[:SHORT]}"
@@ -240,6 +297,12 @@ def ship(sha, root=None, python=None, fetch=tarball):
             unpack(blob, stage)
         except (tarfile.TarError, OSError) as error:
             raise ShipError(f"could not unpack {sha[:SHORT]}: {error}")
+        if (stage / "web" / "package.json").exists():
+            blob = web(sha)
+            if blob is None:
+                shutil.rmtree(stage / "web", ignore_errors=True)
+            else:
+                built_web(stage, blob)
         if requirements_changed(stage, root):
             installer(python)
             install(stage / "hub" / "requirements.txt", python)

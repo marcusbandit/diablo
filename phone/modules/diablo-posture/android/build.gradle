@@ -1,0 +1,23 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.marcusrosado.diablo.posture'
+version = '0.1.0'
+
+android {
+  namespace "com.marcusrosado.diablo.posture"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  implementation "androidx.window:window:1.5.1"
+  implementation "androidx.window:window-java:1.5.1"
+}

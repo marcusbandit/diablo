@@ -227,7 +227,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "frontend_read",
-            "description": "Read a file of your own web frontend, the app Marcus talks to you through. Path is relative to the web dir, for example index.html",
+            "description": "Read a file of the built web app the hub serves at /app (Vite output: index.html and assets/). Its source is web/src in the diablo repo",
             "parameters": {
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
@@ -239,7 +239,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "frontend_edit",
-            "description": "Edit a file of your own web frontend by replacing an exact string. Use frontend_read first to see the current text",
+            "description": "Do not use: the web app is a React build, so a change goes through web/src in the diablo repo and a PR. This tool only says so",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -488,6 +488,11 @@ def _frontend_read(path):
 
 
 def _frontend_edit(path, find, replace):
+    return ("the web app is a React build now; edit web/src in the diablo repo and ship it through a PR. "
+            "An edit here would be wiped by the next ship")
+
+
+def _frontend_edit_build(path, find, replace):
     base = os.environ.get("DIABLO_WEB", os.path.join(os.path.dirname(
         os.environ.get("DIABLO_HUB_DB", os.path.expanduser("~/diablo-hub/diablo.db"))), "web"))
     target = os.path.realpath(os.path.join(base, path))

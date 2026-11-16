@@ -45,14 +45,6 @@ jobs:
           path: /tmp/presence/*.png
           retention-days: 7
 
-  phone-core:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
-      - name: phone core tests
-        run: cargo test -p diablo-phone
-
   room:
     runs-on: ubuntu-latest
     timeout-minutes: 5
