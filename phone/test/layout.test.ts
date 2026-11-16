@@ -23,13 +23,15 @@ describe("posture", () => {
     expect(bent({ fold: fold("half", "vertical", { left: 425, top: 0, right: 425, bottom: 882 }), angle: null, hasHinge: false })).toBe(true);
   });
 
-  test("a phone keeps the sections in a drawer", () => {
-    const shut = layoutFor(411, 914, { fold: null, angle: 0, hasHinge: true }, false);
-    expect(shut.mode).toBe("phone");
-    expect(shut.drawer).toBe(true);
-    expect(shut.pane.x).toBeLessThan(0);
-    expect(shut.chat).toEqual({ x: 0, y: 0, width: 411, height: 914 });
-    expect(layoutFor(411, 914, { fold: null, angle: 0, hasHinge: true }, true).pane.x).toBe(0);
+  test("a phone shows the den, and the conversation slides over it", () => {
+    const den = layoutFor(411, 914, { fold: null, angle: 0, hasHinge: true }, true);
+    expect(den.mode).toBe("phone");
+    expect(den.drawer).toBe(true);
+    expect(den.pane).toEqual({ x: 0, y: 0, width: 411, height: 914 });
+    expect(den.chat.x).toBe(411);
+    const talk = layoutFor(411, 914, { fold: null, angle: 0, hasHinge: true }, false);
+    expect(talk.chat).toEqual({ x: 0, y: 0, width: 411, height: 914 });
+    expect(talk.pane.x).toBeLessThan(0);
   });
 
   test("flat and open puts the sections beside the chat", () => {

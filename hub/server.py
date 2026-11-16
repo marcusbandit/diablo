@@ -724,7 +724,7 @@ def list_questions(state: str = "pending", _: dict = Depends(require_token)):
         found = questions.pending()
     else:
         found = questions.listed(wanted or None)
-    return {"questions": [dict(questions.public(q), message=q.get("message"), section=q.get("section")) for q in found],
+    return {"questions": [dict(questions.public(q), message=q.get("message"), section=q.get("section"), conv=q.get("conv")) for q in found],
             "now": time.time()}
 
 

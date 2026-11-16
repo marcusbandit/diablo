@@ -216,6 +216,18 @@ def cmd_say(args):
     return 0
 
 
+def cmd_task(args):
+    state = running_state()
+    fields = {"id": args.id, "state": args.state}
+    if args.title:
+        fields["title"] = args.title
+    if args.step is not None:
+        fields["step"] = args.step
+    out = call(state, "POST", "/v1/tasks", fields)
+    print(f"task {out['task']['id']} is {out['task']['state']}")
+    return 0
+
+
 def cmd_status(args):
     state = read_state()
     if not state or not alive(state.get("pid")):
@@ -683,6 +695,19 @@ def serve(args):
                 with db._lock:
                     db._conn.execute("UPDATE messages SET ts = ? WHERE id = ?", (ts, message_id))
                     db._conn.commit()
+        from hub import tasks
+        for ago, fields in (
+            (0.1, {"id": "task-fleet-doctor", "title": "Fleet doctor on every box", "kind": "partner", "state": "working",
+                   "step": "Checking the build box", "machine": "box-two", "source": "t3"}),
+            (0.2, {"id": "task-den", "title": "The phone opens on the den", "kind": "self_improvement", "state": "waiting",
+                   "step": "Waiting on your look at the screenshots", "source": "t3",
+                   "links": {"pr": "https://example.com/pull/82"}}),
+            (0.05, {"id": "task-backup", "title": "Back up the hub database", "kind": "self_improvement", "state": "working",
+                    "step": "Copying 41 MB", "source": "tool"}),
+            (1.2, {"id": "task-ship", "title": "Ship the hub", "kind": "self_improvement", "state": "done",
+                   "step": "Live", "result": "Live on the hub, tests green", "source": "t3"}),
+        ):
+            tasks.save(fields.pop("id"), fields, now=now - ago * hours)
         settings.set_setting("fake.seeded", "1")
 
     async def startup():
@@ -720,6 +745,12 @@ def main():
     p.add_argument("--objects", help="JSON list of blocks for meta.objects")
     p.add_argument("--after", type=float, default=0, help=argparse.SUPPRESS)
     p.set_defaults(fn=cmd_say)
+    p = sub.add_parser("task", help="create or move a task card, e.g. task task-fleet-doctor done")
+    p.add_argument("id")
+    p.add_argument("state", choices=["queued", "working", "waiting", "done", "failed"])
+    p.add_argument("--title")
+    p.add_argument("--step")
+    p.set_defaults(fn=cmd_task)
     sub.add_parser("status", help="is it running").set_defaults(fn=cmd_status)
     sub.add_parser("stop", help="stop it").set_defaults(fn=cmd_stop)
     p = sub.add_parser("log", help="tail the hub log")

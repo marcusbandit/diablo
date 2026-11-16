@@ -63,7 +63,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "Diablo",
   slug: "diablo",
-  version: "0.6.0",
+  version: "0.7.0",
   scheme: "diablo",
   orientation: "default",
   userInterfaceStyle: "automatic",
@@ -71,7 +71,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   icon: "./assets/images/icon.png",
   android: {
     package: "com.marcusrosado.diablo",
-    versionCode: 9,
+    versionCode: 10,
     allowBackup: false,
     predictiveBackGestureEnabled: true,
     softwareKeyboardLayoutMode: "resize",

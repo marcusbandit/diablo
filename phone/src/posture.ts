@@ -9,8 +9,9 @@ export type Mode = "phone" | "wide" | "book" | "tabletop";
 
 export type Layout = {
   mode: Mode;
-  /** The sections list. On a phone it is a drawer: off screen until opened. */
+  /** The den. On a phone it and the conversation take turns on the whole screen. */
   pane: Rect;
+  /** A phone: the den and the conversation stack, one on screen at a time. */
   drawer: boolean;
   chat: Rect;
   /** Tabletop: where the hinge runs across the chat, so the composer sits below it. */
@@ -32,13 +33,13 @@ export function bent(p: PostureSnapshot): boolean {
   return p.fold.state === "half";
 }
 
-const paneWidth = (w: number) => Math.round(Math.min(Math.max(w * 0.32, 260), 360));
+const paneWidth = (w: number) => Math.round(Math.min(Math.max(w * 0.4, 320), 420));
 
 /**
- * Where the sections list and the chat go for a window and a hinge. One tree for every
+ * Where the den and the chat go for a window and a hinge. One tree for every
  * posture: only these rectangles change, so a posture change moves lines and never swaps screens.
  */
-export function layoutFor(width: number, height: number, posture: PostureSnapshot, drawerOpen: boolean): Layout {
+export function layoutFor(width: number, height: number, posture: PostureSnapshot, den: boolean): Layout {
   const f = posture.fold;
   if (f && bent(posture) && f.orientation === "vertical" && f.left > 160 && width - f.right > 160) {
     return {
@@ -51,7 +52,7 @@ export function layoutFor(width: number, height: number, posture: PostureSnapsho
     };
   }
   const wide = width >= WIDE_DP;
-  const paneW = wide ? paneWidth(width) : Math.round(Math.min(320, width * 0.86));
+  const paneW = paneWidth(width);
   const tabletop = !!f && bent(posture) && f.orientation === "horizontal" && f.top > 160 && height - f.bottom > 120;
   const seam = tabletop && f ? { top: f.top, bottom: f.bottom } : null;
   if (wide && seam) {
@@ -78,9 +79,9 @@ export function layoutFor(width: number, height: number, posture: PostureSnapsho
   }
   return {
     mode: tabletop ? "tabletop" : "phone",
-    pane: { x: drawerOpen ? 0 : -paneW - 8, y: 0, width: paneW, height: seam ? seam.top : height },
+    pane: { x: den ? 0 : -Math.round(width * 0.3), y: 0, width, height: seam ? seam.top : height },
     drawer: true,
-    chat: { x: 0, y: 0, width, height },
+    chat: { x: den ? width : 0, y: 0, width, height },
     seam,
     controlsLeft: 0,
   };
@@ -100,8 +101,8 @@ export function usePosture(): PostureSnapshot {
   return snap;
 }
 
-export function useLayout(drawerOpen: boolean): Layout & { posture: PostureSnapshot } {
+export function useLayout(den: boolean): Layout & { posture: PostureSnapshot } {
   const { width, height } = useWindowDimensions();
   const posture = usePosture();
-  return { ...layoutFor(width, height, posture, drawerOpen), posture };
+  return { ...layoutFor(width, height, posture, den), posture };
 }

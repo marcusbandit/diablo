@@ -10,7 +10,9 @@ import type {
   Character,
   PairStatus,
   Paired,
+  Pending,
   Section,
+  Task,
 } from "./types";
 
 export const TOKEN_HEADER = "X-Diablo-Token";
@@ -92,6 +94,22 @@ export class Hub {
   async devices(): Promise<Device[]> {
     const out = await this.request<{ devices: Device[] }>("GET", "/v1/devices");
     return out.devices ?? [];
+  }
+
+  /** Task cards, newest activity first. */
+  async tasks(): Promise<Task[]> {
+    const out = await this.request<{ tasks: Task[] }>("GET", "/v1/tasks");
+    return out.tasks ?? [];
+  }
+
+  async taskSeen(id: string): Promise<void> {
+    await this.request("POST", `/v1/tasks/${encodeURIComponent(id)}/seen`);
+  }
+
+  /** Questions that still wait for an answer, on any channel. */
+  async questions(): Promise<Pending[]> {
+    const out = await this.request<{ questions: Pending[] }>("GET", "/v1/questions");
+    return out.questions ?? [];
   }
 
   async revokeDevice(id: number): Promise<void> {

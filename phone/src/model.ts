@@ -1,4 +1,5 @@
-import { Hub, HubError, parsePairLink, type Block, type Fetch, type HubEvent, type Section } from "@diablo/hub";
+import { Hub, HubError, parsePairLink, type Block, type Fetch, type HubEvent, type Pending, type Section, type Task } from "@diablo/hub";
+import * as Haptics from "expo-haptics";
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import { fetch as expoFetch } from "expo/fetch";
@@ -29,6 +30,10 @@ export type Notice = { section: string; text: string; failed: boolean; at: numbe
 export type Draft = { section: string; text: string; nonce: number };
 export type DeviceInfo = { name: string; id: number; hub: string };
 export type PanelState = { blocks: Block[]; generated: number | null };
+/** A feeling Diablo shows for a moment after something happened: work landed, work broke, a poke. */
+export type Moment = { face: "delighted" | "sorry" | "wink" | "relieved" | "surprised"; until: number; task?: string };
+/** The phone's two places: the den (what he is doing, what he needs) and the conversation. */
+export type View = "den" | "talk";
 
 export type State = {
   ready: boolean;
@@ -50,6 +55,10 @@ export type State = {
   hubTimes: Record<string, number | null>;
   panelOpen: Record<string, boolean>;
   sending: string | null;
+  tasks: Task[];
+  owed: Pending[];
+  moment: Moment | null;
+  view: View;
 };
 
 /** The main section before the hub has sent its list, so the app opens to something. */
@@ -125,6 +134,10 @@ class Model {
     hubTimes: {},
     panelOpen: {},
     sending: null,
+    tasks: [],
+    owed: [],
+    moment: null,
+    view: "den",
   };
 
   subscribe = (fn: () => void) => {
@@ -224,13 +237,26 @@ class Model {
 
   // ---- navigation ------------------------------------------------------------------------
 
+  /** Whether the conversation is on screen: on a phone it is not while the den shows. */
+  private looking = true;
+
+  setLooking(on: boolean) {
+    if (on === this.looking) return;
+    this.looking = on;
+    if (on && this.foreground) {
+      this.store.markRead(this.state.current);
+      this.reload();
+    }
+    Listener?.setPresence(this.foreground, on ? this.state.current : null);
+  }
+
   select(id: string) {
     if (!this.state.sections.some((s) => s.id === id)) return;
     this.store.set("current", id);
-    this.store.markRead(id);
+    if (this.looking) this.store.markRead(id);
     this.set({ current: id });
     this.reload();
-    Listener?.setPresence(this.foreground, id);
+    Listener?.setPresence(this.foreground, this.looking ? id : null);
     void this.refreshSection(id);
   }
 
@@ -238,7 +264,7 @@ class Model {
   openModule(module: string) {
     const shows = this.state.sections.filter((s) => !s.deleted && s.panels?.includes(module));
     const target = shows.find((s) => s.id !== MAIN) ?? shows[0];
-    if (target) this.select(target.id);
+    if (target) this.show("talk", target.id);
   }
 
   /** Where a stored file lives, with the token header the hub wants, or null unpaired. */
@@ -259,6 +285,7 @@ class Model {
   send(text: string, section = this.state.current) {
     const line = text.trim();
     if (!line) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     this.store.enqueue(section, line);
     this.reload();
     void this.flush();
@@ -285,8 +312,7 @@ class Model {
     this.set({ draft: null });
   }
 
-  async act(act: Record<string, unknown>) {
-    const section = this.state.current;
+  async act(act: Record<string, unknown>, section = this.state.current) {
     const hub = this.hub;
     if (!hub || !this.token) {
       this.notice(section, "Offline: the hub has to answer for that.", true);
@@ -306,9 +332,8 @@ class Model {
     }
   }
 
-  async answer(questionId: string, answer: { choices?: number[]; text?: string }) {
+  async answer(questionId: string, answer: { choices?: number[]; text?: string }, section = this.state.current) {
     const hub = this.hub;
-    const section = this.state.current;
     if (!hub || !this.token) {
       this.notice(section, "Offline: answer once the hub is back.", true);
       return;
@@ -317,6 +342,7 @@ class Model {
     try {
       await hub.answerAndWait(questionId, answer, newClientId(), "phone");
       await this.pull(hub, section);
+      void this.refreshDen(hub);
     } catch (error) {
       this.notice(section, error instanceof HubError ? error.message : "The hub did not take the answer.", true);
     } finally {
@@ -328,6 +354,56 @@ class Model {
     this.set({ notice: { section, text, failed, at: Date.now() } });
     if (this.noticeTimer) clearTimeout(this.noticeTimer);
     this.noticeTimer = setTimeout(() => this.set({ notice: null }), 4000);
+  }
+
+  // ---- the den ---------------------------------------------------------------------------
+
+  private momentTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Shows a feeling on his face for a moment, with a haptic to match. */
+  feel(face: Moment["face"], ms = 1600, task?: string) {
+    if (this.momentTimer) clearTimeout(this.momentTimer);
+    this.set({ moment: { face, until: Date.now() + ms, task } });
+    this.momentTimer = setTimeout(() => this.set({ moment: null }), ms);
+    const kind = face === "sorry" ? Haptics.NotificationFeedbackType.Error : face === "delighted" || face === "relieved" ? Haptics.NotificationFeedbackType.Success : null;
+    if (kind != null) void Haptics.notificationAsync(kind).catch(() => undefined);
+    else void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+  }
+
+  /** A tap on his face. */
+  poke() {
+    this.feel(Math.random() < 0.5 ? "wink" : "surprised", 900);
+  }
+
+  show(view: View, section?: string) {
+    if (section) this.select(section);
+    if (view !== this.state.view) this.set({ view });
+  }
+
+  /** A finished or failed card he has seen is put away. */
+  dismissTask(id: string) {
+    const task = this.state.tasks.find((t) => t.id === id);
+    if (!task) return;
+    const seen = Date.now() / 1000;
+    this.set({ tasks: this.state.tasks.map((t) => (t.id === id ? { ...t, seen_at: seen } : t)) });
+    void this.hub?.taskSeen(id).catch(() => undefined);
+  }
+
+  private async refreshDen(hub: Hub) {
+    const [tasks, owed] = await Promise.all([hub.tasks().catch(() => null), hub.questions().catch(() => null)]);
+    const patch: Partial<State> = {};
+    if (tasks) patch.tasks = tasks;
+    if (owed) patch.owed = owed.filter((q) => (q.state === "pending" || q.state == null) && !String(q.conv ?? "").startsWith("web-"));
+    this.set(patch);
+  }
+
+  private patchTask(task: Task) {
+    const before = this.state.tasks.find((t) => t.id === task.id);
+    const rest = this.state.tasks.filter((t) => t.id !== task.id);
+    this.set({ tasks: [task, ...rest] });
+    if (!this.foreground || !before || before.state === task.state) return;
+    if (task.state === "done") this.feel("delighted", 1800, task.id);
+    else if (task.state === "failed") this.feel("sorry", 1800, task.id);
   }
 
   private setTurn(section: string, turn: Turn | null) {
@@ -504,7 +580,7 @@ class Model {
 
   private appState(active: boolean) {
     this.foreground = active;
-    Listener?.setPresence(active, active ? this.state.current : null);
+    Listener?.setPresence(active, active && this.looking ? this.state.current : null);
     if (active) {
       this.refreshNotify();
       this.kick();
@@ -573,6 +649,8 @@ class Model {
       void this.flush();
       for (const s of this.shownSections()) await this.pull(hub, s.id);
       await this.refreshPanel(hub, this.state.current);
+      if (this.state.current !== MAIN) await this.refreshPanel(hub, MAIN).catch(() => undefined);
+      await this.refreshDen(hub);
       this.set({ link: { state: "online", hub: hub.base, ms, queued: this.store.queuedCount() } });
       this.listen(hub);
     } catch (error) {
@@ -608,7 +686,7 @@ class Model {
       cursor = top;
       if (batch.length < 200) break;
     }
-    if (section === this.state.current && this.foreground) this.store.markRead(section);
+    if (section === this.state.current && this.foreground && this.looking) this.store.markRead(section);
     if (added || section === this.state.current) this.reload();
   }
 
@@ -712,10 +790,11 @@ class Model {
         break;
       case "panel": {
         const modules = Array.isArray(event.modules) ? (event.modules as string[]) : [];
-        const current = this.state.current;
-        const shown = this.section(current).panels ?? [];
-        const fresh = Date.now() - (this.actedAt[current] ?? 0) < 2000;
-        if (!fresh && shown.length && (!modules.length || modules.some((m) => shown.includes(m)))) void this.refreshPanel(hub, current);
+        for (const id of new Set([this.state.current, MAIN])) {
+          const shown = this.section(id).panels ?? [];
+          const fresh = Date.now() - (this.actedAt[id] ?? 0) < 2000;
+          if (!fresh && shown.length && (!modules.length || modules.some((m) => shown.includes(m)))) void this.refreshPanel(hub, id);
+        }
         break;
       }
       case "turn": {
@@ -738,6 +817,12 @@ class Model {
       case "question": {
         const block = event.question as Block | undefined;
         if (block && this.store.patchQuestion(block)) this.reload();
+        void this.refreshDen(hub);
+        break;
+      }
+      case "task": {
+        const task = event.task as Task | undefined;
+        if (task && typeof task.id === "string") this.patchTask(task);
         break;
       }
     }
