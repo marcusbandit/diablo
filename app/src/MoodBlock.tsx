@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Image, type LayoutChangeEvent, View } from "react-native";
+import { type LayoutChangeEvent, View } from "react-native";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -30,6 +30,8 @@ export function MoodBlock({ mood, label, height = 150, inset = 0 }: { mood: Mood
   const [inkColor, setInkColor] = useState(mood.fill);
   const spread = useSharedValue(0);
   const shown = useRef(mood.fill);
+  // The colour a running spread is carrying, so a change mid-spread can settle it first.
+  const spreading = useRef<string | null>(null);
 
   // Face centre, where the ink starts, and the radius that reaches the far corner from there.
   const cx = size.w - space(2) - FACE / 2;
@@ -44,16 +46,24 @@ export function MoodBlock({ mood, label, height = 150, inset = 0 }: { mood: Mood
       return;
     }
     const target = mood.fill;
-    setInkColor(target);
     cancelAnimation(spread);
+    if (spreading.current) setBase(spreading.current);
+    spreading.current = target;
+    setInkColor(target);
     spread.value = 0;
     spread.value = withTiming(1, { duration: motion.ink, easing: INK_EASE }, (done) => {
-      if (done) runOnJS(setBase)(target);
+      if (done) runOnJS(settle)(target);
     });
   }, [mood.fill, reduce, size.w, spread]);
 
+  function settle(target: string) {
+    setBase(target);
+    if (spreading.current === target) spreading.current = null;
+  }
+
   const ink = useAnimatedStyle(() => ({ transform: [{ scale: spread.value }], opacity: spread.value === 0 ? 0 : 1 }));
   const inkText = useAnimatedStyle(() => ({ color: withTiming(mood.ink, { duration: motion.fade }) }), [mood.ink]);
+  const inkFace = useAnimatedStyle(() => ({ tintColor: withTiming(mood.ink, { duration: motion.fade }) }), [mood.ink]);
 
   const onLayout = (e: LayoutChangeEvent) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height });
 
@@ -63,9 +73,9 @@ export function MoodBlock({ mood, label, height = 150, inset = 0 }: { mood: Mood
         pointerEvents="none"
         style={[{ position: "absolute", left: cx - r, top: cy - r, width: r * 2, height: r * 2, borderRadius: r, backgroundColor: inkColor }, ink]}
       />
-      <Image
+      <Animated.Image
         source={face(mood.face)}
-        style={{ position: "absolute", right: space(2), top: inset + space(2), width: FACE, height: FACE, tintColor: mood.ink }}
+        style={[{ position: "absolute", right: space(2), top: inset + space(2), width: FACE, height: FACE }, inkFace]}
         accessibilityIgnoresInvertColors
       />
       <Animated.Text style={[{ fontFamily: font.medium, ...type.small }, inkText]}>{label}</Animated.Text>

@@ -40,6 +40,14 @@ describe("mood", () => {
     expect(mood("resting", 1).fill).toBe(color.attention);
   });
 
+  test("the working line shows on both fills", () => {
+    for (const doing of ["listening", "thinking", "speaking", "trouble"] as const)
+      for (const asks of [0, 1]) {
+        const m = mood(doing, asks);
+        expect(contrast(m.line!, m.fill)).toBeGreaterThanOrEqual(3);
+      }
+  });
+
   test("activity shows in the face and the line", () => {
     expect(mood("speaking", 0).face).toBe("talking");
     expect(mood("speaking", 0).line).toBe(state.speaking);

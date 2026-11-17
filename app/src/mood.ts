@@ -26,7 +26,8 @@ export function mood(doing: State, needsYou: number): Mood {
     fill: asks ? color.attention : color.calm,
     ink: asks ? color.attentionInk : color.calmInk,
     face: faceFor[doing],
-    line: doing === "resting" ? null : stateColor[doing],
+    // On the orange block every state colour drowns, so the line takes the block's ink there.
+    line: doing === "resting" ? null : asks ? color.attentionInk : stateColor[doing],
     headline: asks ? `${n} ${needsYou === 1 ? "needs" : "need"} you, sir.` : "All quiet, sir.",
   };
 }

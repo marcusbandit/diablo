@@ -19,7 +19,7 @@ function withActivity(config) {
 }
 
 // Sign with this machine's own debug key (~/.android/debug.keystore, or $DIABLO_DEBUG_KEYSTORE),
-// the key the Kotlin app was built with, so the new app installs over it and keeps its place.
+// the key the current app is signed with, so at the cutover in #91 this app installs over it.
 // A machine without one falls back to the template's key.
 const KEY = `file({ def own = new File(System.getenv("DIABLO_DEBUG_KEYSTORE") ?: (System.getProperty("user.home") + "/.android/debug.keystore")); own.exists() ? own : file("debug.keystore") }())`;
 

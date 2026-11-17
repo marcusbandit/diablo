@@ -38,14 +38,14 @@ export const font = {
   heavy: "BricolageGrotesque-ExtraBold",
 } as const;
 
-/** Sizes in dp, each with its line height. */
+/** Sizes in dp, each with a line height that clears the ExtraBold glyphs on Android. */
 export const type = {
   small: { fontSize: 12, lineHeight: 16 },
   sub: { fontSize: 13, lineHeight: 17 },
   body: { fontSize: 15, lineHeight: 19 },
-  title: { fontSize: 22, lineHeight: 23 },
-  head: { fontSize: 30, lineHeight: 30 },
-  big: { fontSize: 56, lineHeight: 52 },
+  title: { fontSize: 22, lineHeight: 26 },
+  head: { fontSize: 30, lineHeight: 34 },
+  big: { fontSize: 56, lineHeight: 62 },
 } as const;
 
 /** Spacing steps of 4 dp: space(3) is 12. */
