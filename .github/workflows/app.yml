@@ -1,0 +1,28 @@
+name: app
+
+on:
+  pull_request:
+    paths: ["app/**", "assets/faces/**", "package.json", "bun.lock", ".github/workflows/app.yml"]
+  push:
+    branches: [main]
+    paths: ["app/**", "assets/faces/**", "package.json", "bun.lock", ".github/workflows/app.yml"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('bun.lock') }}
+      - run: bun install --frozen-lockfile
+      - name: typecheck
+        run: bun run --filter diablo-app typecheck
+      - name: tests
+        run: bun run --filter diablo-app test
+      - name: browser build
+        working-directory: app
+        run: bunx expo export --platform web --output-dir dist

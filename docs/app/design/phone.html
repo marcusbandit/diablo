@@ -1,0 +1,183 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:13px/1.35 system-ui,sans-serif}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 14px}
+.wide{grid-column:1/-1}
+@media(max-width:600px){.grid{grid-template-columns:minmax(0,1fr)}}
+.opt{min-width:0}
+h3{margin:0 0 8px;font-size:15px;color:var(--foreground)}
+h3 b{color:var(--primary);margin-right:6px}
+
+/* the look */
+.s{--bg:#202326;--line:#33373c;--sub:#b9bec4;--dim:#8d939a;--fg:#eef0f2;
+   background:var(--bg);color:var(--fg);font-family:'Bricolage Grotesque',sans-serif;border-radius:26px;overflow:hidden;display:flex;flex-direction:column;height:470px;max-width:240px;margin:0 auto}
+.idle{--mc:#545d67;--mi:#eef2f5}
+.listen{--mc:#7fb3d4;--mi:#0d1a22}
+.think{--mc:#e0915a;--mi:#22140a}
+.speak{--mc:#6fc49a;--mi:#0c1f15}
+.mood{background:var(--mc);color:var(--mi);padding:12px 14px 14px;position:relative;overflow:hidden;flex:none}
+.mood .face{position:absolute;filter:brightness(0) opacity(.85)}
+.state{font-size:12px;font-weight:500;position:relative}
+.head{font-weight:800;letter-spacing:-.02em;line-height:.98;position:relative}
+.body{padding:12px 14px;display:flex;flex-direction:column;gap:9px;flex:1;min-height:0}
+.ask{font-size:15px;font-weight:500;line-height:1.15}
+.acts{display:flex;gap:7px;margin-top:6px}
+.acts span{font-size:12px;font-weight:800;padding:4px 12px;border-radius:6px;background:var(--mc);color:var(--mi)}
+.acts span+span{background:var(--line);color:var(--fg)}
+hr{border:0;height:1px;background:var(--line);margin:0}
+.compose{margin-top:auto;background:#2c3035;border-radius:10px;padding:9px 12px;color:var(--dim);flex:none}
+
+/* talk */
+.band{display:flex;align-items:center;gap:8px;padding:8px 12px}
+.band .face{position:static;width:34px;height:34px}
+.band .back{font-size:26px;font-weight:800;line-height:1;padding-right:2px}
+.him{font-size:15px;line-height:1.22}
+.me{align-self:flex-end;text-align:right;color:var(--sub);font-size:13px;max-width:80%}
+.step{font-size:11px;color:var(--dim)}
+.inask{border-left:3px solid var(--mc);padding-left:9px}
+
+/* room */
+.big{font-size:56px;font-weight:800;letter-spacing:-.03em;line-height:.9}
+.unit{font-size:13px;color:var(--sub)}
+.goal{height:6px;background:var(--line);border-radius:6px}
+.goal i{display:block;height:100%;width:64%;background:var(--fg);border-radius:6px}
+.week{display:flex;align-items:flex-end;gap:6px;height:70px}
+.week div{flex:1;background:var(--line);border-radius:3px 3px 0 0;position:relative}
+.week div.t{background:var(--fg)}
+.days{display:flex;gap:6px;font-size:10px;color:var(--dim)}.days span{flex:1;text-align:center}
+.log{display:flex;gap:7px}
+.log span{flex:1;text-align:center;font-weight:800;padding:9px 0;border-radius:8px;background:var(--line)}
+
+/* onboarding */
+.dots{display:flex;gap:5px;position:relative}.dots i{width:6px;height:6px;border-radius:3px;background:var(--mi);opacity:.3}.dots i.on{opacity:1;width:16px}
+.ghost{opacity:.55}
+.code{display:flex;gap:5px}
+.code span{flex:1;height:36px;border-bottom:2px solid var(--line);display:grid;place-items:center;font-size:20px;font-weight:800}
+.code span.f{border-color:var(--mc)}
+.primary{text-align:center;font-weight:800;padding:11px 0;border-radius:10px;background:var(--mc);color:var(--mi)}
+.second{text-align:center;font-weight:500;padding:6px 0;color:var(--sub)}
+
+/* fold postures */
+.s.fold{flex-direction:row;max-width:none;height:420px}
+.fold .pane{flex:1;display:flex;flex-direction:column;min-width:0}
+.fold .pane+.pane{border-left:1px solid var(--line)}
+.seamv{width:22px;flex:none;background:repeating-linear-gradient(0deg,#2a2d31 0 6px,var(--bg) 6px 12px)}
+.table{flex-direction:column;height:470px}
+.table .half{flex:1;display:flex;flex-direction:column;min-height:0}
+.seamh{height:20px;flex:none;background:repeating-linear-gradient(90deg,#2a2d31 0 6px,var(--bg) 6px 12px)}
+.cap{font-size:11px;color:var(--muted-foreground);margin-top:6px;text-align:center}
+</style><style>:root{--foreground:#e8e8ea;--muted-foreground:#9a9aa2;--primary:#8ab4ff;--border:#3a3a42}body{background:#141618;padding:16px;max-width:760px;margin:0 auto}</style></head><body>
+<div class="grid">
+
+<!-- TALK -->
+<div class="opt"><h3><b>1</b>Talk</h3>
+<div class="s speak">
+  <div class="mood band"><svg width="11" height="18" viewBox="0 0 11 18" style="vertical-align:-3px;margin-right:4px"><path d="M9 2 2 9l7 7" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><img class="face" src="../../../assets/faces/talking/1.png"><span class="state" style="font-weight:800;font-size:14px">Speaking</span></div>
+  <div class="body">
+    <div class="me">Turn the corner lamp blue</div>
+    <div class="him">Done, sir. The corner lamp is blue, the others are off.</div>
+    <div class="me">How is the fleet card build?</div>
+    <div class="step">Read the build queue, checked CI</div>
+    <div class="him">Halfway. About four minutes, then I'll merge it if you say so.</div>
+    <div class="inask"><div class="ask">Merge #42 into main?</div><div class="acts"><span>Merge</span><span>Later</span></div></div>
+    <div class="compose">Talk to Diablo</div>
+  </div>
+</div></div>
+
+<!-- ROOM -->
+<div class="opt"><h3><b>2</b>A room: Workout</h3>
+<div class="s idle">
+  <div class="mood" style="min-height:96px"><img class="face" style="width:70px;height:70px;right:8px;top:12px" src="../../../assets/faces/resting/1.png"><div class="state"><svg width="11" height="18" viewBox="0 0 11 18" style="vertical-align:-3px;margin-right:4px"><path d="M9 2 2 9l7 7" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> Resting</div><div class="head" style="font-size:30px;margin-top:22px">Workout</div></div>
+  <div class="body">
+    <div><div class="big">64</div><div class="unit">push-ups today, goal 100</div></div>
+    <div class="goal"><i></i></div>
+    <div class="week"><div style="height:60%"></div><div style="height:85%"></div><div style="height:30%"></div><div style="height:100%"></div><div style="height:45%"></div><div style="height:70%"></div><div class="t" style="height:64%"></div></div>
+    <div class="days"><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span><span>M</span></div>
+    <div class="log"><span>+10</span><span>+20</span><span>+30</span></div>
+    <div class="compose">Talk to Diablo</div>
+  </div>
+</div></div>
+
+<!-- ONBOARDING 1 -->
+<div class="opt"><h3><b>3</b>First launch</h3>
+<div class="s listen">
+  <div class="mood" style="flex:1;display:flex;flex-direction:column">
+    <div class="dots"><i class="on"></i><i></i><i></i></div>
+    <img class="face" style="width:130px;height:130px;left:50%;margin-left:-65px;top:46px" src="../../../assets/faces/delighted/1.png">
+    <div class="head" style="font-size:31px;margin-top:auto">I'm Diablo. I'll tell you what needs you.</div>
+  </div>
+  <div class="body" style="flex:none">
+    <div class="ghost"><div class="ask">Send the reply to Alex?</div><div class="acts"><span>Send</span><span>Edit</span></div></div>
+    <div class="primary">Next</div>
+  </div>
+</div></div>
+
+<!-- ONBOARDING 2 -->
+<div class="opt"><h3><b>4</b>Pairing</h3>
+<div class="s listen">
+  <div class="mood" style="min-height:190px"><div class="dots"><i></i><i class="on"></i><i></i></div><img class="face" style="width:84px;height:84px;right:6px;top:20px" src="../../../assets/faces/expectant/1.png"><div class="head" style="font-size:28px;margin-top:70px">Pair me with your hub</div></div>
+  <div class="body">
+    <div class="code"><span class="f">K</span><span class="f">7</span><span class="f">Q</span><span class="f">M</span><span></span><span></span><span></span><span></span></div>
+    <div class="primary" style="margin-top:auto">Scan the code instead</div>
+    <div class="second">Later</div>
+  </div>
+</div></div>
+
+<!-- TABLETOP -->
+<div class="opt"><h3><b>5</b>Half folded, tabletop</h3>
+<div class="s table speak">
+  <div class="half">
+    <div class="mood band"><img class="face" src="../../../assets/faces/talking/1.png"><span class="state" style="font-weight:800;font-size:14px">Speaking</span></div>
+    <div class="body" style="gap:7px">
+      <div class="me">How is the build?</div>
+      <div class="him">Halfway. About four minutes, then I'll merge it if you say so.</div>
+    </div>
+  </div>
+  <div class="seamh"></div>
+  <div class="half"><div class="body">
+    <div class="inask"><div class="ask">Merge #42 into main?</div><div class="acts"><span>Merge</span><span>Later</span></div></div>
+    <div class="compose">Talk to Diablo</div>
+  </div></div>
+</div></div>
+
+<!-- BOOK -->
+<div class="opt"><h3><b>6</b>Half folded, book</h3>
+<div class="s fold think" style="height:470px;max-width:240px">
+  <div class="pane">
+    <div class="mood" style="min-height:120px;padding:10px"><img class="face" style="width:54px;height:54px;right:2px;top:2px" src="../../../assets/faces/thinking/1.png"><div class="state" style="font-size:10px">Thinking</div><div class="head" style="font-size:17px;margin-top:38px">Two things need you</div></div>
+    <div class="body" style="padding:9px;gap:7px"><div class="ask" style="font-size:12px">Send the reply to Alex?</div><hr><div class="ask" style="font-size:12px">Merge #42?</div><hr><div class="step">Sorting mail</div></div>
+  </div>
+  <div class="seamv" style="width:12px"></div>
+  <div class="pane">
+    <div class="body" style="padding:9px;gap:7px"><div class="me" style="font-size:11px">How is the build?</div><div class="him" style="font-size:12px">Halfway, about four minutes.</div><div class="compose" style="padding:7px;font-size:11px">Talk</div></div>
+  </div>
+</div></div>
+
+<!-- UNFOLDED -->
+<div class="opt wide"><h3><b>7</b>Unfolded flat, and the browser</h3>
+<div class="s fold think" style="max-width:640px">
+  <div class="pane" style="flex:.85">
+    <div class="mood" style="min-height:160px"><img class="face" style="width:110px;height:110px;right:10px;top:10px" src="../../../assets/faces/thinking/1.png"><div class="state">Thinking</div><div class="head" style="font-size:32px;margin-top:56px;max-width:75%">Two things need you, sir.</div></div>
+    <div class="body">
+      <div class="ask">Send the reply to Alex?<div class="acts"><span>Send</span><span>Edit</span></div></div><hr>
+      <div class="ask">Merge #42 into main?<div class="acts"><span>Merge</span><span>Later</span></div></div><hr>
+      <div style="display:flex;justify-content:space-between;color:var(--sub)">Sorting mail<span>4 min</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 16px;font-size:17px;font-weight:800;margin-top:auto">Workout<span>Lights</span><span>Mail</span><span>Reminders</span></div>
+    </div>
+  </div>
+  <div class="pane">
+    <div class="body">
+      <div class="me">Turn the corner lamp blue</div>
+      <div class="him">Done, sir. The corner lamp is blue, the others are off.</div>
+      <div class="me">How is the fleet card build?</div>
+      <div class="step">Read the build queue, checked CI</div>
+      <div class="him">Halfway. About four minutes, then I'll merge it if you say so.</div>
+      <div class="compose">Talk to Diablo</div>
+    </div>
+  </div>
+</div></div>
+
+</div></body></html>
