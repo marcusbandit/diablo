@@ -51,6 +51,34 @@ spreads out from his face like ink. What he is doing shows in his face and a thi
 under the block, in the orb's state colours: blue listening, orange thinking, green speaking,
 pink trouble.
 
+## What the block follows
+
+- **His face and the line**: trouble when the hub stopped knowing this device; thinking while the
+  hub runs any turn, from any client (the `busy` and `turn` events) or a line of his is on its way;
+  speaking for a moment after a reply lands; listening while he types; resting otherwise.
+- **The fill**: orange while a question waits (one he can answer here, so not the old web chat's)
+  or a task is `waiting` on him.
+- **The headline**: what needs you, or the link when that is the news: unpaired and refused always,
+  offline only when nothing needs you.
+
+## How it reaches the hub
+
+`app/src/engine/` is the app's link to Diablo and knows nothing about the screen. Screens draw
+from its store at once, offline too; the network only adds.
+
+- The first hub that answers health, in order: any hub a pairing link named, the Pi, then the
+  standby. Addresses come from the box's `~/.config/diablo/local.env` at build time, or the page's
+  own origin in the browser.
+- A round runs on start, on every return to the front, after a dropped event stream and once a
+  minute; the event stream does the rest. Away from the front there is no stream and no round.
+- Every line goes into the outbox on disk first, then leaves in the order he wrote it, with a
+  client id the hub never runs twice. No answer, 409, 429 and 503 wait; 401 and 403 mean
+  unpaired; anything else marks that line failed and the next one goes.
+- The phone keeps the store in SQLite and the token in the keystore; the browser keeps both in
+  its own storage (`platform.ts`, `platform.web.ts`).
+- `diablo-next://pair?host=..&code=..` pairs. A link naming a hub the app does not know waits
+  for a yes.
+
 ## Postures
 
 - **Phone**: one screen at a time; the den scrolls and the input stays at the bottom.
