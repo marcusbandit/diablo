@@ -8,7 +8,7 @@ import { verdict } from "../src/engine/outbox";
 import { readPairing } from "../src/engine/pair";
 import type { HubEvent } from "../src/engine/wire";
 import { mood } from "../src/mood";
-import { CODE, FakeHub, question, task, until } from "./fakehub";
+import { CODE, FakeHub, question, section, task, until } from "./fakehub";
 
 const hubs: FakeHub[] = [];
 const engines: Engine[] = [];
@@ -80,7 +80,7 @@ describe("the outbox", () => {
     await e.send("still going");
     await until(() => hub.chatFails.length === 0);
     expect(texts(e)).toEqual(["queued:still going"]);
-    e.kick();
+    // No round is asked for: the outbox tries again on its own.
     await until(() => hub.received.length === 1);
     await until(() => texts(e).length === 2);
     expect(texts(e)[0]).toBe("sent:still going");
@@ -120,8 +120,18 @@ describe("the outbox", () => {
     await until(() => hub.received.length === 1);
   });
 
+  test("a line written before the store is read is kept", async () => {
+    const hub = fakeHub();
+    const e = engine([hub.base]);
+    const sent = e.send("early");
+    await e.start();
+    await sent;
+    await until(() => hub.received.length === 1);
+    expect(hub.received[0].text).toBe("early");
+  });
+
   test("statuses decide what a failed send means", () => {
-    expect([0, 409, 429, 503].map(verdict)).toEqual(["wait", "wait", "wait", "wait"]);
+    expect([0, 409, 429, 502, 503, 504].map(verdict)).toEqual(["wait", "wait", "wait", "wait", "wait", "wait"]);
     expect([401, 403].map(verdict)).toEqual(["unpaired", "unpaired"]);
     expect([400, 404, 500].map(verdict)).toEqual(["fail", "fail", "fail"]);
   });
@@ -179,6 +189,32 @@ describe("the link", () => {
     expect(e.state.pairing.error).toContain("does not know that code");
   });
 
+  test("a section the hub cannot give does not take the link down", async () => {
+    const hub = fakeHub();
+    hub.sections.push(section("gone", "Gone", 2));
+    hub.broken.add("gone");
+    hub.questions = [question("q00000009")];
+    const e = engine([hub.base]);
+    await e.start();
+    await until(() => e.state.link === "online");
+    expect(needsYou(e.state)).toBe(1);
+  });
+
+  test("pairing again forgets a hub an older link named", async () => {
+    const other = fakeHub();
+    const pi = fakeHub();
+    const e = engine([pi.base], { secrets: memorySecrets(null) });
+    await e.start();
+    await e.pairFrom(`diablo-next://pair?host=${encodeURIComponent(other.base)}&code=${CODE}`);
+    await e.confirmHost(true);
+    await until(() => e.state.hub === other.base);
+    await e.pairFrom(`diablo-next://pair?host=${encodeURIComponent(pi.base)}&code=${CODE}`);
+    await until(() => e.state.hub === pi.base && e.state.link === "online");
+    e.kick();
+    await until(() => e.state.link === "online");
+    expect(e.state.hub).toBe(pi.base);
+  });
+
   test("a dropped stream comes back", async () => {
     const hub = fakeHub();
     const e = engine([hub.base]);
@@ -213,6 +249,32 @@ describe("the event stream", () => {
     await until(() => doing(e.state) === "thinking");
     hub.push({ kind: "busy", turns: [], at: 2 });
     await until(() => doing(e.state) === "resting");
+  });
+
+  test("a turn the stream never finished stops once the stream is gone", async () => {
+    const hub = fakeHub();
+    const e = engine([hub.base]);
+    await e.start();
+    await until(() => hub.streaming === 1);
+    hub.push({ kind: "turn", section: MAIN, state: "thinking" });
+    hub.push({ kind: "busy", turns: [{ id: 1, conv: "main", origin: "voice", since: 1, words: "thinking", step: "" }], at: 1 });
+    await until(() => doing(e.state) === "thinking");
+    e.setForeground(false);
+    expect(doing(e.state)).toBe("resting");
+  });
+
+  test("an edit withdraws the message it replaced and what followed", async () => {
+    const hub = fakeHub();
+    const asked = hub.say("Dim it to 30", MAIN, "user");
+    hub.say("Dimmed to 30.");
+    const e = engine([hub.base]);
+    await e.start();
+    await until(() => texts(e).length === 2);
+    const edit = hub.say("Dim it to 20", MAIN, "user", { edits: asked.id });
+    hub.say("Dimmed to 20.");
+    hub.push({ kind: "message", section: MAIN, id: edit.id });
+    await until(() => texts(e).length === 2 && texts(e)[0] === "sent:Dim it to 20");
+    expect(texts(e)).toEqual(["sent:Dim it to 20", "sent:Dimmed to 20."]);
   });
 
   test("questions and waiting work count as needing him", async () => {

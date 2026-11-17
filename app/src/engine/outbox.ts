@@ -5,12 +5,13 @@ import type { ChatReply, Message } from "./wire";
 export type Verdict = "wait" | "fail" | "unpaired";
 
 /**
- * 0 is no answer at all, 409 the same line still running on the hub, 429 too many at once, 503
- * a standby that takes no turns: the line waits. 401 and 403 mean the hub no longer knows this
- * device. Anything else the hub refused for good.
+ * 0 is no answer at all, 409 the same line still running on the hub, 429 too many at once, 502
+ * and 504 a proxy in front of a hub that is restarting, 503 a standby that takes no turns: the
+ * line waits, and the client id makes sending it again safe. 401 and 403 mean the hub no longer
+ * knows this device. Anything else the hub refused for good.
  */
 export function verdict(status: number): Verdict {
-  if (status === 0 || status === 409 || status === 429 || status === 503) return "wait";
+  if (status === 0 || status === 409 || status === 429 || status === 502 || status === 503 || status === 504) return "wait";
   if (status === 401 || status === 403) return "unpaired";
   return "fail";
 }

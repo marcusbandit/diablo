@@ -6,7 +6,7 @@ import type { BusyTurn, Message, Question, Section, Task } from "../src/engine/w
 
 export const CODE = "ABCD-EFGH";
 
-const section = (id: string, name: string, position: number): Section => ({
+export const section = (id: string, name: string, position: number): Section => ({
   id,
   name,
   icon: "flame",
@@ -33,6 +33,8 @@ export class FakeHub {
   /** Every line chat received, in order, with its client id. */
   received: { text: string; clientId: string }[] = [];
   revoked: number[] = [];
+  /** Sections whose messages answer 404, like one deleted between two calls. */
+  broken = new Set<string>();
   private nextId = 1;
   private nextDevice = 1;
   private streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
@@ -113,6 +115,7 @@ export class FakeHub {
     const msgs = path.match(/^\/v1\/sections\/([^/]+)\/messages$/);
     if (msgs) {
       const id = decodeURIComponent(msgs[1]);
+      if (this.broken.has(id)) return this.json({ detail: "no such section" }, 404);
       const after = Number(url.searchParams.get("after") ?? 0);
       const before = Number(url.searchParams.get("before") ?? 0);
       const limit = Number(url.searchParams.get("limit") ?? 100);

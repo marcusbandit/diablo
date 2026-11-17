@@ -82,8 +82,8 @@ export class Store {
     return this.meta.hubs;
   }
 
-  addHub(base: string): void {
-    this.meta.hubs = [base, ...this.meta.hubs.filter((h) => h !== base)];
+  setExtraHubs(list: string[]): void {
+    this.meta.hubs = list;
     this.dirty.add("meta");
   }
 
@@ -119,6 +119,7 @@ export class Store {
     for (const m of list) {
       if (!held.has(m.id)) added += 1;
       held.set(m.id, m);
+      this.withdraw(held, m);
       const clientId = m.meta?.client_id;
       if (m.role === "user" && clientId != null) taken.add(String(clientId));
     }
@@ -128,6 +129,22 @@ export class Store {
       this.dirty.add("outbox");
     }
     return added;
+  }
+
+  /**
+   * The hub marks what an edit or a regenerate replaced with `superseded_by`, but only on
+   * messages this app already pulled and never pulls again. So the new message withdraws them
+   * here: an edit takes the old message and everything after it, a regenerate the old reply.
+   */
+  private withdraw(held: Map<number, Message>, m: Message): void {
+    const edits = Number(m.meta?.edits ?? 0);
+    const regenerates = Number(m.meta?.regenerates ?? 0);
+    const mark = (id: number) => {
+      const old = held.get(id);
+      if (old && old.meta?.superseded_by == null) held.set(id, { ...old, meta: { ...old.meta, superseded_by: m.id } });
+    };
+    if (edits > 0) for (const id of held.keys()) if (id >= edits && id < m.id) mark(id);
+    if (regenerates > 0) mark(regenerates);
   }
 
   /** The id the next pull of a section starts after, or null before its first pull. */

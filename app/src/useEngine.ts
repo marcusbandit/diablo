@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 
 import { Engine, type EngineState } from "./engine/engine";
@@ -17,7 +17,17 @@ export function useEngineLifecycle() {
   }, []);
 }
 
-/** A slice of the engine's state; the component draws again only when that slice changes. */
+/**
+ * A slice of the engine's state; the component draws again when that slice changes. The slice
+ * is worked out once per state, so a pick may build a new array or object; such a pick draws
+ * again on every change of state.
+ */
 export function useEngine<T>(pick: (s: EngineState) => T): T {
-  return useSyncExternalStore(engine.subscribe, () => pick(engine.getState()));
+  const held = useRef<{ state: EngineState; value: T } | null>(null);
+  const read = () => {
+    const state = engine.getState();
+    if (held.current?.state !== state) held.current = { state, value: pick(state) };
+    return held.current.value;
+  };
+  return useSyncExternalStore(engine.subscribe, read, read);
 }

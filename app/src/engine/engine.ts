@@ -114,7 +114,11 @@ export class Engine {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private speakTimer: ReturnType<typeof setTimeout> | null = null;
   private stream: { controller: AbortController; base: string; watchdog: ReturnType<typeof setTimeout> | null } | null = null;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly o: Required<EngineOptions>;
+  private markOpen!: () => void;
+  /** Resolves once the store is read. Everything he does waits for it, so nothing is dropped. */
+  private readonly opened = new Promise<void>((resolve) => (this.markOpen = resolve));
 
   state: EngineState = {
     ready: false,
@@ -156,6 +160,7 @@ export class Engine {
     const [store, token] = await Promise.all([Store.open(this.o.disk), this.o.secrets.get().catch(() => null)]);
     this.store = store;
     this.token = token;
+    this.markOpen();
     this.set({
       ready: true,
       device: token ? store.device : null,
@@ -171,7 +176,7 @@ export class Engine {
   async stop(): Promise<void> {
     this.stopped = true;
     this.stopStream();
-    for (const t of [this.timer, this.saveTimer, this.speakTimer]) if (t) clearTimeout(t);
+    for (const t of [this.timer, this.saveTimer, this.speakTimer, this.flushTimer]) if (t) clearTimeout(t);
     if (this.store) await this.store.save();
   }
 
@@ -206,13 +211,15 @@ export class Engine {
   /** Queues a line and sends it once a hub takes it. */
   async send(text: string, section = MAIN): Promise<void> {
     const line = text.trim();
-    if (!line || !this.store) return;
+    if (!line) return;
+    await this.opened;
     await this.store.enqueue(section, line, newClientId(this.o.source));
     this.show(section);
     void this.flushOutbox();
   }
 
   async retry(clientId: string): Promise<void> {
+    await this.opened;
     const line = this.store.outbox.find((l) => l.clientId === clientId);
     if (!line) return;
     await this.store.retry(clientId);
@@ -221,6 +228,7 @@ export class Engine {
   }
 
   async discard(clientId: string): Promise<void> {
+    await this.opened;
     const line = this.store.outbox.find((l) => l.clientId === clientId);
     if (!line) return;
     await this.store.drop(clientId);
@@ -276,7 +284,7 @@ export class Engine {
 
   /** Puts a finished card away. */
   seen(taskId: string) {
-    const task = this.store.tasks.find((t) => t.id === taskId);
+    const task = this.store?.tasks.find((t) => t.id === taskId);
     if (!task) return;
     this.store.patchTask({ ...task, seen_at: Date.now() / 1000 });
     this.set({ tasks: this.store.tasks });
@@ -286,6 +294,7 @@ export class Engine {
 
   /** Fetches the page of messages before the oldest one held. False when there are none. */
   async older(section = MAIN): Promise<boolean> {
+    await this.opened;
     const hub = this.hub;
     const oldest = this.store.oldest(section);
     if (!hub || oldest == null) return false;
@@ -308,6 +317,7 @@ export class Engine {
 
   /** A tapped pairing link, a scanned code or typed letters. */
   async pairFrom(raw: string): Promise<void> {
+    await this.opened;
     const link = readPairing(raw);
     if (!link) {
       this.set({ pairing: { working: false, error: "That is not a pairing code. It looks like ABCD-EFGH.", confirm: null } });
@@ -355,7 +365,9 @@ export class Engine {
       const before = this.store.device;
       const oldToken = this.token;
       if (before && before.hub !== base) this.store.forgetHub();
-      if (!this.o.hubs.includes(base)) this.store.addHub(base);
+      // Only the hub that paired is kept beside the build's own: a token never goes to a hub
+      // that an older pairing named.
+      this.store.setExtraHubs(this.o.hubs.includes(base) ? [] : [base]);
       await this.o.secrets.set(paired.token);
       this.token = paired.token;
       const device: Device = { id: paired.device.id, name: paired.device.name, hub: base };
@@ -374,6 +386,7 @@ export class Engine {
 
   /** Locks this device out on the hub and forgets its token. False when the hub did not hear it. */
   async unpair(): Promise<boolean> {
+    await this.opened;
     const device = this.store.device;
     let heard = false;
     if (device && this.token) {
@@ -448,7 +461,16 @@ export class Engine {
     try {
       await this.syncSections(hub);
       void this.flushOutbox();
-      for (const s of this.state.sections.filter(visible)) await this.pull(hub, s.id);
+      for (const s of this.state.sections.filter(visible)) {
+        try {
+          await this.pull(hub, s.id);
+        } catch (error) {
+          // One section the hub cannot give, a deleted one say, is that section's problem. Only
+          // a refusal or a silent hub is the link's.
+          const status = error instanceof HubError ? error.status : 0;
+          if (status === 0 || status === 401 || status === 403) throw error;
+        }
+      }
       await this.syncDen(hub);
       this.set({ link: "online", hub: hub.base });
       this.listen(hub);
@@ -514,6 +536,12 @@ export class Engine {
         },
       });
       if (out.sent) this.speak();
+      if (out.stopped === "wait" && !this.stopped && !this.flushTimer) {
+        this.flushTimer = setTimeout(() => {
+          this.flushTimer = null;
+          void this.flushOutbox();
+        }, this.o.retryMs);
+      }
       if (out.stopped === "unpaired") {
         this.stopStream();
         this.set({ link: "refused" });
@@ -546,6 +574,7 @@ export class Engine {
         if (stream.watchdog) clearTimeout(stream.watchdog);
         if (this.stream !== stream) return;
         this.stream = null;
+        this.forgetLive();
         if (!this.stopped && this.foreground) setTimeout(() => this.kick(), this.o.streamRetryMs);
       });
   }
@@ -553,9 +582,21 @@ export class Engine {
   private stopStream() {
     const stream = this.stream;
     this.stream = null;
+    this.forgetLive();
     if (!stream) return;
     if (stream.watchdog) clearTimeout(stream.watchdog);
     stream.controller.abort();
+  }
+
+  /**
+   * Turns and busy come only from the stream, so without it they are stale: a missed `done`
+   * would keep him thinking for good. The next round reads busy again; his own line on its way
+   * keeps its turn.
+   */
+  private forgetLive() {
+    const turns: Record<string, Turn> = {};
+    for (const l of this.store?.outbox ?? []) if (l.clientId === this.state.sending && this.state.turns[l.section]) turns[l.section] = this.state.turns[l.section];
+    if (this.state.busy.length || Object.keys(this.state.turns).length !== Object.keys(turns).length) this.set({ busy: [], turns });
   }
 
   private onEvent(hub: Hub, event: HubEvent) {
