@@ -1,0 +1,110 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:13px/1.35 system-ui,sans-serif}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 14px}
+@media(max-width:560px){.grid{grid-template-columns:minmax(0,1fr)}}
+.opt{min-width:0}
+h3{margin:0 0 8px;font-size:15px;color:var(--foreground)}
+h3 b{color:var(--primary);margin-right:6px}
+.say{margin:6px 2px 0;color:var(--muted-foreground);font-size:12px}
+.clock{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px;font-size:12px;color:var(--muted-foreground)}
+.clock span{padding:2px 8px;border-radius:6px;border:1px solid var(--border)}
+.clock span.on{color:var(--foreground);border-color:var(--foreground)}
+
+.s{--bg:#202326;--line:#33373c;--sub:#b9bec4;--dim:#8d939a;--fg:#eef0f2;
+  background:var(--bg);color:var(--fg);font-family:'Bricolage Grotesque',sans-serif;border-radius:24px;overflow:hidden;height:226px;max-width:300px;margin:0 auto;display:flex;flex-direction:column}
+.mood{position:relative;overflow:hidden;height:150px;flex:none;padding:12px 14px;color:var(--mi,#22140a)}
+.base{position:absolute;inset:0}
+.ink{position:absolute;inset:0}
+.face{position:absolute;width:84px;height:84px;right:6px;top:8px;transition:filter .9s}
+.state{position:relative;font-size:12px;font-weight:500;transition:color .9s}
+.head{position:relative;font-weight:800;font-size:25px;letter-spacing:-.02em;line-height:.98;margin-top:52px;max-width:80%;transition:color .9s}
+.sweep{position:absolute;left:0;bottom:0;height:3px;width:100%;opacity:0;transition:opacity .6s,background .9s}
+.sweep.on{opacity:1;animation:sw 1.4s linear infinite;background-size:40% 100% !important;background-repeat:no-repeat !important}
+@keyframes sw{from{background-position:-40% 0}to{background-position:140% 0}}
+.body{padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.ask{font-size:14px;font-weight:500;transition:opacity .5s}
+.row{display:flex;justify-content:space-between;color:var(--sub)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style><style>:root{--foreground:#e8e8ea;--muted-foreground:#9a9aa2;--primary:#8ab4ff;--border:#3a3a42}body{background:#141618;padding:16px;max-width:760px;margin:0 auto}</style></head><body>
+<div class="clock" id="clock"></div>
+<div class="grid" id="grid"></div>
+<script>
+const FACE='../../../assets/faces/';
+// his day in 20 seconds: a short blip of thinking, a real think, speaking, and an ask that appears and gets answered
+const T=[
+ {s:'idle',d:2600},{s:'listen',d:2000},{s:'think',d:600},{s:'speak',d:700},{s:'think',d:3200,ask:true},
+ {s:'speak',d:2600,ask:true},{s:'idle',d:3200,ask:true},{s:'idle',d:2400}
+];
+const NAMES={idle:'Resting',listen:'Listening',think:'Thinking',speak:'Speaking'};
+const FACES={idle:'resting',listen:'listening',think:'thinking',speak:'talking'};
+const ORB={idle:'#545d67',listen:'#7fb3d4',think:'#e0915a',speak:'#6fc49a'};
+const INK={idle:'#eef2f5',listen:'#0d1a22',think:'#22140a',speak:'#0c1f15'};
+const EVEN={idle:'#3d4650',listen:'#3e5566',think:'#66503f',speak:'#3f5e50'};
+const OPTS=[
+ {n:1,t:'Slow fade, ignores blips',say:'Every change fades over 1.2 s, and a state shorter than a second never reaches the colour. Same bold block.'},
+ {n:2,t:'Ink from his face',say:'A new mood spreads out from his face like ink in water, so the change visibly comes from him.'},
+ {n:3,t:'Quiet colours',say:'Every state is a muted colour at the same brightness, so a change is a shift in hue, never a flash. Slow fade too.'},
+ {n:4,t:'Colour means you',say:'The block stays calm while he works; his face and a thin line show what he is doing. It turns orange only when something needs you.'},
+];
+const grid=document.getElementById('grid');
+OPTS.forEach(o=>{
+  const d=document.createElement('div');d.className='opt';
+  d.innerHTML=`<h3><b>${o.n}</b>${o.t}</h3><div class="s"><div class="mood"><div class="base"></div><div class="ink"></div><img class="face"><div class="state"></div><div class="head"></div><div class="sweep"></div></div>
+  <div class="body"><div class="ask">Send the reply to Alex?</div><div class="row">Sorting mail<span>4 min</span></div></div></div><p class="say">${o.say}</p>`;
+  grid.appendChild(d);o.el=d;
+  const m=d.querySelector('.mood');
+  o.base=m.querySelector('.base');o.ink=m.querySelector('.ink');o.face=m.querySelector('.face');o.state=m.querySelector('.state');o.head=m.querySelector('.head');o.sw=m.querySelector('.sweep');o.askEl=d.querySelector('.ask');o.mood=m;
+});
+const clock=document.getElementById('clock');
+T.forEach((x,i)=>{const s=document.createElement('span');s.textContent=NAMES[x.s]+(x.ask?' + ask':'')+' '+(x.d/1000).toFixed(1)+'s';clock.appendChild(s)});
+
+function apply(o,step,first){
+  const s=step.s, ask=!!step.ask;
+  o.state.textContent=NAMES[s];o.face.src=FACE+FACES[s]+'/1.png';
+  o.head.textContent=ask?'One thing needs you, sir.':'All quiet, sir.';
+  o.askEl.style.opacity=ask?1:.25;
+  const tr=first?'none':'background 1.2s ease';
+  if(o.n===1){
+    if(step.d<1000 && !first) return; // blip: colour holds
+    o.base.style.transition=tr;o.base.style.background=ORB[s];o.mood.style.setProperty('--mi',INK[s]);
+    o.face.style.filter=s==='idle'?'none':'brightness(0) opacity(.85)';
+    o.state.style.color=o.head.style.color=INK[s];
+  }
+  if(o.n===2){
+    const c=ORB[s];
+    o.state.style.color=o.head.style.color=INK[s];o.face.style.filter=s==='idle'?'none':'brightness(0) opacity(.85)';
+    if(first){o.base.style.background=c;return}
+    if(o.cur===c) return; o.cur=c;
+    o.ink.style.transition='none';o.ink.style.background=c;o.ink.style.clipPath='circle(0px at 86% 32%)';
+    o.ink.offsetWidth;
+    o.ink.style.transition='clip-path 1.1s cubic-bezier(.3,.6,.2,1)';o.ink.style.clipPath='circle(160% at 86% 32%)';
+    clearTimeout(o.tm);o.tm=setTimeout(()=>{o.base.style.background=c},1150);
+  }
+  if(o.n===3){
+    o.base.style.transition=tr;o.base.style.background=EVEN[s];
+    o.state.style.color=o.head.style.color='#eef0f2';o.face.style.filter='none';
+  }
+  if(o.n===4){
+    o.base.style.transition=first?'none':'background 1s ease';
+    o.base.style.background=ask?'#e0915a':'#2e3338';
+    const ink=ask?'#22140a':'#eef0f2';
+    o.state.style.color=o.head.style.color=ink;o.face.style.filter=ask?'brightness(0) opacity(.85)':'none';
+    const work=s!=='idle';
+    o.sw.classList.toggle('on',work);
+    o.sw.style.background=`linear-gradient(90deg,transparent,${ask?'#22140a':ORB[s]},transparent)`;
+  }
+}
+let i=0;
+function tick(first){
+  const step=T[i];
+  [...clock.children].forEach((c,k)=>c.classList.toggle('on',k===i));
+  OPTS.forEach(o=>apply(o,step,first));
+  setTimeout(()=>{i=(i+1)%T.length;tick(false)},step.d);
+}
+tick(true);
+</script>
+</body></html>

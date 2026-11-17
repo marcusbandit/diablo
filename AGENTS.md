@@ -23,7 +23,8 @@ Diablo is a voice assistant and Telegram bot. He listens on a microphone, wakes 
 - `tui/`: the rust terminal front end (ratatui) on the core api. Bare `diablo` prefers it and falls back to the python curses one (pool/repl.py) when the binary is missing.
 - `deploy/`: systemd units, the tmux stage, desktop control.
 - `onboarding/`: interactive setup for both sides.
-- `phone/`: the phone app, Kotlin and Jetpack Compose over a Rust core (`phone/core`, uniffi). Design in docs/phone.md. Build and verify on the emulator through phone/scripts/.
+- `app/`: Diablo's app being rebuilt (#91), one Expo codebase for the phone and the browser, installed side by side as `com.marcusrosado.diablo.next`. What every screen is for: docs/app-map.md; approved pictures: docs/app/design/; colours, type and motion: app/src/tokens.ts. Build and verify on the emulator through app/scripts/.
+- `phone/`: the current phone app (Expo), replaced by `app/` at the cutover in #91.
 - `presence/`: Diablo on the screen, the orb beside the cursor and his answer cards, its own Quickshell instance (`diablo-presence.service`). It reads the state files the voice side writes; docs/presence.md. The old Qt desktop app is not in this repo any more: it lives in the private archive and is being rebuilt around the orb.
 - `mail/`: the older mail watchers that run beside the hub on diablo-pi. The hub's own mail handler (both inboxes sorted, Jorbis answered under approvals) is hub/mailbox.py, described in docs/mail.md.
 - `reminders/`: durable reminders on diablo-pi, the `remind` CLI and `diablo-reminders.service`. Its README covers times, DST and the exactly-once rules.
