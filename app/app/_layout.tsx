@@ -8,10 +8,12 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { color, font } from "../src/tokens";
+import { useEngineLifecycle } from "../src/useEngine";
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 export default function Root() {
+  useEngineLifecycle();
   const [loaded, failed] = useFonts({
     [font.regular]: require("../assets/fonts/BricolageGrotesque-Regular.ttf"),
     [font.medium]: require("../assets/fonts/BricolageGrotesque-Medium.ttf"),
