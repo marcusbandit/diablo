@@ -37,8 +37,13 @@ fi
 task=assembleDebug
 [ "$variant" = release ] && task=assembleRelease
 # Debug builds only for the emulator's x86_64; release adds arm64-v8a for a real phone.
+# A release build is the one handed to a phone, so it always carries arm64-v8a: an APK with only
+# the emulator's code installs on a phone and dies at launch.
 archs="${DIABLO_ARCHS:-x86_64}"
-[ "$variant" = release ] && archs="${DIABLO_ARCHS:-arm64-v8a,x86_64}"
+if [ "$variant" = release ]; then
+  archs="${DIABLO_ARCHS:-arm64-v8a,x86_64}"
+  case ",$archs," in *,arm64-v8a,*) ;; *) archs="arm64-v8a,$archs" ;; esac
+fi
 # Gradle gets 3 GB, the Kotlin daemon, CMake and aapt2 the rest; a release build also runs Metro.
 cd android
 exec systemd-run --user --scope -q \
