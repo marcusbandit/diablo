@@ -16,6 +16,7 @@ LIST_START = re.compile(r"(?:[-*+•]|\d{1,3}[.)]?)")
 HEADING = re.compile(r"#{1,6}\s")
 HEADING_START = re.compile(r"#{1,6}")
 BREAKS = (", ", "; ", ": ")
+LINK = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)", re.I)
 
 
 def _kind(line, ended):
@@ -119,6 +120,9 @@ class Splitter:
         if best >= self.limit // 2:
             return best + 1
         space = window.rfind(" ")
+        straddling = self.prose[space + 1:].split(None, 1)[0] if self.prose[space + 1:].strip() else ""
+        if LINK.match(straddling):
+            return None
         if space > 0:
             return space
         later = re.search(r"\s", self.prose[self.limit:])

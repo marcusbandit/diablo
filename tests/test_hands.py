@@ -213,15 +213,18 @@ class Steps(unittest.TestCase):
             self.assertFalse(hands.risky(text), text)
 
 
+REAL_TREE = hands.Tree
+
+
 class FakeTree:
     def __init__(self, controls=(), items=()):
         self.controls, self.items = list(controls), list(items)
 
     def control(self, control_id, name=None):
-        return hands.Tree.control(self, control_id, name)
+        return REAL_TREE.control(self, control_id, name)
 
     def at(self, x, y):
-        return hands.Tree.at(self, x, y)
+        return REAL_TREE.at(self, x, y)
 
     def range_box(self, node, start, end):
         return None
