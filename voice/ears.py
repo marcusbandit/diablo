@@ -1298,19 +1298,22 @@ def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None, on_bra
     if heard:
         reply = sentences.unsaid(reply, heard + first)
     tl.note(outcome=f"answered by {found.get('backend') or 'the hub'}")
-    return said_aloud("" if capped else reply, found.get("say"))
+    left = SPOKEN_CHARS - sum(len(w) + 1 for w in first)
+    return said_aloud("" if capped else reply, found.get("say"), left)
 
 
-def said_aloud(reply, say=None):
+def said_aloud(reply, say=None, limit=SPOKEN_CHARS):
     """The words to speak: the reply cut to a few sentences, then a question Diablo asked with its
-    numbered options in full, so the options are never cut off."""
-    words = spoken(str(reply or "").strip())
+    numbered options in full, so the options are never cut off. limit is what is left of
+    SPOKEN_CHARS after the lines already streamed."""
+    words = spoken(str(reply or "").strip(), limit)
     say = " ".join(str(say or "").split())
     return f"{words} {say}".strip() if say else words
 
 
-def spoken(reply):
-    """The part of a reply worth saying aloud: no code, no links, a few sentences at most."""
+def spoken(reply, limit=SPOKEN_CHARS):
+    """The part of a reply worth saying aloud: no code, no links, a few sentences at most. Under a
+    limit lowered by lines already said, only whole sentences go before "the rest is in the chat"."""
     import re
 
     text = re.sub(r"```.*?```", " ", reply, flags=re.S)
@@ -1319,11 +1322,15 @@ def spoken(reply):
     text = re.sub(r"https?://\S+", "", text)
     text = re.sub(r"[*_#>|]+", "", text)
     text = re.sub(r"\s+", " ", text).strip()
-    if len(text) <= SPOKEN_CHARS:
+    if len(text) <= limit:
         return text
-    cut = text[:SPOKEN_CHARS]
+    cut = text[:max(limit, 0)]
     end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
-    return (cut[: end + 1] if end > 100 else cut) + " The rest is in the chat."
+    if end > min(100, limit // 2):
+        cut = cut[: end + 1]
+    elif limit < SPOKEN_CHARS:
+        cut = ""
+    return f"{cut} The rest is in the chat.".strip()
 
 
 class Settings:

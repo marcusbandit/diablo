@@ -1,8 +1,9 @@
 """Sentences out of text as it streams, so each one can be spoken the moment it ends.
 
 A sentence ends at . ! or ? followed by a space, or near LIMIT characters for a run-on, at a
-comma or a space but never inside a word or a link. Code fences, list items, table rows and
-headings are for reading, not for the ear: their text never comes out.
+comma or a space but never inside a word or a link. A list item is said without its bullet or
+number, as a sentence of its own, with a full stop when it has no stop of its own. Code fences,
+table rows and headings are for reading, not for the ear: their text never comes out.
 """
 
 import re
@@ -16,23 +17,32 @@ LIST_START = re.compile(r"(?:[-*+•]|\d{1,3}[.)]?)")
 HEADING = re.compile(r"#{1,6}\s")
 HEADING_START = re.compile(r"#{1,6}")
 BREAKS = (", ", "; ", ": ")
+STOPS = ".!?…:;,"
+CLOSERS = "\"')]”’"
 LINK = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)", re.I)
 
 
 def _kind(line, ended):
-    """What a line is from its start: prose, fence, skip (a list item, table row or heading), or
-    None while too little of it has arrived to tell."""
+    """What a line is from its start: prose, item (a list item), fence, skip (a table row or a
+    heading), or None while too little of it has arrived to tell."""
     head = line.lstrip()
     if not head:
         return "blank" if ended else None
     if head.startswith(FENCES):
         return "fence"
-    if head.startswith("|") or LIST.match(head) or HEADING.match(head):
+    if LIST.match(head):
+        return "item"
+    if head.startswith("|") or HEADING.match(head):
         return "skip"
     if not ended and (any(f.startswith(head) for f in FENCES) or LIST_START.fullmatch(head)
                       or HEADING_START.fullmatch(head)):
         return None
     return "prose"
+
+
+def _unbullet(line):
+    head = line.lstrip()
+    return head[LIST.match(head).end():]
 
 
 def _speakable(text):
@@ -75,14 +85,18 @@ class Splitter:
                 self.kind = kind
                 if kind != "prose":
                     out += self._flush_prose()
+                if kind == "item":
+                    self.line = _unbullet(self.line)
             cut = self.line.find("\n")
-            if self.kind == "prose":
+            if self.kind in ("prose", "item"):
                 if cut < 0:
                     self.prose, self.line = self.prose + self.line, ""
                     out += self._sentences()
                     break
                 self.prose += self.line[:cut] + " "
                 out += self._sentences()
+                if self.kind == "item":
+                    out += self._flush_prose(closed=True)
             elif cut < 0:
                 break
             elif self.kind == "fence":
@@ -93,16 +107,21 @@ class Splitter:
 
     def flush(self):
         """Everything still held, as the last sentence; then a fresh start for the next block."""
-        if not self.fenced and self.line.strip() and (self.kind or _kind(self.line, True)) == "prose":
+        kind = self.kind or (None if self.fenced or not self.line.strip() else _kind(self.line, True))
+        if kind == "item" and self.kind is None:
+            self.line = _unbullet(self.line)
+        if kind in ("prose", "item"):
             self.prose += self.line
-        out = self._flush_prose()
+        out = self._flush_prose(closed=kind == "item")
         self._reset()
         return out
 
-    def _flush_prose(self):
+    def _flush_prose(self, closed=False):
         out = self._sentences()
         rest = _speakable(self.prose)
         self.prose = ""
+        if rest and closed and rest.rstrip(CLOSERS)[-1:] not in STOPS:
+            rest += "."
         return out + ([rest] if rest else [])
 
     def _boundary(self):

@@ -46,9 +46,27 @@ class TestSplitter(unittest.TestCase):
         self.check("See https://example.com/a.b?c=d. Use e.g. this one. Version 1.5 is out.",
                    ["See https://example.com/a.b?c=d.", "Use e.g. this one.", "Version 1.5 is out."])
 
-    def test_code_fences_and_lists_are_never_spoken(self):
+    def test_code_fences_are_never_spoken_and_list_items_are_said_without_bullets(self):
         self.check("Run this:\n```bash\necho hi. there\n```\nIt prints hi.\n- one item.\n- two.\n3. three.\nDone.",
-                   ["Run this:", "It prints hi.", "Done."])
+                   ["Run this:", "It prints hi.", "one item.", "two.", "three.", "Done."])
+
+    def test_each_list_item_is_a_sentence_of_its_own(self):
+        self.check("You have three reminders:\n- dentist at 10\n- call mum\n- gym",
+                   ["You have three reminders:", "dentist at 10.", "call mum.", "gym."])
+
+    def test_every_kind_of_bullet_is_dropped(self):
+        self.check("Steps:\n1. Open the app\n2) Tap save\n  - nested, with a comma\n* star\n+ plus\n• dot\nAfter.",
+                   ["Steps:", "Open the app.", "Tap save.", "nested, with a comma.", "star.", "plus.", "dot.", "After."])
+
+    def test_an_item_keeps_its_own_stops(self):
+        self.check('- Call mum. She asked\n- he said "hi"\n- really?\n- done.',
+                   ["Call mum.", "She asked.", 'he said "hi".', "really?", "done."])
+
+    def test_a_dash_or_number_that_is_not_a_bullet_stays_prose(self):
+        self.check("-5 degrees outside\n1.5 euro left", ["-5 degrees outside 1.5 euro left"])
+
+    def test_a_list_inside_a_fence_is_not_spoken(self):
+        self.check("Text\n```\n- inside\n```\n- after", ["Text", "after."])
 
     def test_headings_and_tables_are_not_spoken(self):
         self.check("## Weather\n| a | b |\n|---|---|\nSunny today. 12 degrees.", ["Sunny today.", "12 degrees."])
@@ -83,6 +101,11 @@ class TestSplitter(unittest.TestCase):
         self.assertEqual(sentences.unsaid("On it. Done, the lights are off.", ["On it."]), "Done, the lights are off.")
         self.assertEqual(sentences.unsaid("Done.", ["done"]), "")
         self.assertEqual(sentences.unsaid("A. B.", []), "A. B.")
+
+    def test_unsaid_keeps_list_items(self):
+        text = "You have three reminders:\n- dentist at 10\n- call mum\n- gym"
+        self.assertEqual(sentences.unsaid(text, ["You have three reminders:"]), "dentist at 10. call mum. gym.")
+        self.assertEqual(sentences.unsaid(text, sentences.split(text)), "")
 
 
 class FakeOut:
@@ -227,6 +250,17 @@ class TestSayLines(unittest.TestCase):
         self.assertEqual(done["rest"], "Sunny today. Twelve degrees.")
         lines = self.run_turn(["Checking.", "Sunny today."], "Checking.", "Sunny today. Twelve degrees.")
         self.assertEqual(lines[-1]["done"]["rest"], "Twelve degrees.")
+
+    def test_a_streamed_list_is_said_item_by_item(self):
+        def delta(text):
+            return {"type": "stream_event", "parent_tool_use_id": None,
+                    "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}}}
+
+        text = "You have three reminders:\n- dentist at 10\n- call mum\n- gym"
+        events = [delta(text[at:at + 4]) for at in range(0, len(text), 4)] + [{"type": "result", "result": text}]
+        result, heard = read_events(events)
+        self.assertEqual([h[0] for h in heard], ["You have three reminders:", "dentist at 10.", "call mum.", "gym."])
+        self.assertEqual(sentences.unsaid(text, result.said), "")
 
 
 

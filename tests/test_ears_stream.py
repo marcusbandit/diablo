@@ -49,6 +49,25 @@ class TestNothingTwice(unittest.TestCase):
              "rest": "See https://example.com/a for it.", "backend": "claude"})
         self.assertEqual(words, "")
 
+    def test_list_items_left_unstreamed_are_said(self):
+        heard, words = self.words(
+            ["You have three reminders:"],
+            {"reply": "You have three reminders:\n- dentist at 10\n- call mum\n- gym",
+             "spoken_first": "You have three reminders:", "rest": "- dentist at 10\n- call mum\n- gym",
+             "backend": "claude"})
+        self.assertEqual(words, "dentist at 10. call mum. gym.")
+
+    def test_the_rest_shares_the_spoken_length_with_the_streamed_lines(self):
+        line = "This is one sentence of a long answer that goes on for quite a while indeed."
+        streamed = [line] * 8
+        rest = " ".join(f"Item number {n} is on the list." for n in range(20))
+        heard, words = self.words(streamed, {"reply": " ".join(streamed) + " " + rest, "spoken_first": line,
+                                             "rest": rest, "backend": "claude"})
+        self.assertEqual(heard, streamed)
+        self.assertTrue(words.endswith("The rest is in the chat."))
+        spoken_words = words[: -len("The rest is in the chat.")]
+        self.assertLessEqual(sum(len(h) + 1 for h in heard) + len(spoken_words), ears.SPOKEN_CHARS)
+
     def test_without_streamed_lines_the_reply_is_said_as_before(self):
         heard, words = self.words([], {"reply": "Here:\n- one\n- two", "backend": "claude"})
         self.assertEqual(heard, [])

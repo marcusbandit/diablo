@@ -203,7 +203,9 @@ has ready and never waits on them; the mouth is measured for every line. The rep
 the next line comes within 1.5 s (`FOLLOW_S`); a longer pause, usually a tool at work, ends it, and
 the lines written after it are the next reply. Saying his name stops the line playing and drops
 every line behind it. A reply streamed past 700 characters ends with "the rest is in the chat", and
-the final answer never says a sentence a line already said.
+the final answer never says a sentence a line already said. The lines streamed and the rest of the
+answer share the 700 characters: the rest gets what the lines left, in whole sentences, and "the
+rest is in the chat" when not even one fits. List items are said one by one, without their bullets.
 
 ## A beat while Claude starts
 
