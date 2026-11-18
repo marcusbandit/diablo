@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import busy as busy_turns
 from . import agent, charter, context, db, events, hue, jev, lockguard, modules, questions, route, sentences, settings, standby, t3link, threads, usage
-from . import learn, skillbook
+from . import learn, showcase, skillbook
 
 logger = logging.getLogger(__name__)
 
@@ -1330,6 +1330,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
     event = None
     lamps = None
     asked = None
+    tour = None
     threaded = conv == MAIN and threads.enabled() and not machine and message_id is not None
     picking = asyncio.create_task(threads.pick(text, spoken=spoken(origin), skip=said, hint=thread_hint)) if threaded else None
     if chosen == "claude":
@@ -1351,7 +1352,11 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                              machine=machine)
         if needs_context:
             notes = [CONTEXT_NOTE] + list(notes or [])
-        if decision is not None and decision.handoff:
+        tour = None if machine else showcase.note(conv, text)
+        if tour:
+            notes = [tour] + list(notes or [])
+            asked = None
+        if decision is not None and decision.handoff and not tour:
             notes = [handoff_note(decision.handoff)] + list(notes or [])
     act = route.desktop_action(answer, text, desktop) if asked else None
     if act is not None and act.get("action") == "again" and event and event.get("device"):
@@ -1366,7 +1371,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
             background(file_when_picked(picking, message_id))
         usage_log(turn, conv, origin, started, decision)
         return turn
-    if decision is not None and decision.direct:
+    if decision is not None and decision.direct and not tour:
         turn = await run_direct(conv, text, decision, event)
         if turn is not None:
             if decision.direct.get("kind") == "hue":
