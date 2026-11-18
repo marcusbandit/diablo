@@ -34,9 +34,11 @@ CONFIG="$ANDROID_AVD_HOME/$NAME.avd/config.ini"
 set_prop() {
   if grep -q "^$1=" "$CONFIG"; then sed -i "s|^$1=.*|$1=$2|" "$CONFIG"; else echo "$1=$2" >> "$CONFIG"; fi
 }
-set_prop hw.keyboard yes
+# No hardware keyboard: a phone has none, and with one attached Android never shows the
+# on-screen keyboard, so a screen hidden under it looks fine here and broken in a hand.
+set_prop hw.keyboard no
 set_prop hw.ramSize 1536
 set_prop hw.cpu.ncore 4
 set_prop hw.sensor.hinge yes
-echo "Configured $CONFIG (hinge on, keyboard on, 1.5 GB guest RAM)."
+echo "Configured $CONFIG (hinge on, no hardware keyboard, 1.5 GB guest RAM)."
 echo "Start it with: scripts/emulator.sh"

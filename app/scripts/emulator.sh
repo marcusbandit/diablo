@@ -13,7 +13,8 @@ if [ ! -d "$ANDROID_AVD_HOME/$AVD.avd" ]; then
   exit 1
 fi
 
-MIN_FREE_MB=8000
+# The guest settles near 6 GB of its 8 GB cap, so 7.5 GB free is enough to start it.
+MIN_FREE_MB=7500
 avail=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
 if (( avail < MIN_FREE_MB )); then
   echo "emulator.sh: only ${avail} MB available (< ${MIN_FREE_MB} MB). Not starting; close something first." >&2
