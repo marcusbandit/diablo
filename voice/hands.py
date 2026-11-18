@@ -51,6 +51,10 @@ RISKY = re.compile(
     r"slet|fjern|betal|køb|indsend|bestil|afgiv ordre|log ud|afinstaller|formater|overfør)\b",
     re.I,
 )
+ADDRESS_FIELD = re.compile(r"\b(?:address|location|url) bar\b|\baddress and search bar\b|\benter (?:an )?address\b|"
+                           r"\btype a url\b|\benter (?:a )?url\b|\bomnibox\b", re.I)
+BROWSERS = {"firefox", "zen", "chromium", "chrome", "brave", "vivaldi", "librewolf", "epiphany", "edge", "opera",
+            "qutebrowser", "floorp", "waterfox", "falkon", "midori", "thorium", "mullvadbrowser", "torbrowser"}
 URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*://\S+|(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?::\d+)?(?:[/?#]\S*)?)$", re.I)
 
 CONTROL_ROLES = {
@@ -865,24 +869,45 @@ def looks_like_url(text):
     return bool(URL.match(str(text or "").strip())) and " " not in str(text).strip()
 
 
-def rewrite(steps):
-    """(steps, note): a plan that only types an address into the address bar and presses Return
-    becomes one open of that address, which is faster and lands in the default browser."""
+def is_browser(client):
+    """Whether a hyprctl client is a web browser, by the words of its class."""
+    words = re.split(r"[^a-z0-9]+", str((client or {}).get("class") or (client or {}).get("initialClass") or "").lower())
+    return any(word in BROWSERS for word in words)
+
+
+def address_field(name):
+    return bool(ADDRESS_FIELD.search(norm(name)))
+
+
+def rewrite(steps, client=None):
+    """(steps, note): a plan that only types an address into a browser's address bar and presses
+    Return becomes one open of that address, which is faster and lands in the default browser.
+
+    The plan has to aim at the address bar: a ctrl+l, alt+d or F6 first, a click on the address
+    bar, a fill whose field is the address bar, or a browser as the target with no field named.
+    A fill into any other field, or typing into an app that is not a browser, stays as it is."""
     core = [s for s in steps if s["do"] not in ("focus", "wait")]
+    aimed = False
     if core and core[0]["do"] == "key" and core[0]["key"].lower().replace(" ", "") in ADDRESS_KEYS:
-        core = core[1:]
-    if core and core[0]["do"] == "click_text" and norm(core[0]["text"]) in ("address bar", "search or enter address",
-                                                                          "search or type a url", "search with google or enter address"):
-        core = core[1:]
+        core, aimed = core[1:], True
+    if core and core[0]["do"] == "click_text" and address_field(core[0]["text"]):
+        core, aimed = core[1:], True
     url = None
     if len(core) == 2 and core[0]["do"] in ("type", "fill") and core[1]["do"] == "key" and \
-            core[1]["key"].lower() in RETURN_KEYS:
+            core[1]["key"].lower().replace(" ", "") in RETURN_KEYS:
         url = core[0]["text"].strip()
     elif len(core) == 1 and core[0]["do"] == "type" and core[0]["text"].endswith("\n"):
         url = core[0]["text"].strip()
-    if url and looks_like_url(url):
-        return [{"do": "open", "target": url}], f"typing {url} into the address bar became an open of it"
-    return steps, None
+    if not url or not looks_like_url(url):
+        return steps, None
+    field = core[0].get("field")
+    if field:
+        aimed = address_field(field)
+    elif not aimed:
+        aimed = is_browser(client)
+    if not aimed:
+        return steps, None
+    return [{"do": "open", "target": url}], f"typing {url} into the address bar became an open of it"
 
 
 def _dispatch(lua, legacy):
@@ -1198,16 +1223,16 @@ def act(target, steps):
     """Runs a plan; the result names each step and ends with the front window and its controls."""
     started = time.monotonic()
     plan = validate(steps)
-    plan, note = rewrite(plan)
-    result = {"ok": False, "steps": []}
-    if note:
-        result["rewritten"] = note
     state = locked()
     if state is None:
         raise HandsError("could not read whether the screen is locked, so nothing is clicked or typed; try again in a moment")
     if state:
         raise HandsError("the screen is locked; nothing on it can be clicked or typed into until Marcus unlocks it")
     hands = Hands(target)
+    plan, note = rewrite(plan, hands.client)
+    result = {"ok": False, "steps": []}
+    if note:
+        result["rewritten"] = note
     needs_focus = hands.client is not None and hands.address != (hypr("activewindow") or {}).get("address")
     if needs_focus and any(s["do"] in ("type", "key", "fill") for s in plan) and plan[0]["do"] != "focus":
         plan = [{"do": "focus"}] + plan

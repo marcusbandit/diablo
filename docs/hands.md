@@ -130,9 +130,16 @@ target window is not the focused one and the plan types or presses keys, a focus
 Each acting step waits a moment for the app to draw (0.1 to 0.5 s), and click_text tries once
 more 0.6 s later when its text is not there yet.
 
-A plan that only puts an address in the address bar and presses Return (`ctrl+l`, `alt+d` or
-`f6`, then type or fill a URL, then Return) is turned into one `open` of that URL; the reply says
-so in `rewritten`.
+A plan that only puts an address in a browser's address bar and presses Return is turned into
+one `open` of that URL; the reply says so in `rewritten`. The plan has to aim at the address bar:
+a `ctrl+l`, `alt+d` or `f6` first, a click_text on the address bar, a fill whose field names the
+address or location bar ("Address and search bar", "Search with Google or enter address"), or a
+browser as the target window (Firefox, Zen, Chromium, Chrome, Brave and the like, by class) with
+no field named. A fill into any other field, such as a chat's Message box, stays as written even
+in a browser, and so does typing into an app that is not a browser. One case still guesses: in a
+browser, a type or a fill without a field, with no address key first, is taken to be aimed at the
+address bar, so a link typed into a web page's focused box that way opens instead of being sent.
+Name the field to keep it.
 
 Risky clicks: a click whose text, control name or the control under the point matches delete,
 remove, pay, buy, purchase, send, submit order, place order, sign out, log out, uninstall,

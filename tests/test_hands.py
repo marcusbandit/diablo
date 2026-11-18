@@ -182,26 +182,41 @@ class Steps(unittest.TestCase):
             self.assertIn(said, str(caught.exception))
 
     def test_typing_a_url_becomes_an_open(self):
-        for plan in (
-            [{"do": "focus"}, {"do": "key", "key": "ctrl+l"}, {"do": "type", "text": "example.com/docs"}, {"do": "key", "key": "Return"}],
-            [{"do": "key", "key": "Ctrl + L"}, {"do": "fill", "text": "https://example.com"}, {"do": "key", "key": "enter"}],
-            [{"do": "click_text", "text": "Address bar"}, {"do": "type", "text": "example.org"}, {"do": "key", "key": "Return"}],
-            [{"do": "type", "text": "www.example.com\n"}],
+        firefox = {"address": "0xf", "class": "firefox", "title": "Mozilla Firefox"}
+        for plan, client in (
+            ([{"do": "focus"}, {"do": "key", "key": "ctrl+l"}, {"do": "type", "text": "example.com/docs"}, {"do": "key", "key": "Return"}], None),
+            ([{"do": "key", "key": "Ctrl + L"}, {"do": "fill", "text": "https://example.com"}, {"do": "key", "key": "enter"}], None),
+            ([{"do": "key", "key": "F6"}, {"do": "type", "text": "example.com\n"}], None),
+            ([{"do": "click_text", "text": "Address bar"}, {"do": "type", "text": "example.org"}, {"do": "key", "key": "Return"}], None),
+            ([{"do": "fill", "field": "Search with Google or enter address", "text": "example.org"}, {"do": "key", "key": "Return"}], None),
+            ([{"do": "fill", "field": "Address and search bar", "text": "example.org"}, {"do": "key", "key": "Return"}], None),
+            ([{"do": "type", "text": "www.example.com\n"}], firefox),
+            ([{"do": "fill", "text": "example.com"}, {"do": "key", "key": "Return"}], {"class": "google-chrome"}),
         ):
             with self.subTest(plan=plan):
-                steps, note = hands.rewrite(hands.validate(plan))
+                steps, note = hands.rewrite(hands.validate(plan), client)
                 self.assertEqual(steps[0]["do"], "open")
                 self.assertEqual(len(steps), 1)
                 self.assertIn("became an open", note)
 
     def test_other_plans_stay(self):
-        for plan in (
-            [{"do": "key", "key": "ctrl+l"}, {"do": "type", "text": "best pizza near me"}, {"do": "key", "key": "Return"}],
-            [{"do": "click_text", "text": "Search"}, {"do": "type", "text": "example.com"}, {"do": "key", "key": "Return"}],
-            [{"do": "type", "text": "example.com"}],
+        firefox = {"address": "0xf", "class": "firefox", "title": "Mozilla Firefox"}
+        chat = {"address": "0xc", "class": "org.example.Chat", "title": "Chat"}
+        for plan, client in (
+            ([{"do": "key", "key": "ctrl+l"}, {"do": "type", "text": "best pizza near me"}, {"do": "key", "key": "Return"}], firefox),
+            ([{"do": "click_text", "text": "Search"}, {"do": "type", "text": "example.com"}, {"do": "key", "key": "Return"}], None),
+            ([{"do": "type", "text": "example.com"}], firefox),
+            ([{"do": "fill", "field": "Message", "text": "example.com"}, {"do": "key", "key": "Return"}], chat),
+            ([{"do": "fill", "field": "Message", "text": "example.com"}, {"do": "key", "key": "Return"}], firefox),
+            ([{"do": "key", "key": "ctrl+l"}, {"do": "fill", "field": "Message", "text": "example.com"}, {"do": "key", "key": "Return"}], firefox),
+            ([{"do": "fill", "field": "Email address", "text": "example.com"}, {"do": "key", "key": "Return"}], firefox),
+            ([{"do": "type", "text": "example.com"}, {"do": "key", "key": "Return"}], chat),
+            ([{"do": "type", "text": "example.com\n"}], chat),
+            ([{"do": "type", "text": "example.com\n"}], None),
+            ([{"do": "type", "text": "example.com"}, {"do": "key", "key": "Return"}], {"class": "zenity"}),
         ):
-            with self.subTest(plan=plan):
-                steps, note = hands.rewrite(hands.validate(plan))
+            with self.subTest(plan=plan, client=client):
+                steps, note = hands.rewrite(hands.validate(plan), client)
                 self.assertIsNone(note)
                 self.assertEqual(steps, hands.validate(plan))
 
@@ -219,6 +234,7 @@ REAL_TREE = hands.Tree
 class FakeTree:
     def __init__(self, controls=(), items=()):
         self.controls, self.items = list(controls), list(items)
+        self.read_back = ""
 
     def control(self, control_id, name=None):
         return REAL_TREE.control(self, control_id, name)
@@ -228,6 +244,9 @@ class FakeTree:
 
     def range_box(self, node, start, end):
         return None
+
+    def _text(self, acc):
+        return self.read_back
 
     def listing(self, max_controls, text_limit=0):
         return {"controls": [n.control() for n in self.controls[:max_controls]], "text": "after"}
@@ -325,6 +344,19 @@ class Acting(unittest.TestCase):
         self.assertEqual(code, 0)
         opened.assert_called_once_with("example.com")
         self.assertIn("rewritten", result)
+
+    def test_a_link_filled_into_a_chat_field_is_sent_not_opened(self):
+        message = node(3, "field", "Message", [1100, 200, 300, 30])
+        self.tree = FakeTree([message], [message])
+        self.tree.read_back = "example.com"
+        with mock.patch.object(hands, "open_target") as opened, mock.patch.object(hands, "type_text", return_value="typed"), \
+                mock.patch.object(hands, "press", side_effect=lambda key: key), \
+                mock.patch.object(hands.Hands, "_activate", return_value="focused"), mock.patch.object(hands.time, "sleep"):
+            result, code = hands.act("front", [{"do": "fill", "field": "Message", "text": "example.com"},
+                                               {"do": "key", "key": "Return"}])
+        opened.assert_not_called()
+        self.assertNotIn("rewritten", result)
+        self.assertEqual([s["do"] for s in result["steps"]], ["fill", "key"])
 
     def test_nothing_runs_while_locked(self):
         def hypr_locked(*args):
