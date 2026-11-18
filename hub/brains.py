@@ -1486,7 +1486,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
         context.answered(said, turn.text, turn.did, turn.backend)
     if remembered is not None and not beside and turn.text:
         learn.facts_seen(remembered, turn.session_id)
-    learn.after_turn(conv, said, turn, machine)
+    learn.after_turn(conv, said, turn, machine, started=started)
     refresh_panels(turn)
     usage_log(turn, conv, origin, started, decision, extra)
     return turn

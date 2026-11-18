@@ -391,6 +391,12 @@ class TestSpoken(unittest.TestCase):
         self.assertLess(len(text), ears.SPOKEN_CHARS + 40)
         self.assertTrue(text.endswith("The rest is in the chat."))
 
+    def test_a_lowered_limit_keeps_whole_sentences_or_none(self):
+        reply = " ".join(f"Sentence number {i} is here." for i in range(100))
+        self.assertEqual(ears.spoken(reply, 60), "Sentence number 0 is here. Sentence number 1 is here. The rest is in the chat.")
+        self.assertEqual(ears.spoken(reply, 10), "The rest is in the chat.")
+        self.assertEqual(ears.spoken("Fine.", 10), "Fine.")
+
 
 if __name__ == "__main__":
     unittest.main()

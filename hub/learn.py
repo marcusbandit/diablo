@@ -4,10 +4,11 @@ Three things, none of which ever runs before a reply or blocks one:
 
     skills    after a claude turn that used at least MIN_TOOLS tools, none of them failing, the
               hub waits for Marcus's next message or three quiet minutes. A correction ("no",
-              "that's wrong", "nej") cancels it. Otherwise one Haiku call with no tools reads his
-              request, the tool steps and the index of learned skills and answers with a new
-              skill, a better version of a learned one, or skip. It is saved through skillbook,
-              the same checks as the save_skill tool. Setting learn.skills.
+              "that's wrong", "nej") cancels it, also one he said while the turn still ran.
+              Otherwise one Haiku call with no tools reads his request, the tool steps and the
+              index of learned skills and answers with a new skill, a better version of a learned
+              one, or skip. It is saved through skillbook, the same checks as the save_skill tool.
+              Setting learn.skills.
 
     facts     once the main conversation has been quiet for learn.facts.quiet_s (the idle
               reaper's 15 minutes), or learn.facts.batch new messages piled up, one Haiku call
@@ -52,6 +53,7 @@ CONTEXT_NEWEST = 8
 CONTEXT_RELATED = 20
 CONTEXT_FACT_CHARS = 220
 MESSAGE_CHARS = 500
+HEARD_KEPT = 32
 UPTO = "learn.facts.upto"
 
 SKILL_SYSTEM = """You turn a task Diablo, a personal assistant running Claude Code, just finished well into a reusable skill, so next time he does it at once. You get Marcus's request, the tool steps Diablo took, in order, and the index of skills Diablo already learned. Reply at once with one line of JSON and nothing else, one of:
@@ -134,6 +136,7 @@ class Pending:
 
 _pending = {}
 _tasks = set()
+_heard = collections.defaultdict(lambda: collections.deque(maxlen=HEARD_KEPT))
 
 
 def qualifies(turn, machine=False):
@@ -146,10 +149,23 @@ def qualifies(turn, machine=False):
     return not any(tool_name(step) in skillbook.TOOL_NAMES for step in turn.steps)
 
 
-def after_turn(conv, said, turn, machine=False):
-    """Queue a learning pass for a turn that went well. It waits for his next message or a quiet spell."""
+def heard_since(conv, started):
+    """His messages in the conversation heard after started, oldest first."""
+    if started is None:
+        return []
+    return [text for at, text in list(_heard.get(conv) or ()) if at > started]
+
+
+def after_turn(conv, said, turn, machine=False, started=None):
+    """Queue a learning pass for a turn that went well. It waits for his next message or a quiet spell.
+    Messages he said after the turn started, while it still ran, count as that next message, and a
+    correction among them cancels the pass before it is queued."""
     try:
         if not qualifies(turn, machine):
+            return None
+        later = heard_since(conv, started)
+        if any(correction(text) for text in later):
+            logger.info("nothing learned from %r: he corrected it while it ran", str(said or "")[:80])
             return None
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -158,7 +174,11 @@ def after_turn(conv, said, turn, machine=False):
         logger.exception("could not check the turn for learning")
         return None
     pending = Pending(conv, str(said or ""), list(turn.steps), turn.session_id or "", asyncio.Event())
-    _pending[conv] = pending
+    if later:
+        pending.next_text = later[0]
+        pending.event.set()
+    else:
+        _pending[conv] = pending
     task = loop.create_task(learn_after(pending))
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
@@ -166,9 +186,11 @@ def after_turn(conv, said, turn, machine=False):
 
 
 def heard(conv, text, machine=False):
-    """His next message in the conversation: it ends the wait of a pending pass, and a correction cancels it."""
+    """His next message in the conversation: it ends the wait of a pending pass, and a correction cancels it.
+    It is also kept with the time it came, for a turn still running when he said it."""
     if machine:
         return
+    _heard[conv].append((time.time(), str(text or "")))
     pending = _pending.pop(conv, None)
     if pending is not None:
         pending.next_text = str(text or "")

@@ -35,10 +35,12 @@ After a claude turn with at least five tool calls, a reply, and no error, the hu
 learning pass:
 
 1. It waits for Marcus's next message in that conversation, or three quiet minutes
-   (`learn.skills.quiet_s`, 180), whichever comes first. Lines from watchers and other machine
-   turns do not count.
+   (`learn.skills.quiet_s`, 180), whichever comes first. A message he sent after the turn
+   started, while it still ran, is that next message already. Lines from watchers and other
+   machine turns do not count.
 2. A next message that reads like a correction ("no", "that's wrong", "not what I asked",
-   "undo that", "nej", "forkert") cancels it.
+   "undo that", "nej", "forkert") cancels it, and so does a correction among any he sent while
+   the turn ran.
 3. It waits until no turn is running, then counts the turn's tool results in the claude
    session's transcript. Any failed tool call, or a transcript it cannot read, means nothing is
    learned.
