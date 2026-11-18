@@ -566,13 +566,15 @@ class SaidLog(unittest.TestCase):
 class Dismiss(unittest.TestCase):
     def test_ways_to_send_him_away(self):
         for line in ("Dismiss.", "That's all.", "That's all, thanks.", "Thanks, Diablo.", "go away", "nah I'm good",
-                     "Shut up. Dismiss.", "Okay stop talking", "That's enough, thanks"):
+                     "Shut up. Dismiss.", "Okay stop talking", "That's enough, thanks", "Be gone.", "I said go away.",
+                     "Clearly still here, disappear, remove your presence.", "Diablo for the last time. Dismiss."):
             with self.subTest(line=line):
                 self.assertTrue(ears.dismissed(line))
 
     def test_requests_that_start_like_one_are_not(self):
         for line in ("Thanks for turning off the lights, can you also dim the desk", "That's all the files?",
-                     "No.", "dismiss the card on the left", "Stop.", "Stop the music"):
+                     "No.", "dismiss the card on the left", "Stop.", "Stop the music", "make it disappear from the list",
+                     "Close the window"):
             with self.subTest(line=line):
                 self.assertFalse(ears.dismissed(line))
 
