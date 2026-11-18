@@ -220,6 +220,37 @@ class Steps(unittest.TestCase):
                 self.assertIsNone(note)
                 self.assertEqual(steps, hands.validate(plan))
 
+    def test_what_counts_as_pressing_enter(self):
+        for step in ({"do": "key", "key": "Return"}, {"do": "key", "key": "ctrl + Return"}, {"do": "key", "key": "KP_Enter"},
+                     {"do": "key", "key": "enter"}, {"do": "type", "text": "hello\n"}):
+            self.assertTrue(hands.submits(step), step)
+        for step in ({"do": "key", "key": "super+Return"}, {"do": "key", "key": "Tab"}, {"do": "type", "text": "a\nb"},
+                     {"do": "fill", "text": "x\n"}, {"do": "click_at", "x": 1, "y": 1}):
+            self.assertFalse(hands.submits(step), step)
+
+    def test_submit_labels_are_the_focused_control_then_the_default_button(self):
+        field, ok, other = node(1, "field", "Amount", None), node(2, "button", "Pay", None), node(3, "button", "Help", None)
+        field.states, ok.states = ["focused"], ["default"]
+        self.assertEqual(hands.submit_labels(FakeTree([other, ok, field])), ["Amount", "Pay"])
+
+    def test_ocr_label_reads_the_line_at_the_point(self):
+        def word(text, left, top, width):
+            return {"text": text, "left": left, "top": top, "width": width, "height": 14, "conf": 90.0}
+
+        words = [word("Pay", 150, 32, 30), word("now", 186, 32, 30), word("Cancel", 10, 60, 50)]
+        with mock.patch.object(hands, "ocr", side_effect=lambda region: (words, (region[2], region[3]))) as read:
+            self.assertEqual(hands.ocr_label(500, 300, MONITORS), "Pay now")
+            self.assertEqual(read.call_args[0][0], (340, 260, 320, 80))
+            self.assertEqual(hands.ocr_label(500, 310, MONITORS), "Pay now")
+        with mock.patch.object(hands, "ocr", return_value=([word("Cancel", 10, 60, 50)], (320, 80))):
+            self.assertEqual(hands.ocr_label(500, 300, MONITORS), "")
+        with mock.patch.object(hands, "ocr") as read:
+            self.assertEqual(hands.ocr_label(5000, 300, MONITORS), "")
+        read.assert_not_called()
+        with mock.patch.object(hands, "ocr", return_value=([word("Cancel", 10, 6, 50)], (170, 50))) as read:
+            self.assertEqual(hands.ocr_label(10, 10, MONITORS), "Cancel")
+        self.assertEqual(read.call_args[0][0], (0, 0, 170, 50))
+
     def test_risky_words(self):
         for text in ("Delete", "Remove item", "Pay now", "Buy", "Send", "Submit order", "Sign out", "Log out", "Uninstall",
                      "Format disk", "Transfer", "Slet", "Fjern", "Betal", "Køb nu", "Log ud", "Afinstaller", "Overfør"):
@@ -296,6 +327,93 @@ class Acting(unittest.TestCase):
         self.assertEqual(code, hands.EXIT_CONFIRM)
         result, code = hands.act("front", [{"do": "click_at", "x": 1210, "y": 110}])
         self.assertEqual(code, 0)
+
+    def test_a_point_with_no_control_is_read_by_ocr(self):
+        with mock.patch.object(hands, "ocr_label", return_value="Pay now") as read:
+            result, code = hands.act("front", [{"do": "click_at", "x": 1500, "y": 700}])
+        self.assertEqual(code, hands.EXIT_CONFIRM)
+        self.assertIn("Pay now", result["needs_confirm"])
+        read.assert_called_once_with(1500, 700, MONITORS)
+        self.assertEqual(self.clicks, [])
+        with mock.patch.object(hands, "ocr_label", return_value="Open") as read:
+            result, code = hands.act("front", [{"do": "click_at", "x": 1500, "y": 700}])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.clicks, [(1500, 700, "left", False)])
+        with mock.patch.object(hands, "ocr_label") as read:
+            result, code = hands.act("front", [{"do": "click_at", "x": 1500, "y": 700, "confirmed": True}])
+        self.assertEqual(code, 0)
+        read.assert_not_called()
+
+    def test_a_point_ocr_cannot_read_needs_a_yes(self):
+        with mock.patch.object(hands, "ocr_label", side_effect=hands.HandsError("grim failed: no output")):
+            result, code = hands.act("front", [{"do": "click_at", "x": 1500, "y": 700}])
+        self.assertEqual(code, hands.EXIT_CONFIRM)
+        self.assertIn("could not read what is at 1500,700", result["needs_confirm"])
+        self.assertEqual(self.clicks, [])
+
+    def test_a_point_is_checked_again_after_earlier_steps(self):
+        labels = iter(["", "Delete forever"])
+        with mock.patch.object(hands, "ocr_label", side_effect=lambda *a: next(labels)), \
+                mock.patch.object(hands, "press", side_effect=lambda key: key):
+            result, code = hands.act("front", [{"do": "key", "key": "Tab"}, {"do": "click_at", "x": 1500, "y": 700}])
+        self.assertEqual(code, hands.EXIT_CONFIRM)
+        self.assertEqual(result["failed_step"], 2)
+        self.assertEqual(self.clicks, [])
+
+    def submit_tree(self):
+        amount = node(3, "field", "Amount", [1100, 200, 200, 30])
+        amount.states = ["focused"]
+        transfer = node(4, "button", "Transfer", [1100, 260, 80, 30])
+        transfer.states = ["default"]
+        self.tree = FakeTree([amount, transfer], [amount, transfer])
+        self.tree.read_back = "500"
+
+    def run_plan(self, plan):
+        pressed, typed = [], []
+        with mock.patch.object(hands, "press", side_effect=lambda key: pressed.append(key) or key), \
+                mock.patch.object(hands, "type_text", side_effect=lambda text: typed.append(text) or "typed"), \
+                mock.patch.object(hands.Hands, "_activate", return_value="focused"), mock.patch.object(hands.time, "sleep"):
+            result, code = hands.act("front", plan)
+        return result, code, pressed, typed
+
+    def test_return_on_a_form_whose_default_button_is_risky_needs_a_yes(self):
+        self.submit_tree()
+        result, code, pressed, typed = self.run_plan([{"do": "fill", "field": "Amount", "text": "500"}, {"do": "key", "key": "Return"}])
+        self.assertEqual(code, hands.EXIT_CONFIRM)
+        self.assertEqual(result["failed_step"], 2)
+        self.assertIn('pressing Return on "Transfer"', result["needs_confirm"])
+        self.assertEqual(typed, ["500"])
+        self.assertNotIn("Return", pressed)
+        result, code, pressed, typed = self.run_plan([{"do": "fill", "field": "Amount", "text": "500"},
+                                                      {"do": "key", "key": "Return", "confirmed": True}])
+        self.assertEqual(code, 0)
+        self.assertEqual(pressed[-1], "Return")
+
+    def test_a_line_ending_in_enter_on_a_risky_control_needs_a_yes(self):
+        send = node(5, "button", "Send", [1100, 300, 60, 30])
+        send.states = ["focused"]
+        self.tree = FakeTree([send], [send])
+        result, code, pressed, typed = self.run_plan([{"do": "type", "text": "on my way\n"}])
+        self.assertEqual(code, hands.EXIT_CONFIRM)
+        self.assertIn("typing a line that ends in Enter", result["needs_confirm"])
+        self.assertEqual(typed, [])
+        result, code, pressed, typed = self.run_plan([{"do": "type", "text": "on my way"}])
+        self.assertEqual((code, typed), (0, ["on my way"]))
+
+    def test_return_in_a_risky_window_is_refused_before_anything_runs(self):
+        bank = dict(CLIENTS[1], title="Transfer to savings")
+
+        def hypr_bank(*args):
+            return bank if args == ("activewindow",) else [bank] if args == ("clients",) else fake_hypr(*args)
+
+        self.tree = FakeTree()
+        with mock.patch.object(hands, "hypr", hypr_bank):
+            result, code, pressed, typed = self.run_plan([{"do": "fill", "text": "500"}, {"do": "key", "key": "Return"}])
+            self.assertEqual(code, hands.EXIT_CONFIRM)
+            self.assertIn('in the window "Transfer to savings"', result["needs_confirm"])
+            self.assertEqual((result["steps"], typed, pressed), ([], [], []))
+            result, code, pressed, typed = self.run_plan([{"do": "fill", "text": "500"}, {"do": "key", "key": "Tab"}])
+            self.assertEqual(code, 0)
 
     def test_a_risky_match_found_while_acting_is_refused(self):
         matches = {"matches": [{"text": "Delete everything", "x": 1100, "y": 300, "w": 100, "h": 20, "source": "ocr"}]}

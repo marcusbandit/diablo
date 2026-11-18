@@ -49,7 +49,7 @@ when it carries one. `role` is short (`button`, `toggle`, `checkbox`, `radio`, `
 `password`, `spin`, `slider`, `link`, `menuitem`, `menu`, `tab`, `item`, `switch`, `terminal`),
 or AT-SPI's own role name for anything else that takes focus and has a name. `states` lists only
 what is set: `focused`, `checked`, `selected`, `expanded`, `pressed`, `editable`, `readonly`,
-`required`, `disabled`. `value` is a field's text or a slider's number. `more_controls` counts the
+`required`, `default` (the button Enter presses), `disabled`. `value` is a field's text or a slider's number. `more_controls` counts the
 ones past `--max`; `truncated` means the walk hit its cap (3000 nodes, 2.5 s, depth 60, 400
 children a node).
 
@@ -141,13 +141,33 @@ browser, a type or a fill without a field, with no address key first, is taken t
 address bar, so a link typed into a web page's focused box that way opens instead of being sent.
 Name the field to keep it.
 
-Risky clicks: a click whose text, control name or the control under the point matches delete,
-remove, pay, buy, purchase, send, submit order, place order, sign out, log out, uninstall,
-format or transfer, or the Danish slet, fjern, betal, køb, indsend, bestil, afgiv ordre, log ud,
-afinstaller, formater or overfør, is refused unless that step carries `confirmed: true`. Words
-known before the plan runs are checked before any step runs; a match found while acting stops
-the plan at that step. The reply is `{"needs_confirm": "..."}` with exit 3, and the brain asks
-Marcus first.
+Risky actions: these words are risky: delete, remove, pay, buy, purchase, send, submit order,
+place order, sign out, log out, uninstall, format or transfer, or the Danish slet, fjern, betal,
+køb, indsend, bestil, afgiv ordre, log ud, afinstaller, formater or overfør. A step that may act
+on one is refused unless it carries `confirmed: true`:
+
+- click_text, when its text or the match found says one.
+- click, when the control's name says one.
+- click_at, when the control under the point says one. Where AT-SPI has no named control there
+  (Electron apps, canvases, icons), OCR reads the line of text at the point, within 24 pixels of
+  it, and that is checked instead. When OCR cannot run, the click needs a yes as well.
+- Enter: a key step whose key ends in Return, Enter or KP_Enter (with ctrl or shift too, not with
+  super), or a type step whose text ends in a newline. It is checked against the window's title,
+  the focused control's name and the name of any button AT-SPI marks as the default.
+
+Words known before the plan runs (click_text text, control names, the point's label, the window
+title for Enter) are checked before any step runs; a match found while acting stops the plan at
+that step, and click_at and Enter are checked again then, since earlier steps may have changed
+the screen. The reply is `{"needs_confirm": "..."}` with exit 3, and the brain asks Marcus first.
+
+What this does not catch: Enter in a web form whose submit button AT-SPI does not mark as the
+default, when neither the page title nor the focused field says a risky word (a field named
+Amount on a page called Netbank goes through); Enter that an app binds to something risky
+without saying so; a keyboard shortcut that deletes or sends (ctrl+Return in a mail client is
+caught only through the same three names, ctrl+d or Delete not at all); and a click_at whose OCR
+misreads the label. In the other direction, a window title that merely contains a risky word,
+such as a web page about deleting a branch or a terminal in a folder called remove-dupes, makes
+every Enter there need a yes. Typing without a newline is never checked.
 
 Nothing runs while the screen is locked: `act` refuses at once, whoever asked. It fails closed:
 when hyprctl cannot say whether the screen is locked, `act` refuses too, with an error that says
