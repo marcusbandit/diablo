@@ -52,6 +52,8 @@ FastAPI, uvicorn, binds the Pi's Tailscale address (`DIABLO_HUB_BIND` in local.e
 - POST /v1/chat/completions -> OpenAI chat.completion shape, and it is always Diablo: the hub agent runs on the last user message, both sides stored with source "api". Auth: X-Diablo-Token or Authorization Bearer with hub_token. The rank field picks his brain, a rank name (imp, baron, marquis, duke, lord) or a "provider|model-id" brain string; the model field is honored the same way when rank is absent, empty or missing means the llm_* default. The response echoes rank and the brain model id. Stream true is a 400 for now. Unknown provider or agent failure is 502 or 400 as fits.
 - POST /v1/proxy/completions -> the dumb pipe, nothing Diablo: body proxied verbatim to the default provider (missing or empty model becomes llm_model), stream true forwarded as SSE, nothing stored. Provider failure is 502.
 
+Learning settings (docs/learning.md): learn.skills (on: a skill is learned after a turn of five or more tools that all worked), learn.facts (on: facts are kept after a conversation goes quiet), learn.skills.quiet_s (180), learn.facts.quiet_s (900), learn.facts.batch (30), and learn.facts.upto, the last message id the fact pass read. The brain's MCP tools save_skill(name, description, steps), forget_skill(name) and list_skills(name?) manage the skills he writes himself in the brain home's .claude/skills.
+
 Tables: messages(id, ts, source, role, text, meta), facts(id, ts, text, tags), settings(key, value), profile(id=1, name, embedding, threshold), devices(id, name, token_hash, created, last_seen, revoked), pair_codes(code_hash, created, expires, used, device_id).
 
 ## Hub agent behavior

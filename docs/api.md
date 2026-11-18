@@ -352,6 +352,10 @@ without a card around it, and `wide` keeps a `list` out of a two column layout. 
   connected. A turn older than 30 minutes is left out, so nothing reads as busy forever. The orb
   beside the cursor (presence/busy.py) follows this.
 
+- `learned`: Diablo learned something on his own, after a reply and off the hot path (docs/learning.md).
+  `{"kind": "learned", "what": "skill" | "fact", "change": "created" | "updated", "label"}`, with
+  `id` for a fact. A client may show it quietly; it never pushes to Telegram.
+
 `?ping=<seconds>` sets the keepalive comment interval, for clients that hold the stream in the
 background.
 

@@ -7,7 +7,7 @@ import uuid
 
 import httpx
 
-from . import agent, character, db, deliver, devices, lockguard, modules, questions, settings, t3link, tasks, tts
+from . import agent, character, db, deliver, devices, lockguard, modules, questions, settings, skillbook, t3link, tasks, tts
 from .config import get_config
 
 logger = logging.getLogger("diablo.mcp")
@@ -179,7 +179,7 @@ def tools():
                 "description": function.get("description", ""),
                 "inputSchema": function.get("parameters") or {"type": "object", "properties": {}},
             })
-    return listed + EXTRA
+    return listed + EXTRA + skillbook.TOOLS
 
 
 def turn_origin():
@@ -731,6 +731,8 @@ def call(name, arguments):
         return threads.history(arguments.get("query"))
     if name == "restart_self":
         return restart(arguments)
+    if name in skillbook.TOOL_NAMES:
+        return skillbook.call(name, arguments)
     if name in ("ask_user", "cancel_question"):
         return ask_through_hub(name, arguments, os.environ.get("DIABLO_CONVERSATION") or "main")
     if modules.owner(name) is not None:

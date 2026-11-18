@@ -52,6 +52,7 @@ PLAIN = {
     "WebSearch": "the web", "WebFetch": "the web", "Read": "files", "Write": "files", "Edit": "files",
     "Glob": "files", "Grep": "files", "Task": "a helper", "Agent": "a helper", "ToolSearch": "his tools",
     "run_shell": "the shell", "Bash": "the shell", "send_voice": "his voice", "now": "the clock",
+    "save_skill": "his skills", "forget_skill": "his skills", "list_skills": "his skills",
 }
 
 

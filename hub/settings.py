@@ -52,6 +52,8 @@ DEFAULTS = {
     "ears.turn_max_s": "90",
     "ears.adaptive": "1",
     "ears.own_voice_end": "1",
+    "learn.skills": "on",
+    "learn.facts": "on",
 }
 
 
