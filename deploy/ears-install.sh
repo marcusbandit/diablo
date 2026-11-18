@@ -1,7 +1,7 @@
 #!/bin/sh
-# Installs the ears on banditbox: the wake word library into .venv-voice, the diablo-ears
-# command with its completion, and diablo-ears.service started with the desktop session. Run it
-# again after a pull. It never touches the old diablo-voice.service.
+# Installs the ears on the desktop box: the wake word library into .venv-voice, the diablo-ears,
+# diablo-act and diablo-hands commands with their completions, and diablo-ears.service started
+# with the desktop session. Run it again after a pull. It never touches the old diablo-voice.service.
 set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 py="$repo/.venv-voice/bin/python"
@@ -19,6 +19,9 @@ ln -sf "$repo/voice/completions/diablo-ears.bash" "$HOME/.local/share/bash-compl
 ln -sf "$repo/deploy/diablo-act" "$HOME/.local/bin/diablo-act"
 ln -sf "$repo/voice/completions/_diablo-act" "$HOME/.local/share/zsh/site-functions/_diablo-act"
 ln -sf "$repo/voice/completions/diablo-act.bash" "$HOME/.local/share/bash-completion/completions/diablo-act"
+ln -sf "$repo/deploy/diablo-hands" "$HOME/.local/bin/diablo-hands"
+ln -sf "$repo/voice/completions/_diablo-hands" "$HOME/.local/share/zsh/site-functions/_diablo-hands"
+ln -sf "$repo/voice/completions/diablo-hands.bash" "$HOME/.local/share/bash-completion/completions/diablo-hands"
 cp "$repo/deploy/diablo-ears.service" "$HOME/.config/systemd/user/diablo-ears.service"
 systemctl --user daemon-reload
 # reenable, not enable: an older install hangs off default.target and would still start at boot,
