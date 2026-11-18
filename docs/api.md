@@ -123,7 +123,9 @@ line, `{"brain": "claude"}` comes the moment the hub knows the turn goes to the 
 Jev found no plain command and no direct answer, so the ears can play a beat. The last line is
 `{"done": <the usual reply>}` or `{"error": {"status", "detail"}}`. The done reply keeps the whole
 answer for the chat in `reply`, the first text block in `spoken_first`, and in `rest` only the
-sentences of the final answer that no say line carried, so nothing is said twice. A brain without
+sentences of the final answer that no say line carried, so nothing is said twice. A sentence
+counts as carried only when a say line was that same sentence, so a closing "Done." after
+"Checking whether the build is done." is still said. A brain without
 partial messages (opencode, the api brain, an older CLI) sends its sentences when each whole text
 block is done, or none at all; the answer then comes in `done` as before.
 

@@ -57,6 +57,13 @@ class TestNothingTwice(unittest.TestCase):
              "backend": "claude"})
         self.assertEqual(words, "dentist at 10. call mum. gym.")
 
+    def test_a_closing_line_inside_a_streamed_one_is_said(self):
+        heard, words = self.words(
+            ["Checking whether the build is done."],
+            {"reply": "Checking whether the build is done.\n\nDone.", "spoken_first": "Checking whether the build is done.",
+             "rest": "Done.", "backend": "claude"})
+        self.assertEqual(words, "Done.")
+
     def test_the_rest_shares_the_spoken_length_with_the_streamed_lines(self):
         line = "This is one sentence of a long answer that goes on for quite a while indeed."
         streamed = [line] * 8

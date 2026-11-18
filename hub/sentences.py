@@ -172,11 +172,7 @@ def key(sentence):
 
 
 def unsaid(text, said):
-    """The sentences of text not among those already said, joined for speaking."""
+    """The sentences of text not among those already said, joined for speaking. A sentence counts
+    as said only when a said line is the same sentence, by key, never when it is part of one."""
     gone = {key(line) for line in said or []}
-    gone.discard("")
-    if not gone:
-        return " ".join(split(text))
-    joined = " " + " ".join(gone) + " "
-    kept = [line for line in split(text) if key(line) and key(line) not in gone and f" {key(line)} " not in joined]
-    return " ".join(kept)
+    return " ".join(line for line in split(text) if key(line) and key(line) not in gone)

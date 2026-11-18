@@ -102,6 +102,10 @@ class TestSplitter(unittest.TestCase):
         self.assertEqual(sentences.unsaid("Done.", ["done"]), "")
         self.assertEqual(sentences.unsaid("A. B.", []), "A. B.")
 
+    def test_unsaid_keeps_a_sentence_that_is_only_part_of_one_said(self):
+        self.assertEqual(sentences.unsaid("Done.", ["Checking whether the build is done."]), "Done.")
+        self.assertEqual(sentences.unsaid("The build is done. Done.", ["The build is done!"]), "Done.")
+
     def test_unsaid_keeps_list_items(self):
         text = "You have three reminders:\n- dentist at 10\n- call mum\n- gym"
         self.assertEqual(sentences.unsaid(text, ["You have three reminders:"]), "dentist at 10. call mum. gym.")
@@ -250,6 +254,10 @@ class TestSayLines(unittest.TestCase):
         self.assertEqual(done["rest"], "Sunny today. Twelve degrees.")
         lines = self.run_turn(["Checking.", "Sunny today."], "Checking.", "Sunny today. Twelve degrees.")
         self.assertEqual(lines[-1]["done"]["rest"], "Twelve degrees.")
+
+    def test_a_short_closing_line_inside_a_said_one_is_still_left(self):
+        lines = self.run_turn(["Checking whether the build is done."], "Checking whether the build is done.", "Done.")
+        self.assertEqual(lines[-1]["done"]["rest"], "Done.")
 
     def test_a_streamed_list_is_said_item_by_item(self):
         def delta(text):
