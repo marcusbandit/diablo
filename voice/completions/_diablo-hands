@@ -1,0 +1,73 @@
+#compdef diablo-hands
+
+_diablo-hands_windows() {
+  local -a wins
+  wins=(front ${(f)"$(hyprctl -j clients 2>/dev/null | python3 -c 'import json,sys
+for c in json.load(sys.stdin):
+    if c.get("mapped") and c.get("class"): print(c["class"])' 2>/dev/null)"})
+  compadd -a wins
+}
+
+_diablo-hands_steps() {
+  local -a plans descs
+  plans=(
+    "'[{\"do\":\"click_text\",\"text\":\"\"}]'"
+    "'[{\"do\":\"click_text\",\"text\":\"\",\"near\":\"\"}]'"
+    "'[{\"do\":\"click\",\"id\":1}]'"
+    "'[{\"do\":\"click_at\",\"x\":0,\"y\":0}]'"
+    "'[{\"do\":\"fill\",\"field\":\"\",\"text\":\"\"}]'"
+    "'[{\"do\":\"type\",\"text\":\"\"}]'"
+    "'[{\"do\":\"key\",\"key\":\"Return\"}]'"
+    "'[{\"do\":\"scroll\",\"direction\":\"down\",\"amount\":5}]'"
+    "'[{\"do\":\"open\",\"target\":\"\"}]'"
+    "'[{\"do\":\"focus\"}]'"
+    "'[{\"do\":\"wait\",\"seconds\":1}]'"
+  )
+  descs=(
+    "click_text: click visible words"
+    "click_text near: the match closest to other words"
+    "click: a control id from ui"
+    "click_at: a screen point"
+    "fill: put text in a named field and read it back"
+    "type: type text where the focus is"
+    "key: press a key or combo"
+    "scroll: up, down, left or right"
+    "open: an address, file or app"
+    "focus: bring the window forward"
+    "wait: up to 5 seconds"
+  )
+  compadd -Q -l -d descs -a plans
+}
+
+_diablo-hands() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[show help]' \
+    '1:command:((front\:"the focused window" windows\:"every window, front to back" ui\:"a window'"'"'s controls and text" find-text\:"where visible text is on screen" act\:"run a plan of steps"))' \
+    '*::arg:->args'
+  case $state in
+    args)
+      case $words[1] in
+        ui)
+          _arguments \
+            '--window[front, an address or part of a class or title]:window:_diablo-hands_windows' \
+            '--max[most controls to list]:count:(50 100 300 1000)'
+          ;;
+        find-text)
+          _arguments \
+            '--window[front, an address or part of a class or title]:window:_diablo-hands_windows' \
+            '--all[also read the screen by OCR when AT-SPI finds it]' \
+            '*:text to find:'
+          ;;
+        act)
+          _arguments \
+            '--window[front, an address or part of a class or title]:window:_diablo-hands_windows' \
+            '--steps[the plan as a JSON list]:steps:_diablo-hands_steps'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_diablo-hands "$@"
