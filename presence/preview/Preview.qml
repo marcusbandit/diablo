@@ -17,9 +17,11 @@ Window {
     readonly property string faces: args[2] ?? ""
     readonly property string ears: args[3] ?? "http://127.0.0.1:18758"
     readonly property string hub: args[4] ?? "http://127.0.0.1:18755"
+    readonly property var diagram: { try { return JSON.parse(args[5] ?? "[]"); } catch (e) { return []; } }
 
     readonly property bool panelScene: scene.startsWith("panel")
-    readonly property bool marksScene: scene.startsWith("marks")
+    readonly property bool marksScene: scene.startsWith("marks") || scene.startsWith("diagram")
+    readonly property bool diagramScene: scene.startsWith("diagram")
     width: s.screen?.[0] ?? (panelScene || marksScene ? 1280 : 760)
     height: s.screen?.[1] ?? (panelScene ? 860 : marksScene ? 800 : 560)
     visible: true
@@ -83,7 +85,9 @@ Window {
             { kind: "label", text: "Export", box: d.boxOf(d.exportButton) }] },
         "marks-steps": { mood: "speaking", at: [330, 600], cards: [], beat: d => ({ say: "Open the File menu, then choose Export.", caption: true,
             marks: [{ kind: "ring", box: d.boxOf(d.fileMenu) }, { kind: "num", n: 1, box: d.boxOf(d.fileMenu) },
-                { kind: "arrow", box: d.boxOf(d.fileMenu) }] }) }
+                { kind: "arrow", box: d.boxOf(d.fileMenu) }] }) },
+        "diagram-early": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 2 },
+        "diagram-last": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 99 }
     })
     readonly property var s: scenes[scene] ?? scenes["card-below"]
     readonly property bool cardsUp: (s.cards ?? []).length > 0
@@ -160,12 +164,26 @@ Window {
         anchors.fill: parent
         z: 1
         style: theme
-        visible: win.marksScene
+        visible: win.marksScene && !win.diagramScene
+    }
+
+    Repeater {
+        model: win.diagramScene ? win.diagram.slice(0, win.s.upTo ?? 99) : []
+
+        Marks {
+            required property var modelData
+
+            anchors.fill: parent
+            z: 1
+            style: theme
+            stagger: 300
+            marks: Mk.toLocal(Mk.cleanMarks(modelData.marks), { x: 0, y: 0, w: win.width, h: win.height })
+        }
     }
 
     Timer {
         interval: 80
-        running: win.marksScene
+        running: win.marksScene && !win.diagramScene
         onTriggered: {
             const beat = win.s.beat ? win.s.beat(desk) : { marks: win.s.marks(desk) };
             const orb = { x: group.x + 50, y: group.y + 50 };

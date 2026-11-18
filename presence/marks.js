@@ -1,6 +1,7 @@
 .pragma library
 
-const KINDS = ["ring", "underline", "arrow", "label", "spotlight", "highlight", "num", "check", "cross"];
+const KINDS = ["ring", "underline", "arrow", "label", "spotlight", "highlight", "num", "check", "cross", "node", "edge", "title"];
+const POINTS = ["fromPoint", "start", "end", "via"];
 
 function finite(v) {
     return typeof v === "number" && isFinite(v);
@@ -55,11 +56,13 @@ function toLocal(marks, screen) {
     for (const m of marks || []) {
         const box = { x: m.box.x - screen.x, y: m.box.y - screen.y, w: m.box.w, h: m.box.h };
         const local = { x: 0, y: 0, w: screen.w, h: screen.h };
-        const from = m.fromPoint ? { x: m.fromPoint.x - screen.x, y: m.fromPoint.y - screen.y } : null;
-        const reach = m.kind === "arrow" && from ? spanOf(box, from) : grow(box, 160);
+        const moved = { box: box };
+        for (const key of POINTS)
+            moved[key] = m[key] ? { x: m[key].x - screen.x, y: m[key].y - screen.y } : null;
+        const reach = m.kind === "arrow" && moved.fromPoint ? spanOf(box, moved.fromPoint) : grow(box, 160);
         if (!intersects(reach, local))
             continue;
-        out.push(Object.assign({}, m, { box: box, fromPoint: from }));
+        out.push(Object.assign({}, m, moved));
     }
     return out;
 }
@@ -314,6 +317,36 @@ function stage(marks, screens, orb, cursor, orbRadius) {
             out[i] = Object.assign({}, m, { side: sides });
     }
     return out;
+}
+
+function nodePath(box, shape) {
+    const x = box.x, y = box.y, w = box.w, h = box.h, cx = x + w / 2, cy = y + h / 2;
+    if (shape === "diamond")
+        return `M ${cx} ${y} L ${x + w} ${cy} L ${cx} ${y + h} L ${x} ${cy} Z`;
+    const r = shape === "round" ? h / 2 : Math.min(10, h / 2, w / 2);
+    return `M ${cx} ${y} L ${x + w - r} ${y} A ${r} ${r} 0 0 1 ${x + w} ${y + r} L ${x + w} ${y + h - r} `
+        + `A ${r} ${r} 0 0 1 ${x + w - r} ${y + h} L ${x + r} ${y + h} A ${r} ${r} 0 0 1 ${x} ${y + h - r} `
+        + `L ${x} ${y + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;
+}
+
+function edgePath(start, end, via, head) {
+    via = via || { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    const len = Math.hypot(end.x - start.x, end.y - start.y);
+    head = head === undefined ? Math.min(17, Math.max(10, len * 0.22)) : head;
+    let angle = Math.atan2(end.y - via.y, end.x - via.x);
+    if (Math.hypot(end.x - via.x, end.y - via.y) < 1e-6)
+        angle = Math.atan2(end.y - start.y, end.x - start.x);
+    const wing = 0.46;
+    const mid = { x: 0.25 * start.x + 0.5 * via.x + 0.25 * end.x, y: 0.25 * start.y + 0.5 * via.y + 0.25 * end.y };
+    return {
+        x1: start.x, y1: start.y, cx: via.x, cy: via.y, x2: end.x, y2: end.y, angle: angle, length: len, mx: mid.x, my: mid.y,
+        hx1: end.x - head * Math.cos(angle - wing), hy1: end.y - head * Math.sin(angle - wing),
+        hx2: end.x - head * Math.cos(angle + wing), hy2: end.y - head * Math.sin(angle + wing)
+    };
+}
+
+function keepsEarlier(beat) {
+    return !!(beat && beat.keep);
 }
 
 function clampTo(v, lo, hi) {

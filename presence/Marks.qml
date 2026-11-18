@@ -24,10 +24,11 @@ Item {
             readonly property int delay: index * marksRoot.stagger
 
             anchors.fill: parent
-            z: modelData.kind === "spotlight" ? -1 : modelData.kind === "highlight" ? -0.5 : 0
+            z: modelData.kind === "spotlight" ? -1 : modelData.kind === "highlight" ? -0.5 : modelData.kind === "node" ? 0.5 : 0
             sourceComponent: ({
                 ring: ringMark, underline: underlineMark, arrow: arrowMark, label: labelMark, spotlight: spotlightMark,
-                highlight: highlightMark, num: numMark, check: tickMark, cross: tickMark
+                highlight: highlightMark, num: numMark, check: tickMark, cross: tickMark, node: nodeMark, edge: edgeMark,
+                title: titleMark
             })[modelData.kind] ?? null
         }
     }
@@ -414,6 +415,208 @@ Item {
 
                     PathSvg {
                         path: tick.good ? "M 5 16 L 12 23 L 26 7" : "M 7 7 L 23 23 M 23 7 L 7 23"
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: nodeMark
+
+        Drawn {
+            id: node
+
+            readonly property string outline: Mk.nodePath(node.box, node.mark.shape ?? "box")
+            readonly property real fill: Math.max(0, Math.min(1, (node.t - 0.35) / 0.45))
+            duration: 620
+
+            Shape {
+                anchors.fill: parent
+                preferredRendererType: Shape.CurveRenderer
+
+                ShapePath {
+                    fillColor: Qt.rgba(marksRoot.style.overlay.r, marksRoot.style.overlay.g, marksRoot.style.overlay.b, 0.96 * node.fill)
+                    strokeColor: "transparent"
+                    strokeWidth: -1
+
+                    PathSvg {
+                        path: node.outline
+                    }
+                }
+
+                Pen {
+                    strokeColor: marksRoot.style.halo
+                    strokeWidth: 6
+                    trim.end: node.t
+
+                    PathSvg {
+                        path: node.outline
+                    }
+                }
+
+                Pen {
+                    strokeColor: marksRoot.style.ember
+                    strokeWidth: 2.5
+                    trim.end: node.t
+
+                    PathSvg {
+                        path: node.outline
+                    }
+                }
+            }
+
+            Text {
+                x: node.box.x + 10
+                y: node.box.y
+                width: node.box.w - 20
+                height: node.box.h
+                opacity: node.fill
+                text: node.mark.text ?? ""
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                color: marksRoot.style.ink
+                font.family: marksRoot.style.family
+                font.pixelSize: node.mark.size ?? 17
+                font.weight: Font.DemiBold
+            }
+        }
+    }
+
+    Component {
+        id: edgeMark
+
+        Drawn {
+            id: edge
+
+            readonly property var e: Mk.edgePath(edge.mark.start ?? ({ x: 0, y: 0 }), edge.mark.end ?? ({ x: 0, y: 0 }), edge.mark.via ?? null)
+            readonly property real head: Math.max(0, Math.min(1, (edge.t - 0.78) / 0.22))
+            readonly property real font: Math.max(11, (edge.mark.size ?? 17) - 4)
+            readonly property color under: marksRoot.style.halo
+            duration: 520
+
+            Shape {
+                anchors.fill: parent
+                preferredRendererType: Shape.CurveRenderer
+
+                Pen {
+                    strokeColor: edge.under
+                    strokeWidth: 7
+                    trim.end: edge.t
+                    startX: edge.e.x1
+                    startY: edge.e.y1
+
+                    PathQuad {
+                        controlX: edge.e.cx
+                        controlY: edge.e.cy
+                        x: edge.e.x2
+                        y: edge.e.y2
+                    }
+                }
+
+                Pen {
+                    strokeColor: marksRoot.style.ember
+                    strokeWidth: 3
+                    trim.end: edge.t
+                    startX: edge.e.x1
+                    startY: edge.e.y1
+
+                    PathQuad {
+                        controlX: edge.e.cx
+                        controlY: edge.e.cy
+                        x: edge.e.x2
+                        y: edge.e.y2
+                    }
+                }
+            }
+
+            Shape {
+                anchors.fill: parent
+                opacity: edge.head
+                preferredRendererType: Shape.CurveRenderer
+
+                ShapePath {
+                    fillColor: marksRoot.style.ember
+                    strokeColor: edge.under
+                    strokeWidth: 2
+                    joinStyle: ShapePath.RoundJoin
+
+                    PathPolyline {
+                        path: [Qt.point(edge.e.hx1, edge.e.hy1), Qt.point(edge.e.x2, edge.e.y2), Qt.point(edge.e.hx2, edge.e.hy2),
+                            Qt.point(edge.e.hx1, edge.e.hy1)]
+                    }
+                }
+            }
+
+            Rectangle {
+                visible: (edge.mark.text ?? "") !== ""
+                x: edge.e.mx - width / 2
+                y: edge.e.my - height / 2
+                width: tag.implicitWidth + 14
+                height: tag.implicitHeight + 6
+                radius: height / 2
+                opacity: edge.head
+                color: marksRoot.style.raised
+                border.width: 1
+                border.color: marksRoot.style.line
+
+                Text {
+                    id: tag
+
+                    anchors.centerIn: parent
+                    text: edge.mark.text ?? ""
+                    color: marksRoot.style.text
+                    font.family: marksRoot.style.family
+                    font.pixelSize: edge.font
+                }
+            }
+        }
+    }
+
+    Component {
+        id: titleMark
+
+        Drawn {
+            id: heading
+
+            duration: 700
+            easing: Easing.OutCubic
+
+            Rectangle {
+                x: heading.box.x
+                y: heading.box.y
+                width: heading.box.w
+                height: heading.box.h
+                radius: heading.box.h / 2
+                opacity: Math.min(1, heading.t * 2.5)
+                color: Qt.rgba(marksRoot.style.base.r, marksRoot.style.base.g, marksRoot.style.base.b, 0.94)
+                border.width: 1
+                border.color: marksRoot.style.line
+
+                Item {
+                    anchors.fill: parent
+                    anchors.leftMargin: 20
+                    anchors.rightMargin: 20
+                    clip: true
+
+                    Item {
+                        width: parent.width * heading.t
+                        height: parent.height
+                        clip: true
+
+                        Text {
+                            width: heading.box.w - 40
+                            height: heading.box.h
+                            text: heading.mark.text ?? ""
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            color: marksRoot.style.strong
+                            font.family: marksRoot.style.family
+                            font.pixelSize: heading.mark.size ?? 26
+                            font.weight: Font.DemiBold
+                        }
                     }
                 }
             }

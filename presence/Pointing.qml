@@ -65,7 +65,7 @@ Scope {
     function tick() {
         const before = pointing.play;
         const next = Mk.advance(pointing.show, before, Date.now(), { x: pointing.cursor.x, y: pointing.cursor.y }, pointing.resolved,
-            { cps: pointing.show?.cps ?? 15 });
+            { cps: pointing.show?.cps ?? 15, lingerMs: pointing.show?.linger ? pointing.show.linger * 1000 : undefined });
         pointing.play = next;
         if (next.over) {
             pointing.retire();
@@ -81,17 +81,23 @@ Scope {
         const beat = pointing.beatFor(n);
         if (!beat)
             return;
-        pointing.retire();
+        const keep = Mk.keepsEarlier(beat);
+        pointing.retire(keep ? showId : "");
         const orb = pointing.locateOrb();
         const cursor = pointing.cursor.x >= 0 ? { x: pointing.cursor.x, y: pointing.cursor.y } : null;
         const marks = Mk.stage(Mk.withCaption(beat), pointing.screens(), orb, cursor);
-        beatModel.append({ key: `${showId}:${n}`, json: JSON.stringify(marks), live: true });
+        beatModel.append({ key: `${showId}:${n}`, show: showId, json: JSON.stringify(marks), live: true, keep: keep });
     }
 
-    function retire() {
-        for (let i = 0; i < beatModel.count; i++)
+    function retire(except) {
+        let gone = false;
+        for (let i = 0; i < beatModel.count; i++) {
+            if (except && beatModel.get(i).show === except)
+                continue;
             beatModel.setProperty(i, "live", false);
-        if (beatModel.count > 0)
+            gone = true;
+        }
+        if (gone)
             sweep.restart();
     }
 
@@ -233,10 +239,12 @@ Scope {
                 Marks {
                     required property string json
                     required property bool live
+                    required property bool keep
 
                     anchors.fill: parent
                     style: pointing.style
                     shown: live
+                    stagger: keep ? 300 : 140
                     marks: Mk.toLocal(JSON.parse(json), overlay.area)
                 }
             }

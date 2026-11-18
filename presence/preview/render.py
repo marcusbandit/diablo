@@ -8,6 +8,7 @@ History scenes a fake hub (scripts/fakehub.py).
 Needs PySide6 (Qt 6) and prints every QML warning, so a broken component fails loudly.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCENES = ["orb-listening", "orb-thinking", "orb-speaking", "act-speaking", "act-surprised", "act-sorry", "act-delighted", "moons-0", "moons-1", "moons-3", "moons-9", "card-below", "card-above", "card-right-edge",
           "two-cards", "panel-settings", "panel-voice", "panel-training", "panel-now", "panel-list", "panel-list-desk", "panel-list-wide", "panel-list-long", "panel-history", "panel-history-search",
-          "marks-all", "marks-spotlight", "marks-steps"]
+          "marks-all", "marks-spotlight", "marks-steps", "diagram-early", "diagram-last"]
 EARS = {"panel-settings": "trained", "panel-voice": "trained", "panel-training": "speech", "panel-now": "trained"}
 PORT = 18758
 HUB_PORT = 18755
@@ -37,6 +38,15 @@ def wait_for_port(port, seconds=10):
     return False
 
 
+def diagram_beats(screen=(1920, 1080)):
+    """The sample diagram's beats as the hub would send them, laid out for the preview's screen."""
+    sys.path.insert(0, str(ROOT))
+    from hub import diagram, pointing
+
+    beats, _ = diagram.plan(diagram.SAMPLE, {"x": 0, "y": 0, "w": screen[0], "h": screen[1]}, show="preview")
+    return json.dumps([pointing.clean_payload(beat) for beat in beats])
+
+
 def render(scene, out):
     code = (
         "import sys\n"
@@ -52,7 +62,7 @@ def render(scene, out):
         "sys.exit(3 if bad else code)\n"
     )
     argv = [sys.executable, "-c", code, "--", scene, str(out), str(ROOT / "assets/faces"), f"http://127.0.0.1:{PORT}",
-            f"http://127.0.0.1:{HUB_PORT}"]
+            f"http://127.0.0.1:{HUB_PORT}", diagram_beats() if scene.startswith("diagram") else "[]"]
     # The rhi backend, or the MultiEffect that tints his face draws nothing offscreen. A machine
     # with no GPU (CI) sets PRESENCE_SOFTWARE=1: everything draws, the face just goes untinted.
     backend = "software" if os.environ.get("PRESENCE_SOFTWARE") else "rhi"

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const source = readFileSync(new URL("../../presence/marks.js", import.meta.url), "utf8").replace(/^\.pragma library\s*$/m, "");
-const mk = new Function(`${source}; return { clearOf, cleanMarks, withCaption, toLocal, ringFor, underlineFor, arrowFrom, arrowPath, labelSpot, badgeSpot, sayMs, advance, stage, waitBox };`)();
+const mk = new Function(`${source}; return { clearOf, cleanMarks, withCaption, toLocal, ringFor, underlineFor, arrowFrom, arrowPath, labelSpot, badgeSpot, sayMs, advance, stage, waitBox, nodePath, edgePath, keepsEarlier };`)();
 
 const screen = { x: 0, y: 0, w: 2560, h: 1440 };
 const exportBox = { x: 1200, y: 300, w: 80, h: 30 };
@@ -223,4 +223,73 @@ test("a waiting beat gives up after its timeout", () => {
 test("the wait follows the first mark that has a box of its own, not a spotlight", () => {
     const box = mk.waitBox(mk.cleanMarks([{ kind: "spotlight", box: exportBox }, { kind: "ring", box: { x: 1, y: 2, w: 3, h: 4 } }]));
     assert.deepEqual(box, { x: 1, y: 2, w: 3, h: 4 });
+});
+
+test("a box node's outline starts at its top middle and stays on its edges", () => {
+    const box = { x: 100, y: 200, w: 160, h: 54 };
+    const path = mk.nodePath(box, "box");
+    assert.ok(path.startsWith("M 180 200"));
+    assert.ok(path.trim().endsWith("Z"));
+    const nums = path.match(/-?\d+(\.\d+)?/g).map(Number);
+    for (let i = 0; i < nums.length; i++)
+        assert.ok(nums[i] >= 0 && nums[i] <= 260, path);
+    const pts = [...path.matchAll(/[ML] (-?[\d.]+) (-?[\d.]+)/g)].map(m => ({ x: +m[1], y: +m[2] }));
+    for (const p of pts) {
+        const onX = Math.abs(p.x - box.x) < 1e-6 || Math.abs(p.x - box.x - box.w) < 1e-6;
+        const onY = Math.abs(p.y - box.y) < 1e-6 || Math.abs(p.y - box.y - box.h) < 1e-6;
+        assert.ok(onX || onY, JSON.stringify(p));
+    }
+});
+
+test("a round node is a pill and a diamond touches the middle of each side", () => {
+    const box = { x: 0, y: 0, w: 200, h: 60 };
+    assert.ok(mk.nodePath(box, "round").includes("A 30 30"));
+    assert.equal(mk.nodePath(box, "diamond"), "M 100 0 L 200 30 L 100 60 L 0 30 Z");
+});
+
+test("an edge ends at its end point with the head trailing back along the curve", () => {
+    const e = mk.edgePath({ x: 100, y: 100 }, { x: 100, y: 300 }, null);
+    assert.equal(e.x2, 100);
+    assert.equal(e.y2, 300);
+    assert.ok(Math.abs(e.angle - Math.PI / 2) < 1e-9, "a straight edge points along itself");
+    assert.ok(e.hy1 < 300 && e.hy2 < 300);
+    assert.ok(Math.abs((e.hx1 + e.hx2) / 2 - 100) < 1e-9);
+    assert.equal(e.mx, 100);
+    assert.equal(e.my, 200);
+    const bent = mk.edgePath({ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 100, y: 80 });
+    assert.ok(bent.my > 0 && bent.my < 80, "the label sits on the curve, not at its control point");
+    assert.ok(bent.angle < 0, "the head follows the curve into the end");
+});
+
+test("diagram pieces survive cleaning and move with their points onto the monitor", () => {
+    const marks = mk.cleanMarks([
+        { kind: "node", text: "Kernel", box: { x: 2700, y: 300, w: 160, h: 54 } },
+        { kind: "edge", start: { x: 2780, y: 354 }, end: { x: 2780, y: 500 }, via: { x: 2780, y: 427 }, box: { x: 2780, y: 354, w: 0, h: 146 } },
+        { kind: "title", text: "How", box: { x: 2600, y: 100, w: 300, h: 46 } }
+    ]);
+    assert.equal(marks.length, 3);
+    const local = mk.toLocal(marks, { x: 2560, y: 0, w: 1920, h: 1080 });
+    assert.equal(local.length, 3);
+    assert.deepEqual(local[1].start, { x: 220, y: 354 });
+    assert.deepEqual(local[1].end, { x: 220, y: 500 });
+    assert.deepEqual(local[1].via, { x: 220, y: 427 });
+    assert.equal(local[0].box.x, 140);
+    assert.equal(mk.toLocal(marks, { x: -2560, y: 0, w: 2560, h: 1440 }).length, 0);
+});
+
+test("only a keep beat holds on to the beats before it", () => {
+    assert.equal(mk.keepsEarlier({ keep: true }), true);
+    assert.equal(mk.keepsEarlier({ marks: [] }), false);
+    assert.equal(mk.keepsEarlier(null), false);
+});
+
+test("a drawing lingers as long as the show asks", () => {
+    const show = { show: "d", count: 1, beats: [{ n: 0, say: "One.", keep: true, marks: [] }] };
+    let p = mk.advance(show, null, 0, null, {}, {});
+    p = mk.advance(show, p, 0, null, {}, {});
+    p = mk.advance(show, p, 5000, null, {}, { lingerMs: 45000 });
+    p = mk.advance(show, p, 30000, null, {}, { lingerMs: 45000 });
+    assert.equal(p.over, false);
+    p = mk.advance(show, p, 51000, null, {}, { lingerMs: 45000 });
+    assert.equal(p.over, true);
 });
