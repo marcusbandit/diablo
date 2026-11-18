@@ -433,6 +433,124 @@ def window_verb(verb, arguments):
     return (said[-1] if said else f"{verb} said nothing")[:300]
 
 
+HANDS_WINDOW = {"type": "string", "description": "front (the default), a window address, or part of an app class or title"}
+HANDS = [
+    {
+        "name": "desktop_front",
+        "description": "What has the focus on Marcus's desktop right now: the focused window's app class, title, address, pid and box in screen pixels, its monitor and scale, and whether the screen is locked. It takes about 50 ms; use it to see where you are before you act.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "read_window",
+        "description": "Read a window on Marcus's desktop through accessibility: numbered controls (role, name, value, states such as focused or checked, box as [x, y, w, h] in global screen pixels) and the visible text. Use it for the exact controls of a form or a list. To press something whose words you can see, skip this and call act_on_desktop with click_text. Ids stay valid for act_on_desktop's click step while the window does not change. Chromium and Electron apps often show no controls; click_text and find_on_screen then read the screen by OCR.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "window": HANDS_WINDOW,
+                "max": {"type": "integer", "description": "most controls to list, 300 when left out"},
+            },
+        },
+    },
+    {
+        "name": "find_on_screen",
+        "description": "Where some visible words are on Marcus's desktop, in global screen pixels: the window's accessibility names first, OCR of the window when they miss. Returns matches with x, y, w, h and source. Only for positions without acting: to click words, call act_on_desktop with click_text straight away.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "the words to find"},
+                "window": HANDS_WINDOW,
+                "all": {"type": "boolean", "description": "also run OCR when accessibility already found it"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "act_on_desktop",
+        "description": "Do a whole task on Marcus's desktop in one call: steps run in order and stop at the first that fails. Act on the words you can see with click_text; never screenshot or read the window first. Put the whole task in one call, not one call per step. The result already holds the front window and a fresh list of its controls and text, so never read the window again afterwards. Steps: {do: focus} brings the window forward; {do: click_text, text, near?, button?, double?} clicks visible words, near picks the match closest to other words; {do: click, id, name?} a control id from read_window; {do: click_at, x, y}; {do: fill, field?, text} puts text in the field named field (or the focused one) and reads it back; {do: type, text}; {do: key, key} such as ctrl+l, Return or ctrl+shift+t; {do: scroll, direction, amount?}; {do: open, target} an address, file or app, the way to visit a URL (never type it into an address bar); {do: wait, seconds} up to 5. A click on words like delete, remove, pay, buy, send, sign out, uninstall or transfer comes back as needs_confirm: ask Marcus, then run that step again with confirmed true. Nothing runs while the screen is locked.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "window": HANDS_WINDOW,
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "do": {"type": "string", "enum": ["focus", "click_text", "click", "click_at", "fill", "type", "key", "scroll", "open", "wait"]},
+                            "text": {"type": "string"},
+                            "near": {"type": "string"},
+                            "field": {"type": "string"},
+                            "id": {"type": "integer"},
+                            "name": {"type": "string"},
+                            "x": {"type": "integer"},
+                            "y": {"type": "integer"},
+                            "button": {"type": "string", "enum": ["left", "right", "middle"]},
+                            "double": {"type": "boolean"},
+                            "key": {"type": "string"},
+                            "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+                            "amount": {"type": "integer"},
+                            "target": {"type": "string"},
+                            "seconds": {"type": "number"},
+                            "confirmed": {"type": "boolean"},
+                        },
+                        "required": ["do"],
+                    },
+                },
+            },
+            "required": ["steps"],
+        },
+    },
+]
+EXTRA += HANDS
+HANDS_COMMANDS = {"desktop_front": "front", "read_window": "ui", "find_on_screen": "find-text", "act_on_desktop": "act"}
+
+
+def hands_argv(name, arguments):
+    """The diablo-hands command line for one hands tool call."""
+    command = HANDS_COMMANDS[name]
+    target = " ".join(str(arguments.get("window") or "").split())
+    argv = [command] + (["--window", target] if target and command != "front" else [])
+    if command == "ui" and arguments.get("max"):
+        argv += ["--max", str(int(arguments["max"]))]
+    if command == "find-text":
+        text = " ".join(str(arguments.get("text") or "").split())
+        if not text:
+            raise ValueError("say what text to find")
+        argv += (["--all"] if arguments.get("all") else []) + ["--", text]
+    if command == "act":
+        steps = arguments.get("steps")
+        if not steps:
+            raise ValueError("give the steps to run")
+        argv += ["--steps", steps if isinstance(steps, str) else json.dumps(steps, ensure_ascii=False)]
+    return argv
+
+
+def hands(name, arguments):
+    """Runs diablo-hands on the desktop box over ssh and hands back its one JSON line as is."""
+    import shlex
+    import subprocess
+
+    from . import localenv
+
+    try:
+        argv = hands_argv(name, arguments)
+    except (TypeError, ValueError) as error:
+        return json.dumps({"error": str(error)})
+    repo = (localenv.get("DIABLO_DESKTOP_REPO") or "Projects/diablo").removeprefix("~/")
+    command = f"cd {shlex.quote(repo)} && ./deploy/diablo-hands " + " ".join(shlex.quote(a) for a in argv)
+    host = str(settings.get("desktop.host") or "").strip() or lockguard.host()
+    try:
+        done = subprocess.run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", host, command],
+                              capture_output=True, text=True, timeout=120 if argv[0] == "act" else 40)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return json.dumps({"error": f"could not reach {host}: {error}"})
+    lines = [line for line in (done.stdout or "").splitlines() if line.strip()]
+    if lines and lines[-1].lstrip().startswith("{"):
+        return lines[-1][:60000]
+    said = (done.stderr or done.stdout or "").strip().splitlines()
+    return json.dumps({"error": (said[-1] if said else f"diablo-hands exited {done.returncode}")[:300]})
+
+
 def restart(arguments):
     token = str(get_config().get("hub_token") or "")
     body = {
@@ -520,6 +638,8 @@ def call(name, arguments):
         return keep_sound_up(arguments)
     if name in ("focus_window", "stage_window"):
         return window_verb(name.split("_")[0], arguments)
+    if name in HANDS_COMMANDS:
+        return hands(name, arguments)
     if name == "send_voice":
         return send_voice(arguments.get("text"), arguments.get("language"))
     if name == "watch_t3_thread":
