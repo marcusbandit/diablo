@@ -273,17 +273,40 @@ class TestSpokenBrain(unittest.TestCase):
             seen.update(model=picked.model, effort=picked.effort, text=text, origin=origin)
             return brains.Turn(text="Here is the deep answer.", did="answered")
 
-        async def go():
-            with mock.patch.object(brains, "run_side", side), mock.patch.object(brains.busy_turns, "_publish"), \
-                    mock.patch("hub.deliver.deliver", new=mock.AsyncMock()) as deliver:
-                await brains.launch_deep("main", "prove it", None, decision)
-                return deliver
-
-        deliver = asyncio.run(go())
+        deliver, recorded = self.run_deep(decision, side, locked_later=False)
         self.assertEqual((seen["model"], seen["effort"]), ("claude-opus-5-5", "high"))
         self.assertTrue(seen["text"].endswith("prove it"))
         self.assertEqual(deliver.await_args.args[0], "Here is the deep answer.")
         self.assertTrue(deliver.await_args.kwargs["meta"]["deep"])
+        self.assertEqual(recorded.call_args.args[1], "prove it")
+
+    def test_a_desk_that_locks_before_the_background_run_starts_stops_it(self):
+        from hub import route
+
+        decision = route.Decision(subject="other", tier="deep", reason="", path=["x"], explicit=True)
+        decision.background = ("claude-opus-5-5", "high")
+        side = mock.AsyncMock()
+        deliver, recorded = self.run_deep(decision, side, locked_later=True)
+        side.assert_not_called()
+        recorded.assert_not_called()
+        self.assertIn("locked", deliver.await_args.args[0])
+
+    def run_deep(self, decision, side, locked_later):
+        from hub import lockguard
+
+        guard = lockguard.Guard(kind="voice", screen="unlocked", origin="spoken aloud at his desk")
+        later = lockguard.Guard(kind="voice", screen="locked" if locked_later else "unlocked",
+                                restricted=locked_later, origin=guard.origin)
+
+        async def go():
+            with mock.patch.object(brains, "run_side", side), mock.patch.object(brains.busy_turns, "_publish"), \
+                    mock.patch.object(brains.lockguard, "for_turn", return_value=later), \
+                    mock.patch.object(brains, "record_turn") as recorded, mock.patch.object(brains, "usage_log"), \
+                    mock.patch("hub.deliver.deliver", new=mock.AsyncMock()) as deliver:
+                await brains.launch_deep("main", "prove it", None, decision, guard)
+                return deliver, recorded
+
+        return asyncio.run(go())
 
     def test_machine_turns_are_never_switched(self):
         decision = self.decide("spoken aloud at his desk", machine=True)

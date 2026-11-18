@@ -726,21 +726,27 @@ DEEP_NOTE = ("(He asked aloud for the big brain. A background run on it already 
              "and do not do the heavy work yourself.)")
 
 
-def launch_deep(conv, text, images, decision):
-    """Heavy work asked for aloud goes to its own run on the asked-for model; the spoken turn stays quick."""
+def launch_deep(conv, text, images, decision, guard):
+    """Heavy work asked for aloud goes to its own run on the asked-for model; the spoken turn stays quick.
+    Only an unrestricted turn may start one, and the lock is read again just before it starts."""
     model, effort_level = decision.background
     picked = route.Decision(subject=decision.subject, tier=decision.tier, reason="asked aloud for the big brain",
                             path=list(decision.path), explicit=True)
     picked.model, picked.effort = model, effort_level
     logger.info("%s: %r goes to a background run on %s %s", conv, text[:80], model, effort_level)
-    return background(run_deep(conv, text, images, picked))
+    return background(run_deep(conv, text, images, picked, guard))
 
 
-async def run_deep(conv, text, images, decision):
+async def run_deep(conv, text, images, decision, guard):
     from . import deliver as delivery
 
+    started = time.time()
     shown = busy_turns.start(conv, DEEP_ORIGIN)
+    turn = None
     try:
+        again = await asyncio.to_thread(lockguard.for_turn, guard.origin)
+        if guard.restricted or again.restricted:
+            raise RuntimeError("the desk locked before it could start")
         turn = await run_side(conv, prefix(DEEP_ORIGIN) + "\n" + text, images, None, decision, origin=DEEP_ORIGIN)
         reply = turn.text.strip() or (f"The background run failed: {turn.error[:300]}" if turn.error else agent.FALLBACK)
         did = turn.did or did_for(turn)
@@ -749,6 +755,13 @@ async def run_deep(conv, text, images, decision):
         reply, did = f"The background run failed: {str(error)[:300]}", ""
     finally:
         busy_turns.end(shown)
+    if turn is not None:
+        turn.did = did
+        try:
+            record_turn(conv, text, turn)
+            usage_log(turn, conv, DEEP_ORIGIN, started, decision)
+        except Exception:
+            logger.exception("could not record the background run for %s", conv)
     try:
         await delivery.deliver(reply, "report", origin=DEEP_ORIGIN, meta={"did": did, "pushed": False, "deep": True})
     except Exception:
@@ -1338,9 +1351,6 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                              machine=machine)
         if needs_context:
             notes = [CONTEXT_NOTE] + list(notes or [])
-        if decision is not None and decision.background:
-            launch_deep(conv, text, images, decision)
-            notes = [DEEP_NOTE] + list(notes or [])
         if decision is not None and decision.handoff:
             notes = [handoff_note(decision.handoff)] + list(notes or [])
     act = route.desktop_action(answer, text, desktop) if asked else None
@@ -1376,6 +1386,12 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
     guard = await looking
     if guard.line:
         notes = [guard.line] + list(notes or [])
+    if decision is not None and decision.background:
+        if guard.restricted:
+            logger.info("%s: no background run for %r while the desk is locked", conv, said[:80])
+        else:
+            launch_deep(conv, text, images, decision, guard)
+            notes = [DEEP_NOTE] + list(notes or [])
     waiting_mail = await asyncio.to_thread(mail_note, conv, machine, guard)
     if waiting_mail:
         notes = list(notes or []) + [waiting_mail]
