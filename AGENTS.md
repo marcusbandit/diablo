@@ -73,7 +73,7 @@ The standby hub on nemurenai runs the same hub/ with a `[standby]` table in its 
 - Python 3.12. The voice venv is .venv-voice. Tests: `.venv-voice/bin/python -m pytest tests/ -q` from the repo root, or `python3 -m pytest tests/ -q`.
 - No comments in code. No em dashes or en dashes anywhere. Sentence case in UI strings.
 - Settings and keys come from the hub's settings API and ~/.config/diablo/config.toml, never hardcoded.
-- The voice loop restarts into new code on reboot_self or `systemctl --user restart diablo-voice`.
+- The ears (voice/ears.py) are the only voice turn and restart into new code with `systemctl --user restart diablo-ears`. The old loop, diablo-voice, is retired (#97): it answered a second time beside the ears.
 - The healer (voice/healer.py) patches crashes at runtime with backups in ~/.local/state/diablo/heal-backups; keep its smoke import list current when you add modules.
 
 ## Pull requests: merge them yourself

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the ears on the desktop box: the wake word library into .venv-voice, the diablo-ears,
 # diablo-act and diablo-hands commands with their completions, and diablo-ears.service started
-# with the desktop session. Run it again after a pull. It never touches the old diablo-voice.service.
+# with the desktop session. Run it again after a pull. It also switches off the retired diablo-voice.service.
 set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 py="$repo/.venv-voice/bin/python"
@@ -26,6 +26,7 @@ cp "$repo/deploy/diablo-ears.service" "$HOME/.config/systemd/user/diablo-ears.se
 systemctl --user daemon-reload
 # reenable, not enable: an older install hangs off default.target and would still start at boot,
 # before the compositor, with no Wayland to paste into.
+systemctl --user disable --now diablo-voice.service 2>/dev/null || true
 systemctl --user reenable diablo-ears.service
 systemctl --user restart diablo-ears.service
 echo "ears installed. First time: diablo-ears train"

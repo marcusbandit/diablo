@@ -7,7 +7,7 @@ Run from the project root with the voice venv:
 ```
 
 Collects keys, writes ~/.config/diablo/config.toml, deploys the hub to homehub,
-installs piper, and enables the user services: diablo-voice, diablo-pool (Raphael
+installs piper, and enables the user services: diablo-ears, diablo-pool (Raphael
 and the workers), diablo-fast (the fast tongue panel) and diablo-stagehand.
 Safe to rerun, existing values are the defaults. `--skip-hub` skips the homehub
 deploy.

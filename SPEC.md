@@ -108,7 +108,7 @@ Interactive, idempotent, safe to rerun: python -m onboarding.onboard. Flags: --s
 6. Mic: shows the system default source, accepts a substring override.
 7. Write ~/.config/diablo/config.toml, chmod 600.
 8. Unless --skip-hub: run deploy/hub-install.sh, then push all settings to the hub via the API.
-9. Piper download if missing. 10. Install the diablo-voice user unit and enable it.
+9. Piper download if missing. 10. Install the ears with deploy/ears-install.sh.
 11. Install the diablo-pool, diablo-fast and diablo-stagehand user units and enable them; the closing print lists where to talk to him (voice, diablo talk, telegram).
 
 On rerun, existing values are the defaults; api keys are re-entered.
@@ -131,7 +131,7 @@ User tools: every pool agent (repl, panel, workers) also loads ~/.config/diablo/
 
 - deploy/hub-install.sh: run from banditbox, remote work over ssh homehub. rsync code, uv-based venv (the Pi has no ensurepip), unit installed with sudo install (allowlisted), enabled via systemctl (allowlisted once the sudoers file below is in place), process started, health curl over Tailscale. Idempotent.
 - deploy/diablo-hub.service: system unit, a template rendered by deploy/hub-install.sh: User and home filled in for the box, EnvironmentFile ~/.config/diablo/local.env, ExecStart ~/diablo-hub/venv/bin/uvicorn hub.server:app --host ${DIABLO_HUB_BIND} --port 8755, Restart=always.
-- deploy/diablo-voice.service: user unit on banditbox, ExecStart=%h/Projects/diablo/.venv-voice/bin/python -m voice, WorkingDirectory=%h/Projects/diablo, Restart=always, After=pipewire.service.
+- deploy/diablo-ears.service: user unit on the desktop box, the ears (voice/ears.py), installed by deploy/ears-install.sh. The old diablo-voice loop is retired (#97).
 - deploy/backup-hub.sh plus diablo-backup.service and diablo-backup.timer: nightly user timer on banditbox pulls a VACUUM INTO snapshot of the hub db over ssh homehub, verifies integrity and row counts with python3, keeps the newest 14 in ~/.local/share/diablo/hub-backups.
 
 ## Sudo model
