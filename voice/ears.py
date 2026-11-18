@@ -707,7 +707,7 @@ def read_lines(lines, on_say, on_brain=None):
             if on_say is not None and str(item["say"] or "").strip():
                 on_say(str(item["say"]))
         elif "brain" in item:
-            if on_brain is not None:
+            if on_brain is not None and item.get("beat", True):
                 on_brain()
         elif "done" in item:
             found = item["done"]
@@ -1284,6 +1284,8 @@ def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None, on_bra
         return "I can't reach my hub right now."
     tl.mark("hub_back")
     tl.note(hub=found.get("timing"), backend=found.get("backend"))
+    if found.get("reply"):
+        tl.note(written=str(found["reply"])[:4000])
     act = found.get("act")
     if isinstance(act, dict):
         failed = run_act(act, tl, cfg)
@@ -1593,6 +1595,7 @@ def _say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
         log.info("%s: %s", "first" if first else "reply", words[:200])
         if not words:
             return False
+        spoke(tl, words)
         if not first:
             tl.note(reply=words[:300])
         if shows:
@@ -1629,14 +1632,21 @@ def _say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
                 LIVE.set_state(_last_state or "asleep")
 
 
+def spoke(tl, line):
+    """Keeps every line handed to his voice on the turn, in order, for diablo-ears said."""
+    if tl is not None and str(line or "").strip():
+        tl.info.setdefault("spoken", []).append(str(line)[:1000])
+
+
 def told(lines, tl, first, shows):
     """Hands the lines on as they come, logging each and growing his reply card with them."""
-    said = []
+    said, card = [], None
     for line in lines:
         said.append(line)
+        spoke(tl, line)
         log.info("%s: %s", "first" if first else "reply", line[:200])
         if shows:
-            presence.show_reply(" ".join(said))
+            card = presence.show_reply(" ".join(said), card_id=card)
         if not first:
             tl.note(reply=" ".join(said)[:300])
         yield line
@@ -2244,6 +2254,7 @@ The setup and the meter live in the desktop app: Settings, then Voice.
   diablo-ears chimes      play every sound he makes, one after another
   diablo-ears mouth       tune his mouth to his voice by eye (show, set MS)
   diablo-ears timings     where each recent turn's time went (--last N, --html FILE, --medians)
+  diablo-ears said        what he heard, said aloud and wrote in each recent turn (--last N, --json)
   diablo-ears recordings  the last turns' recordings and what was heard (a number shows more)
   diablo-ears recheck     run a recording (an id, or the last) through gvoice again
   diablo-ears run         the service itself (diablo-ears.service runs this)
@@ -2299,6 +2310,57 @@ def timings_cli(args):
     return 0
 
 
+def said_rows(rows):
+    """Per turn: what he heard, what Diablo said aloud (the beat first), what he wrote in the chat,
+    and the sentences only one of the two has."""
+    out = []
+    for row in rows:
+        info = row.get("info") or row
+        heard = info.get("text") or ""
+        spoken = ([info["beat"]] if info.get("beat") else []) + list(info.get("spoken") or [])
+        written = info.get("written") or ""
+        if not (heard or spoken or written):
+            continue
+        said_keys = {sentences.key(s) for line in spoken for s in sentences.split(line)}
+        wrote = sentences.split(written) if written else []
+        wrote_keys = {sentences.key(s) for s in wrote}
+        only_said = [s for line in spoken for s in sentences.split(line) if sentences.key(s) not in wrote_keys]
+        only_wrote = [s for s in wrote if sentences.key(s) not in said_keys] if written else []
+        out.append({"at": row.get("at") or info.get("at"), "heard": heard, "spoken": spoken, "written": written,
+                    "only_said": only_said, "only_wrote": only_wrote, "cut": bool(info.get("cut_off"))})
+    return out
+
+
+def said_cli(args):
+    """Each recent turn: what he heard, what Diablo said aloud, what he wrote, and where they differ."""
+    last, as_json = 10, False
+    rest = list(args)
+    while rest:
+        flag = rest.pop(0)
+        if flag == "--last" and rest and rest[0].isdigit():
+            last = int(rest.pop(0))
+        elif flag == "--json":
+            as_json = True
+        else:
+            print("usage: diablo-ears said [--last N] [--json]")
+            return 1
+    rows = said_rows(timeline.load(last=last))
+    if as_json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return 0
+    for row in rows:
+        stamp = time.strftime("%H:%M:%S", time.localtime(row["at"])) if row["at"] else "?"
+        print(f"{stamp}  heard:  {row['heard'] or '(nothing)'}")
+        print(f"          said:   {' | '.join(row['spoken']) or '(nothing)'}" + ("  [cut off]" if row["cut"] else ""))
+        print(f"          wrote:  {' '.join(row['written'].split()) or '(nothing)'}")
+        for line in row["only_said"]:
+            print(f"          only said:  {line}")
+        for line in row["only_wrote"]:
+            print(f"          only wrote: {line}")
+        print()
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -2318,6 +2380,8 @@ def main(argv=None):
         return status()
     if command == "timings":
         return timings_cli(argv[1:])
+    if command == "said":
+        return said_cli(argv[1:])
     if command == "recordings":
         for row in recordings.listed(int(argv[1]) if len(argv) > 1 and argv[1].isdigit() else 10):
             stamp = time.strftime("%H:%M:%S", time.localtime(row.get("at", 0)))

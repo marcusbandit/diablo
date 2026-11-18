@@ -278,8 +278,12 @@ ShellRoot {
         for (let i = 0; i < cardModel.count; i++)
             have.push(cardModel.get(i).cid);
         for (const c of root.shown) {
-            if (!have.includes(c.id))
-                cardModel.append({ cid: c.id, json: JSON.stringify(c) });
+            const json = JSON.stringify(c);
+            const at = have.indexOf(c.id);
+            if (at < 0)
+                cardModel.append({ cid: c.id, json: json });
+            else if (cardModel.get(at).json !== json)
+                cardModel.setProperty(at, "json", json);
         }
     }
 

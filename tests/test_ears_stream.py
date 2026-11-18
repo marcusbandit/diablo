@@ -1,6 +1,7 @@
 """The ears speaking a streamed answer: sentence by sentence, each fetched while the one before
 plays, cut off by his name, and no sentence twice."""
 
+import json
 import threading
 import time
 import unittest
@@ -532,3 +533,31 @@ class FollowUp(unittest.TestCase):
             ears._spoke["any"] = True
             self.assertTrue(ears.say_answer(None, None, "Done.", {}, None, None))
         self.assertFalse(ears.REPLIED.is_set())
+
+
+class BeatFlag(unittest.TestCase):
+    def test_the_hub_can_hold_the_beat_back(self):
+        called = []
+        lines = [json.dumps({"brain": "claude", "beat": False}), json.dumps({"done": {"reply": "Hi."}})]
+        ears.read_lines(lines, None, lambda: called.append(1))
+        self.assertEqual(called, [])
+        lines = [json.dumps({"brain": "claude", "beat": True}), json.dumps({"done": {"reply": "Hi."}})]
+        ears.read_lines(lines, None, lambda: called.append(1))
+        self.assertEqual(called, [1])
+
+
+class SaidLog(unittest.TestCase):
+    def test_spoken_and_written_are_compared_sentence_by_sentence(self):
+        rows = [{"at": 1.0, "text": "Nah, it's fine.", "beat": "But of course.",
+                 "spoken": ["The offer stands whenever you want it."],
+                 "written": "Very well. The offer stands whenever you want it."}]
+        [row] = ears.said_rows(rows)
+        self.assertEqual(row["spoken"], ["But of course.", "The offer stands whenever you want it."])
+        self.assertEqual(row["only_said"], ["But of course."])
+        self.assertEqual(row["only_wrote"], ["Very well."])
+
+    def test_every_line_handed_to_his_voice_is_kept_in_order(self):
+        tl = timeline.Timeline()
+        list(ears.told(iter(["One.", "Two."]), tl, True, False))
+        ears.spoke(tl, "Three.")
+        self.assertEqual(tl.info["spoken"], ["One.", "Two.", "Three."])

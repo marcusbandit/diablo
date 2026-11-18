@@ -484,8 +484,8 @@ async def chat_lines(body, caller):
     async def on_say(text):
         lines.put_nowait({"say": text})
 
-    async def on_brain():
-        lines.put_nowait({"brain": "claude"})
+    async def on_brain(beat=True):
+        lines.put_nowait({"brain": "claude", "beat": bool(beat)})
 
     async def run():
         try:

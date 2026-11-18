@@ -9,6 +9,7 @@ _diablo-ears() {
     'chimes:play every sound he makes, one after another'
     'mouth:tune his mouth to his voice by eye'
     'timings:where the time of each recent turn went'
+    'said:what he heard, said aloud and wrote in each recent turn'
     'recordings:the last turns recordings and what was heard'
     'recheck:run a recording through gvoice again'
     'run:the service itself'
@@ -29,6 +30,8 @@ _diablo-ears() {
     _message 'milliseconds, later is positive'
   elif [[ $words[2] == timings ]]; then
     _arguments '--last[how many turns]:number' '--html[write the waterfall as a page]:file:_files' '--medians[median time from the end of his speech to his first sound]'
+  elif [[ $words[2] == said ]]; then
+    _arguments '--last[how many turns]:number' '--json[the rows as JSON]'
   fi
 }
 

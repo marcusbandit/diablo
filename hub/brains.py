@@ -1286,6 +1286,16 @@ def spoken(origin):
     return character.spoken(origin)
 
 
+def wants_beat(text):
+    """Whether a spoken line is an order an acknowledgement fits: it asks for something done, and
+    it is not a question."""
+    try:
+        found = route.features(text)
+    except Exception:
+        return False
+    return bool(found.get("actions")) and not found.get("question")
+
+
 def aloud(origin):
     """A line said out loud at his desk, answered out loud: not a voice note, not typed."""
     return "spoken aloud" in str(origin or "")
@@ -1383,9 +1393,10 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
             return turn
     if chosen == "claude" and on_brain is not None:
         # No plain command and no direct answer: the full brain has the turn, and the ears can
-        # say a beat while he works.
+        # say a beat while he works, but only for an order: "At once." answering a question or a
+        # "nah, it's fine" reads as a non sequitur.
         try:
-            await on_brain()
+            await on_brain(beat=wants_beat(text))
         except Exception:
             logger.exception("the brain hook failed")
     guard = await looking

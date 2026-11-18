@@ -321,18 +321,23 @@ class TestBrainLine(unittest.TestCase):
 
     def test_a_line_for_claude_says_so_before_his_first_sentence(self):
         lines = self.lines("Write me a poem about the lamp.")
-        self.assertEqual(lines[0], {"brain": "claude"})
+        self.assertEqual(lines[0]["brain"], "claude")
         self.assertEqual(lines[1], {"say": "The lamp is off."})
         self.assertEqual(lines[-1]["done"]["rest"], "")
 
     def test_a_direct_answer_has_no_brain_line(self):
         lines = self.lines("Dim the lights.", jev=DIM)
-        self.assertNotIn({"brain": "claude"}, lines)
+        self.assertFalse(any("brain" in line for line in lines))
         self.assertEqual(lines[-1]["done"]["backend"], "direct")
 
     def test_only_spoken_turns_get_it(self):
         lines = self.lines("Write me a poem about the lamp.", source="desktop")
-        self.assertNotIn({"brain": "claude"}, lines)
+        self.assertFalse(any("brain" in line for line in lines))
+
+    def test_a_question_gets_no_beat_and_an_order_does(self):
+        self.assertFalse(self.lines("What can you do?")[0]["beat"])
+        self.assertFalse(self.lines("Nah, it's fine.")[0]["beat"])
+        self.assertTrue(self.lines("Check my mail and tell me what is urgent.")[0]["beat"])
 
 
 if __name__ == "__main__":
