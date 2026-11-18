@@ -200,14 +200,18 @@ def mark(beat, now=None):
     if not show or not isinstance(beat.get("n"), int):
         return None
     body = read_json(STATE / "marks.json", {})
-    kept = {k: beat[k] for k in ("n", "say", "marks", "wait", "caption", "lazy") if k in beat}
+    kept = {k: beat[k] for k in ("n", "say", "marks", "wait", "caption", "lazy", "keep") if k in beat}
     kept["at"] = now
     if body.get("show") != show:
         body = {"show": show, "beats": [], "at": now}
     beats = [b for b in body.get("beats") or [] if isinstance(b, dict) and b.get("n") != kept["n"]]
     beats.append(kept)
-    write_json(STATE / "marks.json", {"show": show, "at": body.get("at", now), "count": int(beat.get("count") or len(beats)),
-                                      "cps": marks_cps(), "beats": sorted(beats, key=lambda b: b["n"])})
+    out = {"show": show, "at": body.get("at", now), "count": int(beat.get("count") or len(beats)),
+           "cps": marks_cps(), "beats": sorted(beats, key=lambda b: b["n"])}
+    linger = number(beat.get("linger"), 0) or number(body.get("linger"), 0)
+    if linger > 0:
+        out["linger"] = linger
+    write_json(STATE / "marks.json", out)
     return "marked"
 
 

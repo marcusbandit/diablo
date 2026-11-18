@@ -537,6 +537,7 @@ class Contract(unittest.TestCase):
         for key in ("address", "class", "title", "pid", "x", "y", "w", "h", "monitor", "scale", "locked", "ms"):
             self.assertIn(key, out)
         self.assertEqual((out["class"], out["x"], out["monitor"], out["scale"]), ("browser", 1000, "DP-1", 1.0))
+        self.assertEqual(out["screen"], {"x": 0, "y": 0, "w": 2560, "h": 1440})
 
     def test_windows_front_to_back(self):
         out, code = self.run_main(["windows"])

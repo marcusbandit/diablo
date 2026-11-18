@@ -179,6 +179,8 @@ class MarksIn(BaseModel):
     wait: str = ""
     caption: bool = False
     lazy: bool = False
+    keep: bool = False
+    linger: float = 0
     clear: bool = False
 
 

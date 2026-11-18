@@ -23,8 +23,12 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 KINDS = ("ring", "underline", "arrow", "label", "spotlight", "highlight", "num", "check", "cross")
+DRAWN = ("node", "edge", "title")
+SHAPES = ("box", "round", "diamond")
 MAX_BEATS = 8
 MAX_MARKS = 8
+MAX_PIECES = 40
+MAX_LINGER = 120
 FIND_SECONDS = 12
 LIMIT = 100000
 
@@ -72,8 +76,44 @@ def clean_target(raw):
     return target
 
 
+def font_size(raw):
+    size = number(raw.get("size"))
+    return round(size, 1) if size is not None and 8 <= size <= 48 else None
+
+
+def clean_piece(raw):
+    """A diagram piece as presence draws it: a node or title box with its words, or an edge
+    between two points with an optional control point and label."""
+    kind = raw["kind"]
+    out = {"kind": kind}
+    if kind == "edge":
+        start, end = clean_point(raw.get("start")), clean_point(raw.get("end"))
+        if not start or not end:
+            return None
+        via = clean_point(raw.get("via")) or {"x": round((start["x"] + end["x"]) / 2, 1), "y": round((start["y"] + end["y"]) / 2, 1)}
+        xs, ys = (start["x"], end["x"], via["x"]), (start["y"], end["y"], via["y"])
+        out.update(start=start, end=end, via=via,
+                   box={"x": min(xs), "y": min(ys), "w": round(max(xs) - min(xs), 1), "h": round(max(ys) - min(ys), 1)})
+        text = words(raw.get("text"), 28)
+        if text:
+            out["text"] = text
+    else:
+        box = clean_box(raw.get("box"))
+        text = words(raw.get("text"), 28 if kind == "node" else 60)
+        if not box or not text:
+            return None
+        out.update(box=box, text=text)
+        if kind == "node":
+            out["shape"] = raw.get("shape") if raw.get("shape") in SHAPES else "box"
+    if font_size(raw):
+        out["size"] = font_size(raw)
+    return out
+
+
 def clean_mark(raw):
     """One mark as presence draws it, or None when it has no kind or nothing to point at."""
+    if isinstance(raw, dict) and raw.get("kind") in DRAWN:
+        return clean_piece(raw)
     if not isinstance(raw, dict) or raw.get("kind") not in KINDS:
         return None
     kind = raw["kind"]
@@ -111,7 +151,7 @@ def clean_beats(raw):
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict):
             continue
-        marks = [m for m in (clean_mark(x) for x in (item.get("marks") or [])[:MAX_MARKS]) if m]
+        marks = [m for m in (clean_mark(x) for x in (item.get("marks") or [])[:MAX_MARKS]) if m and m["kind"] not in DRAWN]
         say = words(item.get("say"), 300)
         if not marks and not say:
             continue
@@ -139,13 +179,21 @@ def clean_payload(body):
         return f"n is the beat's place, 0 to {MAX_BEATS - 1}"
     count = int(count) if count is not None and 1 <= count <= MAX_BEATS else n + 1
     lazy = bool(body.get("lazy"))
-    marks = [m for m in (clean_mark(x) for x in (body.get("marks") or [])[:MAX_MARKS]) if m]
+    keep = bool(body.get("keep"))
+    marks = [m for m in (clean_mark(x) for x in (body.get("marks") or [])[:MAX_PIECES if keep else MAX_MARKS]) if m]
+    if not keep:
+        marks = [m for m in marks if m["kind"] not in DRAWN]
     if not lazy and any("target" in m for m in marks):
         return "only a lazy beat may carry words to look up"
     out = {"show": show, "n": n, "count": max(count, n + 1), "say": words(body.get("say"), 300), "marks": marks,
            "wait": "click" if body.get("wait") == "click" else "", "lazy": lazy}
     if body.get("caption"):
         out["caption"] = True
+    if keep:
+        out["keep"] = True
+    linger = number(body.get("linger"))
+    if linger is not None and 0 < linger <= MAX_LINGER:
+        out["linger"] = round(linger, 1)
     return out
 
 

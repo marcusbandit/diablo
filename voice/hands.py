@@ -159,14 +159,23 @@ def locked():
     return value if isinstance(value, bool) else None
 
 
+def screen_of(monitor):
+    if not monitor:
+        return None
+    x, y, w, h = logical(monitor)
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
 def front():
     active = hypr("activewindow") or {}
     monitors = hypr("monitors") or []
     found = short(active, monitors)
+    focused = next((m for m in monitors if m.get("focused")), None)
     if found is None:
-        focused = next((m for m in monitors if m.get("focused")), None)
         return {"window": None, "monitor": focused.get("name") if focused else None,
-                "scale": float(focused.get("scale") or 1) if focused else 1.0}
+                "scale": float(focused.get("scale") or 1) if focused else 1.0, "screen": screen_of(focused)}
+    own = next((m for m in monitors if m.get("id") == active.get("monitor")), None)
+    found["screen"] = screen_of(own or focused)
     return found
 
 

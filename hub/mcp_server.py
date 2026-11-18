@@ -614,6 +614,101 @@ def point_on_screen(arguments, find=None, send=None):
     return pointing.summary(report, beats)
 
 
+DIAGRAM_TOOL = {
+    "name": "draw_diagram",
+    "description": (
+        "Draw a diagram on Marcus's real screen piece by piece while you talk, the way a teacher draws on a whiteboard: "
+        "box by box and arrow by arrow, each beat drawn while you say its line. Use it for any flow, process, pipeline, "
+        "architecture, hierarchy or \"how does X work\" with parts, at his desk. Never write an HTML page for these. One call "
+        "per answer, made before you say the lines, and fast: 3 to 6 beats, each a short say line (the words you then speak) "
+        "plus the 1 to 3 pieces that line is about. Pieces add up across beats: a later beat adds boxes and arrows, it never "
+        "replaces them, so give each node once, in the beat that introduces it. Nodes are {id, label, shape?}: a short id you "
+        "reuse in edges, a label of at most 28 characters, shape box (default), round for a start or end, diamond for a "
+        "decision or hub. Edges are {from, to, label?} by node id; an arrow can go in the same beat as its new node. The "
+        "hub lays it out in rows from the sources down (direction down) or in columns left to right (direction right) and "
+        "scales it to his monitor. At most 8 beats, 14 nodes, 20 edges. It stays up 45 s after the last beat; the next "
+        "drawing, point_on_screen clear, or sending you away takes it down. 3D stays for things that really turn in space."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "a few words, written above the drawing"},
+            "direction": {"type": "string", "enum": ["down", "right"], "description": "down (default) or right"},
+            "beats": {
+                "type": "array",
+                "description": "in the order you say them; 3 to 6, at most 8",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "say": {"type": "string", "description": "the line you speak while this beat draws, short"},
+                        "nodes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "label": {"type": "string", "description": "at most 28 characters"},
+                                    "shape": {"type": "string", "enum": ["box", "round", "diamond"]},
+                                },
+                                "required": ["id", "label"],
+                            },
+                        },
+                        "edges": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "from": {"type": "string", "description": "a node id"},
+                                    "to": {"type": "string", "description": "a node id"},
+                                    "label": {"type": "string", "description": "a word or two, at most 28 characters"},
+                                },
+                                "required": ["from", "to"],
+                            },
+                        },
+                    },
+                    "required": ["say"],
+                },
+            },
+        },
+        "required": ["title", "beats"],
+    },
+}
+EXTRA.append(DIAGRAM_TOOL)
+
+
+def desktop_screen(run=None):
+    """The focused monitor in global logical pixels, from the hands' front on the desktop, or None."""
+    from . import desktop, pointing
+
+    try:
+        done = desktop.desktop_run([pointing.HANDS, "front"], 8, connect=5, run=run)
+    except desktop.Unreachable:
+        return None
+    try:
+        body = json.loads(desktop.last_json(done.stdout) or "{}")
+    except ValueError:
+        return None
+    return body.get("screen") if isinstance(body, dict) else None
+
+
+def draw_diagram(arguments, screen=None, send=None):
+    """Lays the diagram out on the focused monitor and sends every beat at once; presence paces them."""
+    from . import diagram
+
+    planned = diagram.plan(arguments, screen if screen is not None else desktop_screen())
+    if isinstance(planned, str):
+        return planned
+    beats, notes = planned
+    send = send or (lambda body: screen_post("/v1/screen/marks", body))
+    sent, failed = [], None
+    for beat in beats:
+        failed = send(beat)
+        if failed:
+            break
+        sent.append(beat["n"])
+    return diagram.summary(sent, beats, notes, failed)
+
+
 def restart(arguments):
     token = str(get_config().get("hub_token") or "")
     body = {
@@ -705,6 +800,8 @@ def call(name, arguments):
         return hands(name, arguments)
     if name == "point_on_screen":
         return point_on_screen(arguments)
+    if name == "draw_diagram":
+        return draw_diagram(arguments)
     if name == "send_voice":
         return send_voice(arguments.get("text"), arguments.get("language"))
     if name == "watch_t3_thread":

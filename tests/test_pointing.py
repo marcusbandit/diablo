@@ -261,6 +261,16 @@ class TestEndpoint(ApiCase):
         self.assertEqual(event["kind"], "screen")
         self.assertEqual((event["marks"]["show"], event["marks"]["n"], event["marks"]["count"]), ("s1", 0, 2))
 
+    def test_a_drawing_beat_keeps_its_pieces(self):
+        body = {"show": "d1", "n": 0, "count": 3, "say": "Here.", "keep": True, "linger": 45,
+                "marks": [{"kind": "node", "text": "Kernel", "shape": "diamond", "box": {"x": 1, "y": 2, "w": 300, "h": 80}},
+                          {"kind": "edge", "start": {"x": 1, "y": 2}, "end": {"x": 5, "y": 90}, "text": "trap"}]}
+        with mock.patch.object(server, "publish") as published:
+            self.assertEqual(self.client.post("/v1/screen/marks", headers=HEADERS, json=body).status_code, 200)
+        marks = published.call_args.args[0]["marks"]
+        self.assertEqual((marks["keep"], marks["linger"]), (True, 45))
+        self.assertEqual([m["kind"] for m in marks["marks"]], ["node", "edge"])
+
     def test_clear_and_refusals(self):
         with mock.patch.object(server, "publish") as published:
             self.assertEqual(self.client.post("/v1/screen/marks", headers=HEADERS, json={"clear": True}).status_code, 200)
@@ -284,6 +294,15 @@ class TestDesktopSide(unittest.TestCase):
 
     def beat(self, show, n, count=2, **extra):
         return {"kind": "screen", "marks": {"show": show, "n": n, "count": count, "say": f"beat {n}", "marks": [], **extra}}
+
+    def test_a_drawing_keeps_its_beats_and_its_linger(self):
+        busy.show(self.beat("d1", 0, keep=True, linger=45), now=10)
+        busy.show(self.beat("d1", 1, keep=True, linger=45), now=11)
+        body = self.read()
+        self.assertEqual(body["linger"], 45)
+        self.assertTrue(all(b["keep"] for b in body["beats"]))
+        busy.show(self.beat("s2", 0), now=12)
+        self.assertNotIn("linger", self.read())
 
     def test_beats_of_one_show_gather_in_order(self):
         self.assertEqual(busy.show(self.beat("s1", 1), now=10), "marked")
