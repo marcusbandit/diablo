@@ -564,19 +564,35 @@ class SaidLog(unittest.TestCase):
 
 
 class Dismiss(unittest.TestCase):
-    def test_ways_to_send_him_away(self):
-        for line in ("Dismiss.", "That's all.", "That's all, thanks.", "Thanks, Diablo.", "go away", "nah I'm good",
-                     "Shut up. Dismiss.", "Okay stop talking", "That's enough, thanks", "Be gone.", "I said go away.",
-                     "Clearly still here, disappear, remove your presence.", "Diablo for the last time. Dismiss."):
-            with self.subTest(line=line):
-                self.assertTrue(ears.dismissed(line))
+    def test_plain_goodbyes_need_no_one_to_read_them(self):
+        with mock.patch.object(ears.jevfast, "ask") as asked:
+            for line in ("Dismiss.", "That's all.", "That's all, thanks.", "Thanks, Diablo.", "go away", "nah I'm good",
+                         "Shut up. Dismiss.", "Okay stop talking", "That's enough, thanks"):
+                with self.subTest(line=line):
+                    self.assertTrue(ears.dismissed(line))
+        asked.assert_not_called()
 
-    def test_requests_that_start_like_one_are_not(self):
-        for line in ("Thanks for turning off the lights, can you also dim the desk", "That's all the files?",
-                     "No.", "dismiss the card on the left", "Stop.", "Stop the music", "make it disappear from the list",
-                     "Close the window"):
-            with self.subTest(line=line):
+    def test_jev_reads_every_other_way_of_saying_it(self):
+        def read(state, questions, timeout=None, origin=""):
+            away = "go away" in state or "be gone" in state.lower()
+            return {"away": "away" if away and "how would" not in state else "other", "away_confidence": 0.95}
+
+        with mock.patch.object(ears.jevfast, "ask", side_effect=read):
+            self.assertTrue(ears.dismissed("I said go away."))
+            self.assertTrue(ears.dismissed("Be gone."))
+            self.assertFalse(ears.dismissed("If I wanted someone to go away, how would I make them do that?"))
+
+    def test_an_unsure_or_failed_read_goes_on_to_the_brain(self):
+        with mock.patch.object(ears.jevfast, "ask", return_value={"away": "away", "away_confidence": 0.5}):
+            self.assertFalse(ears.dismissed("I said go away."))
+        with mock.patch.object(ears.jevfast, "ask", return_value=None):
+            self.assertFalse(ears.dismissed("I said go away."))
+
+    def test_ordinary_lines_never_ask_jev(self):
+        with mock.patch.object(ears.jevfast, "ask") as asked:
+            for line in ("What's the weather tomorrow?", "Stop the music", "Stop.", "No.", "Close the window"):
                 self.assertFalse(ears.dismissed(line))
+        asked.assert_not_called()
 
     def test_dismissing_closes_the_window_and_clears_his_cards(self):
         ears.REPLIED.set()

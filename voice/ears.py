@@ -85,15 +85,19 @@ DISMISS_PHRASE = (
     r"(?:\W+(?:thanks?|thank you|diablo|sir|mate|for now|for today|then|please))*"
 )
 DISMISS = re.compile(r"^\W*(?:diablo\W+)?" + DISMISS_PHRASE + r"(?:\W+" + DISMISS_PHRASE + r")*\W*$", re.I)
-# The same wish said any way, anywhere in the line: "I said go away", "be gone", "for the last time,
-# dismiss". A word that takes an object ("dismiss the card", "close the window") is an order instead.
-SEND_AWAY = re.compile(
-    r"\b(?:dismiss(?:ed)?|go away|be ?gone|begone|disappear|vanish|get lost|leave me(?: alone| be)?|"
-    r"shut up|stop talking|be quiet|piss off|fuck off|bugger off|buzz off|scram|go to sleep|stand down|"
-    r"remove (?:your|yourself)|leave now|you can go|that'?s all|that is all|that'?s enough)\b"
-    r"(?!\W*(?:the|this|that|my|these|those|a|an|card|window|tab|notification|it|them)\b)",
+# Lines that may be him sending Diablo away in other words; Jev reads each one to tell "I said go
+# away" from "how would I make someone go away" before anything is done.
+MAYBE_AWAY = re.compile(
+    r"\b(?:dismiss(?:ed)?|go away|be ?gone|begone|disappear|vanish|get lost|leave me|shut up|stop talking|"
+    r"be quiet|piss off|fuck off|bugger off|buzz off|scram|go to sleep|stand down|remove your|leave now|"
+    r"you can go|that'?s all|that is all|that'?s enough|that'?s it|i'?m done|we'?re done|thanks?|thank you)\b",
     re.I,
 )
+AWAY_QUESTION = {"away": {"type": "choice", "instructions": "Is Marcus telling Diablo, his voice assistant, to go away and leave him alone",
+                          "criteria": {
+                              "away": "he tells Diablo to leave him alone now: go away, be gone, dismiss, shut up, that's all",
+                              "other": "anything else, including a question about how to make someone or something go away"}}}
+AWAY_SURE = 0.8
 # After an answer he can just talk on: the mic stays open this long for a follow-up without the
 # name (setting ears.follow_s, 0 turns it off).
 FOLLOW_UP_S = 8.0
@@ -1464,11 +1468,21 @@ def notify_untrained():
     )
 
 
-def dismissed(text):
+def dismissed(text, early=None):
+    """He sent Diablo away: a plain goodbye matched here at once, or a line that may be one, which
+    Jev reads first ("I said go away" is, "how would I make someone go away" is not)."""
     words = " ".join(str(text or "").split())
     if DISMISS.match(words):
         return True
-    return any(not re.search(r"\bmake \w+\W*$", words[:found.start()], re.I) for found in SEND_AWAY.finditer(words))
+    if not MAYBE_AWAY.search(words):
+        return False
+    try:
+        found = jevfast.ask("Marcus said this line out loud to Diablo, his voice assistant: " + words[:600],
+                            AWAY_QUESTION, origin="jev away")
+    except Exception as error:
+        log.debug("Jev's away read failed: %s", error)
+        return False
+    return bool(found) and found.get("away") == "away" and found.get("away_confidence", 0) >= AWAY_SURE
 
 
 def dismiss(cfg, speaker, tl):
