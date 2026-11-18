@@ -114,8 +114,14 @@ class TestCharter(unittest.TestCase):
         text = charter.charter()
         self.assertIn("open with substance", text)
         self.assertIn("every sentence you write is spoken the moment it ends", text)
-        self.assertNotIn("—", text)
-        self.assertNotIn("–", text)
+        self.assertNotIn("\u2014", text)
+        self.assertNotIn("\u2013", text)
+
+    def test_the_charter_carries_the_speed_rules(self):
+        text = charter.charter()
+        for rule in ("never announce a plan", "in one turn, so they run together", "as few calls as you can",
+                     "instead of taking a screenshot first", "with no recap"):
+            self.assertIn(rule, text)
 
 
 if __name__ == "__main__":
