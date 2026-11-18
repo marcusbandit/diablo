@@ -1195,6 +1195,10 @@ def pick_tier(conv, text, images, origin, answer=None, recent_light=False, needs
         if machine and route.rank(decision.tier) < route.rank("voice"):
             decision.tier = "voice"
             decision.model, decision.effort = route.model_effort("voice")
+        brain = route.spoken_brain() if aloud(origin) and not machine and not decision.explicit else None
+        if brain:
+            decision.adjusted.append(f"spoken aloud: {decision.model} {decision.effort} -> {brain[0]} {brain[1]}")
+            decision.model, decision.effort = brain
     except Exception:
         logger.exception("router failed, the turn runs on the default model")
         return None
@@ -1225,6 +1229,11 @@ def spoken(origin):
     from . import character
 
     return character.spoken(origin)
+
+
+def aloud(origin):
+    """A line said out loud at his desk, answered out loud: not a voice note, not typed."""
+    return "spoken aloud" in str(origin or "")
 
 
 def lamps_line(lamps):

@@ -232,3 +232,35 @@ class TestShippedSkill(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSpokenBrain(unittest.TestCase):
+    def decide(self, origin, explicit=False, setting=None, machine=False):
+        decision = mock.MagicMock(tier="chat", handoff=None, explicit=explicit, model="claude-opus-5-5", effort="medium")
+        decision.adjusted = []
+        values = {"route.spoken": setting}
+        with mock.patch.object(brains.route, "route", return_value=decision), \
+                mock.patch.object(brains.route, "log"), mock.patch.object(brains.route, "enabled", return_value=True), \
+                mock.patch.object(brains.route.settings, "get", side_effect=lambda key, *a: values.get(key)):
+            return brains.pick_tier("main", "what is on my calendar", None, origin, machine=machine)
+
+    def test_a_line_said_aloud_runs_on_haiku_xhigh(self):
+        decision = self.decide("spoken aloud at his desk, transcribed by Whisper, the reply is spoken aloud")
+        self.assertEqual((decision.model, decision.effort), ("claude-haiku-5-5", "xhigh"))
+
+    def test_typed_lines_and_voice_notes_keep_the_tier_model(self):
+        for origin in ("telegram", "desktop app on watcher tablet", "telegram voice note"):
+            decision = self.decide(origin)
+            self.assertEqual((decision.model, decision.effort), ("claude-opus-5-5", "medium"), origin)
+
+    def test_naming_a_model_aloud_wins(self):
+        decision = self.decide("spoken aloud at his desk", explicit=True)
+        self.assertEqual(decision.model, "claude-opus-5-5")
+
+    def test_machine_turns_are_never_switched(self):
+        decision = self.decide("spoken aloud at his desk", machine=True)
+        self.assertEqual(decision.model, "claude-opus-5-5")
+
+    def test_the_setting_picks_or_turns_it_off(self):
+        self.assertEqual(self.decide("spoken aloud", setting="claude-sonnet-5-5|high").model, "claude-sonnet-5-5")
+        self.assertEqual(self.decide("spoken aloud", setting="off").model, "claude-opus-5-5")
