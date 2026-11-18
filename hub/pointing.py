@@ -8,7 +8,7 @@ its own lookups are done, so the first marks show while later ones are still bei
 
 A walkthrough beat waits (wait "click") until the pointer has been in its box and left it. The
 beats after it are sent with their words unresolved and `lazy`; presence looks them up on the
-screen as it is by then, through `python -m hub.pointing resolve` on the desktop.
+screen as it is by then, through `python -m hub.pointing resolve BEAT_JSON` on the desktop.
 
 Standard library only at the top, so the desktop can run this file without the hub's packages.
 """
@@ -330,10 +330,12 @@ def summary(report, beats):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] != ["resolve"]:
-        sys.exit("usage: python -m hub.pointing resolve < beat.json")
+        sys.exit("usage: python -m hub.pointing resolve BEAT_JSON")
     try:
-        beat = json.loads(sys.stdin.read() or "{}")
+        beat = json.loads(argv[1] if len(argv) > 1 else sys.stdin.read() or "{}")
     except ValueError:
+        beat = {}
+    if not isinstance(beat, dict):
         beat = {}
     marks = [m for m in (clean_mark(x) for x in (beat.get("marks") or [])[:MAX_MARKS]) if m]
     settled, missing = resolve_beat({**beat, "marks": marks}, local_runner())
