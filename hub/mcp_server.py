@@ -433,6 +433,84 @@ def window_verb(verb, arguments):
     return (said[-1] if said else f"{verb} said nothing")[:300]
 
 
+POINT_TOOL = {
+    "name": "point_on_screen",
+    "description": (
+        "Point at things on Marcus's real screen while you talk at his desk: a ring round a control, an arrow to it, "
+        "an underline under a sentence, numbered steps. Use it for \"where is the export button\", \"show me how to do X\" "
+        "and \"explain this\" about what he is looking at. One call per answer, made before you say the lines: give beats in "
+        "order, each a short say line (the words you then speak, a few seconds each) and the marks that go with it. Target a "
+        "mark by the words visible on the control or in the text (target {text: \"Export\"}), never by guessing pixels; "
+        "window front is the focused window, or name the app; near disambiguates (\"Export\" near \"File\"). All lookups run "
+        "at once and the first beat shows as soon as its own targets are found. Kinds: ring and arrow to point at a control, "
+        "label for a word or two beside it, num for step n, underline or highlight for text, spotlight to dim all but it, "
+        "check and cross for right and wrong. For a walkthrough give each step wait click: it stays until his pointer has "
+        "been on the thing and left, and the next step is looked up on the screen as it is then. caption true shows the say "
+        "line on screen too, only when he asks for it written. The result says which targets were not found: tell him in a "
+        "few words instead of marking. clear true alone takes every mark down."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "beats": {
+                "type": "array",
+                "description": "in the order you say them; at most 8",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "say": {"type": "string", "description": "the line you speak during this beat, short"},
+                        "marks": {
+                            "type": "array",
+                            "description": "at most 8",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "kind": {"type": "string", "enum": ["ring", "underline", "arrow", "label", "spotlight", "highlight", "num", "check", "cross"]},
+                                    "target": {
+                                        "type": "object",
+                                        "description": "{text, window?, near?}: the visible words to find, preferred; or {box: {x, y, w, h}} in global screen pixels",
+                                        "properties": {
+                                            "text": {"type": "string"},
+                                            "window": {"type": "string", "description": "front (the default) or the app's name"},
+                                            "near": {"type": "string", "description": "other visible words close to it, to pick the right one"},
+                                            "box": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"}}},
+                                        },
+                                    },
+                                    "text": {"type": "string", "description": "label only: the words beside it, at most 40 characters"},
+                                    "n": {"type": "integer", "description": "num only: the step number"},
+                                },
+                                "required": ["kind", "target"],
+                            },
+                        },
+                        "wait": {"type": "string", "enum": ["click"], "description": "a walkthrough step: hold until he has used it"},
+                        "caption": {"type": "boolean", "description": "show the say line on screen as well"},
+                    },
+                },
+            },
+            "clear": {"type": "boolean", "description": "take every mark down"},
+        },
+    },
+}
+EXTRA.append(POINT_TOOL)
+
+
+def point_on_screen(arguments, find=None, send=None):
+    """Looks the targets up on the desktop and sends the beats to presence as each is ready."""
+    from . import localenv, pointing
+
+    if arguments.get("clear") and not arguments.get("beats"):
+        failed = screen_post("/v1/screen/marks", {"clear": True})
+        return failed or "every mark is down"
+    beats = pointing.clean_beats(arguments.get("beats"))
+    if not beats:
+        return "nothing to point at: give beats, each with marks that have a target"
+    if find is None:
+        repo = (localenv.get("DIABLO_DESKTOP_REPO") or "Projects/diablo").removeprefix("~/")
+        find = pointing.ssh_runner(str(settings.get("desktop.host") or "").strip() or lockguard.host(), repo)
+    report = pointing.play(beats, find, send or (lambda body: screen_post("/v1/screen/marks", body)))
+    return pointing.summary(report, beats)
+
+
 def restart(arguments):
     token = str(get_config().get("hub_token") or "")
     body = {
@@ -520,6 +598,8 @@ def call(name, arguments):
         return keep_sound_up(arguments)
     if name in ("focus_window", "stage_window"):
         return window_verb(name.split("_")[0], arguments)
+    if name == "point_on_screen":
+        return point_on_screen(arguments)
     if name == "send_voice":
         return send_voice(arguments.get("text"), arguments.get("language"))
     if name == "watch_t3_thread":

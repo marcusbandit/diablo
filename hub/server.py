@@ -169,6 +169,18 @@ class ScreenOpenIn(BaseModel):
     page: str = "settings"
 
 
+class MarksIn(BaseModel):
+    show: str = ""
+    n: int = 0
+    count: int = 1
+    say: str = ""
+    marks: list = []
+    wait: str = ""
+    caption: bool = False
+    lazy: bool = False
+    clear: bool = False
+
+
 class EarsDuckIn(BaseModel):
     keep_up: bool = True
 
@@ -1493,6 +1505,22 @@ async def screen_open(body: ScreenOpenIn, caller: dict = Depends(require_token))
         raise HTTPException(status_code=400, detail=f"page is one of {', '.join(SCREEN_PAGES)}")
     publish({"kind": "screen", "open": body.page})
     return {"ok": True, "page": body.page}
+
+
+@app.post("/v1/screen/marks")
+async def screen_marks(body: MarksIn, caller: dict = Depends(require_token)):
+    """One beat of marks over Marcus's real screen (hub/pointing.py), or clear to take them all
+    down. It goes out as a `screen` event with `marks`, which presence/busy.py writes into
+    marks.json for the overlay."""
+    if not caller.get("master"):
+        raise HTTPException(status_code=403, detail="only the hub token may mark the screen")
+    from . import pointing
+
+    marks = pointing.clean_payload(body.model_dump())
+    if isinstance(marks, str):
+        raise HTTPException(status_code=400, detail=marks)
+    publish({"kind": "screen", "marks": marks})
+    return {"ok": True, "marks": len(marks.get("marks") or [])}
 
 
 def screen_card(body):
