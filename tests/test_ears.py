@@ -508,7 +508,7 @@ class FakeSpeaker:
         self.played = False
         self.spoken = None
 
-    def fetch_face(self, words, cfg):
+    def fetch_face(self, words, cfg, eyes_wait=None):
         import time
 
         time.sleep(self.fetch_s)

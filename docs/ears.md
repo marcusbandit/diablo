@@ -185,10 +185,25 @@ the newest order first and the rest briefly. The merge runs while the ears liste
 starts meanwhile puts the burst back and joins it. When the hub cannot merge, the ears say the
 newest answer whole and the first sentence of each earlier one.
 
-A turn alone is as before: a quick answer is spoken at once, a slow one says its first line while
-it works and its answer when it lands. A reply he cuts off with the name stops and is never said
-again; only an answer still waiting behind a cut first line joins the next burst. A turn of the
+A turn alone is as before: a quick answer is spoken at once, a slow one says its sentences while
+it works and the rest when it lands. A reply he cuts off with the name stops and is never said
+again, the lines queued behind it included; only what Claude writes after the cut joins the next
+burst. A turn of the
 burst still thinking once nothing started or landed for 6 s is left behind: the answers that are in are spoken, and it speaks alone when it lands.
+
+## He speaks as he writes
+
+Claude's text reaches the hub token by token, and every sentence comes to the ears as its own
+`{"say"}` line the moment it ends (docs/api.md, Talking). A first line that arrives while the ears
+still wait on a quick answer is said after 0.15 s instead of after the whole 1.5 s wait, and without
+the thinking chime, since his voice says enough. The ears speak the lines as one reply: each is
+fetched from Cartesia while the one before plays, one line ahead and no more, so a cut wastes at
+most one fetch, and a quarter second of breath sits between them. The first line takes the eyes Jev
+has ready and never waits on them; the mouth is measured for every line. The reply stays open while
+the next line comes within 1.5 s (`FOLLOW_S`); a longer pause, usually a tool at work, ends it, and
+the lines written after it are the next reply. Saying his name stops the line playing and drops
+every line behind it. A reply streamed past 700 characters ends with "the rest is in the chat", and
+the final answer never says a sentence a line already said.
 
 ## Where the time goes
 

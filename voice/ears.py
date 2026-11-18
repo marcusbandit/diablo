@@ -71,6 +71,12 @@ ONSET_PROB = 0.3
 # A streamed answer can be quiet between its first line and its end for as long as a hub turn
 # may run (hub/brains.py TURN_SECONDS), plus a margin.
 TURN_READ_S = 960
+# Streamed sentences are spoken as one reply while the next keeps coming within this long; a
+# longer pause, usually a tool at work, ends the reply, and what comes later is said after it.
+FOLLOW_S = 1.5
+# A first line that arrives while the answer is still awaited is said once the answer has not
+# followed within this long, instead of after the whole INLINE_WAIT_S.
+STIR_GRACE_S = 0.15
 # Jev ends the turn: after EARLY_S of quiet on a short line, the words so far go to Jev on a
 # thread while the ears keep listening. A plain command Jev is EARLY_SURE of ends the turn
 # there and then, instead of after the full quiet; talk that resumes throws the read away.
@@ -715,12 +721,14 @@ def answer_or_background(work, tl, said):
     or unsaid joins that one's burst, and the burst is spoken as one merged reply (voice/burst.py)."""
     job = PENDING.start(work, tl, said)
     alone = PENDING.alone(job)
-    if alone and job["done"].wait(INLINE_WAIT_S):
+    if alone and PENDING.settle(job, INLINE_WAIT_S, STIR_GRACE_S):
         PENDING.forget(job)
         return burst.answer_of(job)
     tl.note(background=True)
     tl.mark("backgrounded")
-    feedback.thinking()
+    if not (alone and job["early"]):
+        # A first line about to be said tells him enough; the thinking chime would only cover it.
+        feedback.thinking()
     thinking_changed()
     if alone:
         log.info("still thinking on %r, listening again", said[:80])
@@ -736,10 +744,9 @@ def say_ready(mic, speaker, cfg, detector, tap):
     for the reply after his next turn."""
     PENDING.quiet_s = burst.quiet_s(cfg)
     for job, early in PENDING.take_early():
-        for n, words in enumerate(early):
-            if say_answer(mic, speaker, words, cfg, detector, tap, job["tl"], first=True):
-                PENDING.keep_early(job, early[n + 1:])
-                return True
+        if say_answer(mic, speaker, following(job, early), cfg, detector, tap, job["tl"], first=True):
+            PENDING.drop_early(job)
+            return True
     jobs, merged = PENDING.take()
     if not jobs:
         return False
@@ -748,13 +755,8 @@ def say_ready(mic, speaker, cfg, detector, tap):
     tl = last["tl"] or timeline.Timeline()
     try:
         if merged is None:
-            early, last["early"] = list(last["early"]), []
-            for n, words in enumerate(early):
-                if say_answer(mic, speaker, words, cfg, detector, tap, tl, first=True):
-                    last["early"] = early[n + 1:]
-                    PENDING.keep([last])
-                    return True
-            return say_answer(mic, speaker, last["words"], cfg, detector, tap, tl)
+            lines, last["early"] = [w for w in list(last["early"]) + [last["words"]] if w and w.strip()], []
+            return say_answer(mic, speaker, lines if len(lines) > 1 else " ".join(lines), cfg, detector, tap, tl)
         log.info("a burst of %d spoken as one reply", len(jobs))
         tl.note(burst=[job["said"][:120] for job in jobs])
         return say_answer(mic, speaker, merged, cfg, detector, tap, tl)
@@ -763,6 +765,17 @@ def say_ready(mic, speaker, cfg, detector, tap):
             if job["tl"] is not None and job not in PENDING.jobs:
                 job["tl"].mark("end")
                 job["tl"].save()
+
+
+def following(job, early):
+    """The lines of a lone job still thinking: those in hand, then each next one as it is written,
+    for as long as the next keeps coming within FOLLOW_S."""
+    yield from early
+    while True:
+        line = PENDING.pull_early(job, FOLLOW_S)
+        if line is None:
+            return
+        yield line
 
 
 def cancel_thinking(cfg):
@@ -1184,14 +1197,21 @@ def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
     tl = tl or timeline.Timeline()
     tl.mark("hub_sent")
     first, heard = [], []
+    capped = []
 
     def heard_first(line):
         tl.mark("ack_back")
         heard.append(line)
         words = spoken(line.strip())
-        if words:
-            first.append(words)
-            on_say(words)
+        if not words or capped:
+            return
+        if first and sum(len(w) + 1 for w in first) + len(words) > SPOKEN_CHARS:
+            # As long a reply as he says in one go; the rest stays in the chat.
+            capped.append(words)
+            on_say("The rest is in the chat.")
+            return
+        first.append(words)
+        on_say(words)
 
     try:
         found = ask(cfg, text, context, shot, desktop, on_say=heard_first if on_say is not None else None)
@@ -1225,7 +1245,7 @@ def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
     if heard:
         reply = sentences.unsaid(reply, heard + first)
     tl.note(outcome=f"answered by {found.get('backend') or 'the hub'}")
-    return said_aloud(reply, found.get("say"))
+    return said_aloud("" if capped else reply, found.get("say"))
 
 
 def said_aloud(reply, say=None):
@@ -1448,17 +1468,28 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
 
 
 def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
-    """Speaks the answer, or with first his line ahead of the work. True when Marcus cut it
-    off with the name."""
-    log.info("%s: %s", "first" if first else "reply", words[:200])
-    if not words:
-        return False
+    """Speaks the answer, or with first his lines ahead of the work. words is the text, or its
+    sentences as a list or as an iterator still being written: each is fetched while the one
+    before plays. True when Marcus cut it off with the name."""
+    if not isinstance(words, str):
+        words = list(words) if isinstance(words, (list, tuple)) else words
+        if isinstance(words, list):
+            words = [w for w in words if w and w.strip()]
+            if len(words) <= 1:
+                words = words[0] if words else ""
     tl = tl or timeline.Timeline()
     marks = ("ack_ready", "ack_spoken") if first else ("tts_ready", "spoken")
-    if not first:
-        tl.note(reply=words[:300])
-    if not tl.info.get("act", "").startswith("quick"):
-        presence.show_reply(words)
+    shows = not tl.info.get("act", "").startswith("quick")
+    if isinstance(words, str):
+        log.info("%s: %s", "first" if first else "reply", words[:200])
+        if not words:
+            return False
+        if not first:
+            tl.note(reply=words[:300])
+        if shows:
+            presence.show_reply(words)
+    else:
+        words = told(words, tl, first, shows)
     after = "listening" if STICKY.get("loop") else "asleep"
 
     def heard():
@@ -1473,7 +1504,11 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
         LIVE.set_state("speaking")
     try:
         if detector is None:
-            speaker.say(words, cfg, interruptible=False, on_heard=heard, on_done=done)
+            if isinstance(words, str):
+                speaker.say(words, cfg, interruptible=False, on_heard=heard, on_done=done)
+            else:
+                speaker.say_stream(words, cfg, interruptible=False, on_heard=heard, on_done=done,
+                                   on_ready=lambda: tl.mark(marks[0]))
             tl.mark(marks[1])
             return False
         return speak_until_named(mic, speaker, words, cfg, detector, tap, tl, marks, on_heard=heard, on_done=done)
@@ -1481,6 +1516,19 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
         with _state_lock:
             if LIVE is not None and _last_state != "speaking":
                 LIVE.set_state(_last_state or "asleep")
+
+
+def told(lines, tl, first, shows):
+    """Hands the lines on as they come, logging each and growing his reply card with them."""
+    said = []
+    for line in lines:
+        said.append(line)
+        log.info("%s: %s", "first" if first else "reply", line[:200])
+        if shows:
+            presence.show_reply(" ".join(said))
+        if not first:
+            tl.note(reply=" ".join(said)[:300])
+        yield line
 
 
 def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=None, after_cut=False):
@@ -1683,11 +1731,19 @@ def speak_until_named(mic, speaker, words, cfg, detector, tap, tl=None, marks=("
 
     def talk():
         try:
+            if not isinstance(words, str):
+                # One line after another, each fetched while the one before plays; a cut drops
+                # the line playing and every one behind it.
+                speaker.say_stream(words, cfg, interruptible=False, on_heard=on_heard, on_done=on_done, cancel=cancel,
+                                   on_ready=lambda: tl.mark(marks[0]) if tl is not None else None)
+                if tl is not None and not cancel.is_set():
+                    tl.mark(marks[1])
+                return
             if vstate.is_deaf():
                 return
             # Fetch, then play, so a cut during the fetch means nothing plays at all.
             speaker.prime()
-            fetched = speaker.fetch_face(words, cfg)
+            fetched = speaker.fetch_face(words, cfg, eyes_wait=0.0)
             if tl is not None:
                 tl.mark(marks[0])
             if fetched and not cancel.is_set():
