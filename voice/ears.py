@@ -1511,7 +1511,7 @@ def run_tour(mic, speaker, cfg, detector, tap, tl):
     reading.start()
 
     def target():
-        reading.join(timeout=4.0)
+        reading.join(timeout=8.0)
         return controls.get("found")
 
     script = tour.lines(cfg, target, spoken=lambda line: spoke(tl, line))

@@ -119,9 +119,37 @@ def front_window():
     return {"name": name, "role": "window", "box": {"x": at[0], "y": at[1], "w": size[0], "h": size[1]}}
 
 
+def heading_target():
+    """The biggest line of text in the focused window, read by OCR: for apps with no controls to
+    read (Electron, Chromium), the clearest thing on screen to point at. None when there is none."""
+    from . import hands
+
+    try:
+        client, monitors = hands.resolve("front")
+        region = hands.ocr_region(client, monitors)
+        words, size = hands.ocr(region)
+    except Exception:
+        return None
+    best = None
+    for segment in hands.rows_of(words):
+        clean = [w for w in segment if w["conf"] >= 80 and re.search(r"[A-Za-z]{2}", w["text"])]
+        text = " ".join(w["text"] for w in segment)
+        if len(clean) < 2 or len(clean) < len(segment) - 1 or not 6 <= len(text) <= 60:
+            continue
+        height = sorted(w["height"] for w in segment)[len(segment) // 2]
+        top = min(w["top"] for w in segment)
+        if best is None or (height, -top) > (best[0], -best[1]):
+            best = (height, top, segment, text)
+    if best is None:
+        return None
+    x, y, w, h = hands.to_global(hands.union(best[2]), region, size)
+    name = " ".join(best[3].split()[:5])
+    return {"name": name, "role": "heading", "box": {"x": x, "y": y, "w": w, "h": h}}
+
+
 def find_target():
-    """A named control in the focused window, else the window itself."""
-    return pick_target(read_front()) or front_window()
+    """A named control in the focused window, else its biggest line of text, else the window itself."""
+    return pick_target(read_front()) or heading_target() or front_window()
 
 
 def read_front(timeout=4.0):
@@ -195,29 +223,34 @@ def lines(cfg, target=None, spoken=None):
         return text, cue
 
     yield step("Here is what I can do, sir, in under a minute.")
-    found = target() if callable(target) else target
-    if found:
-        what = f"{found['name']} {ROLE_WORDS.get(found['role'], 'button')}"
-        first = "spotlight" if found["role"] == "window" else "ring"
-        yield step(f"I can point at anything on your screen, like your {what}.",
-                   lambda: screen.marks([{"kind": first, "box": found["box"]},
-                                         {"kind": "label", "box": found["box"], "text": found["name"]}], 0, 2))
-        yield step("And I can work your windows for you: click, type and press keys, a whole task in one go.",
-                   lambda: screen.clear_marks())
-    else:
-        yield step("I can point at anything on your screen, and walk you through a task step by step.")
-        yield step("And I can work your windows for you: click, type and press keys, a whole task in one go.")
     try:
         html = EXAMPLE.read_text()
     except OSError:
         html = ""
     if html:
         yield step("Ask me how something works and I draw it, like this atom you can turn.",
-                   lambda: (screen.clear_marks(), screen.picture("Explained in 3D", html)))
+                   lambda: screen.picture("Explained in 3D", html))
     else:
-        yield step("Ask me how something works and I draw it for you.", screen.clear_marks)
+        yield step("Ask me how something works and I draw it for you.")
+    found = target() if callable(target) else target
+    if found and found["role"] == "heading":
+        yield step(f"I can point at anything on your screen, like this heading: {found['name']}.",
+                   lambda: (screen.close_picture(), screen.marks([{"kind": "ring", "box": found["box"]},
+                                                                   {"kind": "underline", "box": found["box"]}], 0, 1)))
+    elif found:
+        what = f"{found['name']} {ROLE_WORDS.get(found['role'], 'button')}"
+        first = "spotlight" if found["role"] == "window" else "ring"
+        yield step(f"I can point at anything on your screen, like your {what}.",
+                   lambda: (screen.close_picture(), screen.marks([{"kind": first, "box": found["box"]},
+                                                                   {"kind": "label", "box": found["box"],
+                                                                    "text": found["name"]}], 0, 1)))
+    else:
+        yield step("I can point at anything on your screen, and walk you through a task step by step.",
+                   screen.close_picture)
+    yield step("And I can work your windows for you: click, type and press keys, a whole task in one go.",
+               screen.clear_marks if found else None)
     yield step("Your lights, reminders, mail and phone run through me as well, and I hand coding work to T3.")
-    yield step("That's the tour, sir. What would you like to try?", screen.close_picture)
+    yield step("That's the tour, sir. What would you like to try?")
 
 
 def run(cfg, speaker, cancel=None, on_line=None):
@@ -227,7 +260,7 @@ def run(cfg, speaker, cancel=None, on_line=None):
     reading.start()
 
     def target():
-        reading.join(timeout=4.0)
+        reading.join(timeout=8.0)
         return controls.get("found")
 
     return speaker.say_stream(lines(cfg, target, on_line), cfg, cancel=cancel)

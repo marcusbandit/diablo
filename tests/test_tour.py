@@ -38,6 +38,15 @@ class Tour(unittest.TestCase):
         self.assertEqual(tour.pick_target(controls)["name"], "Settings")
         self.assertIsNone(tour.pick_target(controls[:2]))
 
+    def test_a_heading_is_named_as_it_reads(self):
+        said = []
+        with mock.patch.object(tour.presence, "show_reply", return_value="card"), \
+                mock.patch.object(tour.Screen, "later"), mock.patch.object(tour.Screen, "close_picture"):
+            for text, cue in tour.lines({}, {"name": "What changed", "role": "heading",
+                                             "box": {"x": 1, "y": 1, "w": 50, "h": 20}}, said.append):
+                cue()
+        self.assertIn("I can point at anything on your screen, like this heading: What changed.", said)
+
     def test_app_names_read_well(self):
         self.assertEqual(tour.app_name({"class": "com.t3tools.T3Code"}), "T3 Code")
         self.assertEqual(tour.app_name({"class": "zen"}), "Zen")
@@ -49,7 +58,9 @@ class Tour(unittest.TestCase):
             for text, cue in tour.lines({}, {"name": "Export", "role": "button",
                                              "box": {"x": 1, "y": 1, "w": 50, "h": 20}}, said.append):
                 cue()
-        self.assertEqual(said[1], "I can point at anything on your screen, like your Export button.")
+        self.assertIn("I can point at anything on your screen, like your Export button.", said)
+        self.assertLess(said.index("Ask me how something works and I draw it, like this atom you can turn."),
+                        said.index("I can point at anything on your screen, like your Export button."))
         self.assertTrue(said[-1].startswith("That's the tour"))
 
 
