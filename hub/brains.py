@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import busy as busy_turns
 from . import agent, charter, context, db, events, hue, jev, lockguard, modules, questions, route, settings, standby, t3link, threads, usage
-from . import skillbook
+from . import learn, skillbook
 
 logger = logging.getLogger(__name__)
 
@@ -804,6 +804,7 @@ async def reap_idle():
                 if not session.busy and now - session.last_used > IDLE_SECONDS:
                     lanes.recent.pop(lane, None)
                     await session.close()
+        learn.tick(busy=any_busy())
 
 
 async def restart_all():
@@ -1169,6 +1170,7 @@ def pick_tier(conv, text, images, origin, answer=None, recent_light=False, needs
 
 async def ask(conv, text, origin="telegram", images=None, on_step=None, **kwargs):
     inflight[conv] += 1
+    learn.heard(conv, text, kwargs.get("machine", False))
     shown = busy_turns.start(conv, origin)
 
     async def stepped(label):
@@ -1291,6 +1293,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
     filed = picked is not None and picked.source not in ("off", "error")
     extra = {"pick": picked.row()} if picked is not None else None
     asking = None
+    remembered = None
     beside = chosen == "claude" and busy(conv) and spoken(origin) and parallel_ok() and runs_beside(answer, said)
     if chosen == "claude" and busy(conv) and spoken(origin):
         logger.info("%s: %r %s", conv, said[:80], "runs beside the busy turn" if beside else "queues behind the busy turn")
@@ -1314,7 +1317,9 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                                              held=None if seeded or session is None else picked.lane)
             else:
                 retrieved = recap_for(said)
-            notes = ([handover] if handover else []) + ([retrieved] if retrieved else []) + list(notes or []) or None
+            remembered = facts_note(conv, chosen, said, session, seeded, beside)
+            kept = [remembered.text] if remembered is not None and remembered.text else []
+            notes = ([handover] if handover else []) + ([retrieved] if retrieved else []) + kept + list(notes or []) or None
             message = prefix(origin, notes) + "\n" + text
             if notes:
                 text = "\n".join(notes) + "\n" + text
@@ -1367,9 +1372,35 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
     if turn.error != "stopped":
         record_turn(conv, said, turn)
         context.answered(said, turn.text, turn.did, turn.backend)
+    if remembered is not None and not beside and turn.text:
+        learn.facts_seen(remembered, turn.session_id)
+    learn.after_turn(conv, said, turn, machine)
     refresh_panels(turn)
     usage_log(turn, conv, origin, started, decision, extra)
     return turn
+
+
+def upcoming_session(conv, chosen, session):
+    """The claude or opencode session id the turn is about to run in, empty for a fresh one."""
+    if session is not None:
+        return session.session_id if session.used else ""
+    if chosen == "claude":
+        current = _sessions.get(conv)
+        if current is not None and current.used and current.session_id:
+            return current.session_id
+    if chosen in ("claude", "opencode"):
+        return settings.get(session_key(chosen, conv)) or ""
+    return ""
+
+
+def facts_note(conv, chosen, said, session, seeded, beside):
+    """The kept facts for the turn's bracket; a warm session only gets the ones it has not seen."""
+    if chosen == "api":
+        return None
+    if beside:
+        return learn.facts_for_turn("", said, "", fresh=True)
+    lane = session.lane if session is not None and session.lane else "-"
+    return learn.facts_for_turn(f"{conv}:{lane}", said, upcoming_session(conv, chosen, session), fresh=seeded)
 
 
 def describe():

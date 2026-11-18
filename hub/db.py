@@ -348,6 +348,23 @@ def add_fact(text, tags):
         return cur.lastrowid
 
 
+def update_fact(fact_id, text, tags):
+    with _lock:
+        _conn.execute(
+            "UPDATE facts SET ts = ?, text = ?, tags = ? WHERE id = ?",
+            (time.time(), text, json.dumps(tags), fact_id),
+        )
+        _conn.commit()
+
+
+def same_fact(text):
+    with _lock:
+        row = _conn.execute(
+            "SELECT id FROM facts WHERE lower(trim(text)) = lower(trim(?)) LIMIT 1", (str(text or ""),)
+        ).fetchone()
+    return row[0] if row else None
+
+
 def get_facts(q=None, limit=20):
     with _lock:
         if q:
