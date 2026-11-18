@@ -196,6 +196,57 @@ ears' own cards and a large one into `panel.json`, which opens the central card 
 page is saved under `pages/` in the state dir, the newest 20 kept, and the card carries its path.
 "Enlarge this" then moves a small one into the central card like any other.
 
+## Pointing at the real screen
+
+"Where is the export button?", "show me how to export this" and "explain this" get marks drawn
+over the real screen while he talks: a ring round the control, an arrow to it from beside the orb,
+an underline under the sentence that matters. The brain calls `point_on_screen` (hub/mcp_server.py,
+hub/pointing.py) once per answer with beats in order, each a short line he then says and the marks
+that go with it.
+
+A mark points at the visible words of a control or a line of text (`target: {text, window, near}`,
+`window` front by default) or at a box in global logical pixels, as `hyprctl` reports them. The hub
+finds the words on the desktop with `python -m voice.hands find-text`, one ssh per target to
+`desktop.host` (else `lock.host`), all of a call's lookups at once, and the same words once. Each
+beat goes to `POST /v1/screen/marks` as soon as its own targets are found, so the first marks show
+while later ones are still being looked up. A target that is not found drops its mark, and the
+tool's answer names it so he can say so. busy.py writes the beats into `marks.json`, one show at a
+time: a beat of the same show joins it, a new show replaces it, and `{"clear": true}` takes it down.
+
+The overlay is `Pointing.qml`: one transparent layer per monitor (namespace `diablo-marks`, the
+overlay layer) with an empty input region, so it never takes a click, a hover or the keyboard, and
+it is only mapped while marks are up. `Marks.qml` draws them: `ring` (an ellipse drawn on like a pen
+stroke, a little past where it started), `underline`, `arrow` (from the orb's rim when he is on the
+same monitor, else from the cursor, else from a spot towards the middle of the monitor, curving in
+and stopping at the ring's edge), `label` (beside the ring, on the side away from an arrow),
+`spotlight` (dims the monitor except the box), `highlight` (a marker swipe), `num` (step n on the
+top left corner) and `check` and `cross`. The marks of a beat come in one after another, 140 ms
+apart, and each beat fades as the next one starts. The geometry and the timing are pure functions in
+`presence/marks.js`; `node --test tests/presence/marks.test.mjs` checks them.
+
+A beat lasts as long as its line takes to say: its characters at `marks_cps` a second (15 unless
+`~/.config/diablo/config.toml` says otherwise), at least 1.8 s and at most 20 s. A beat that has
+not arrived when the last one is done keeps the last marks up for 20 s. After the last beat the
+marks stay 12 s, then fade. `caption: true` on a beat also shows its line on screen, under the
+ring; nothing else is written there unless the brain asks for a `label`. Marks never show on a
+locked screen: the lock surface covers every layer, and `point_on_screen` is not on the locked
+mode allowlist, since it reads what is on screen.
+
+### Walkthroughs
+
+A beat with `wait: "click"` is a step he has to do. A Wayland client cannot see clicks in other
+windows, so the overlay does the honest thing: it asks Hyprland where the pointer is ten times a
+second (the same socket request the orb uses, running only while such a step is up) and takes the
+step as done once the pointer has been inside the step's box and left it again, or after 60 s. A
+pointer that only passes over the box counts as well. The beats after the first waiting one are
+sent with their words unresolved (`lazy`), because the screen changes as he goes: when one is due,
+presence looks its words up on the screen as it is then, with `python -m hub.pointing resolve` from
+the voice venv on the desktop, and shows it once found (or without the marks it could not find
+after 12 s).
+
+`scripts/presence-shots.sh marks-all marks-spotlight marks-steps` draws every kind over a made-up
+document window.
+
 ## Lists in the central card
 
 A list or checklist comes as `sections` (`[{title, items: [{text, done}]}]`, at most 160 items;

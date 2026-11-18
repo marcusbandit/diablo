@@ -272,6 +272,16 @@ on each change, and `off` when they stop.
 rest of the spoken conversation, or turns it down again. It goes out as a `duck` event that
 `presence/busy.py` hands to the ears (docs/ears.md, "Other sound goes quiet while he talks").
 
+`POST /v1/screen/marks` (hub token only) draws one beat of marks over the real desktop screen, the
+brain's `point_on_screen` (hub/pointing.py, docs/presence.md "Pointing at the real screen"):
+`{"show", "n", "count", "say", "marks": [...], "wait"?: "click", "caption"?, "lazy"?}`. `show` names
+the call, `n` is the beat's place and `count` how many the call has. A mark is `{"kind", "box":
+{x, y, w, h}}` or `{"kind", "point": {x, y}}` in global logical screen pixels, with `text` for a
+`label`, `n` for a `num` and an optional `from` point for an `arrow`; kinds are `ring`, `underline`,
+`arrow`, `label`, `spotlight`, `highlight`, `num`, `check` and `cross`. Only a `lazy` beat may carry
+`target: {text, window, near}` instead, to be found on the desktop when its turn comes. `{"clear":
+true}` takes every mark down. A beat with a target that is not lazy, or an `n` past 7, is a 400.
+
 ## Panels
 
 A section's `panels` lists module ids. `GET /v1/sections/{id}/panel` returns what to show above the
@@ -313,6 +323,10 @@ without a card around it, and `wide` keeps a `list` out of a two column layout. 
   `T3 on nemurenai`, `ssh diablo-pi`). `source` says where the message came from. A client
   that only wants the reply can keep waiting for `message`.
 - `t3`: the list at `GET /v1/t3/threads` changed. Fetch it.
+- `screen`: something for the desktop's presence to show. `{"kind": "screen", "card", "size"}` from
+  `POST /v1/screen`, `{"kind": "screen", "open"}` from `POST /v1/screen/open`, or `{"kind":
+  "screen", "marks"}` from `POST /v1/screen/marks`, one beat of marks or `{"clear": true}`.
+  presence/busy.py writes them into presence.json, panel.json and marks.json.
 - `task`: a task card was created or changed. `{"kind": "task", "change", "task"}`, where `change`
   is `created`, `updated` or `seen` and `task` is the whole card as in `GET /v1/tasks`, so a client
   can patch its list without a fetch. Fetch the list again after a reconnect.
