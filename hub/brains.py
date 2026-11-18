@@ -18,6 +18,7 @@ from pathlib import Path
 
 from . import busy as busy_turns
 from . import agent, charter, context, db, events, hue, jev, lockguard, modules, questions, route, settings, standby, t3link, threads, usage
+from . import skillbook
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +91,11 @@ def install_skills():
         return shipped
     target.mkdir(parents=True, exist_ok=True)
     for name in previous.get("names") or []:
-        if name not in shipped and "/" not in name and name not in ("", ".", ".."):
+        if name not in shipped and "/" not in name and name not in ("", ".", "..") and not skillbook.is_learned(target / name):
             shutil.rmtree(target / name, ignore_errors=True)
     for name in shipped:
         destination = target / name
+        skillbook.keep_learned(destination)
         shutil.rmtree(destination, ignore_errors=True)
         shutil.copytree(SKILLS_SRC / name, destination, ignore=shutil.ignore_patterns("__pycache__"))
     write_private(manifest, json.dumps({"digest": digest, "names": shipped}))
