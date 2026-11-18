@@ -12,7 +12,7 @@ _diablo_ears() {
     if [[ ${COMP_WORDS[COMP_CWORD-1]} == --html ]]; then
       COMPREPLY=($(compgen -f -- "$cur"))
     else
-      COMPREPLY=($(compgen -W "--last --html" -- "$cur"))
+      COMPREPLY=($(compgen -W "--last --html --medians" -- "$cur"))
     fi
   fi
 }

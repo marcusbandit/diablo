@@ -365,31 +365,35 @@ class Speaker:
             return ("unspoken", 0.0, 0.0)
         return self._speak([fetched], interruptible, cfg, on_heard=on_heard, on_done=on_done)
 
-    def fetch_face(self, text, cfg):
+    def fetch_face(self, text, cfg, eyes_wait=EYES_WAIT):
         """(wav, face track) for one line: the speech, with the mouth measured from it and the
         eyes Jev picked for its clauses, or None when the fetch gave nothing. Every reply goes
         through here, so the mouth plays the measured sounds, not just the loudness. A model
-        still loading is not waited for; that line follows the loudness."""
+        still loading is not waited for; that line follows the loudness. eyes_wait 0 takes the
+        eyes only when they are already in, so the first line of a reply never waits on them."""
         spoken = interrupt.scrub(text)
         looks = eyes.tag_soon(spoken)  # beside the speech fetch, so the reply does not wait for it
         wav = self._fetch(text, cfg)
         if not wav:
             return None
-        wait = 0.0 if self._killed.is_set() else EYES_WAIT
+        wait = 0.0 if self._killed.is_set() else eyes_wait
         return wav, mouth.face_for(spoken, wav, looks(wait), load=False)
 
-    def play_wav(self, wav, interruptible=False):
+    def play_wav(self, wav, interruptible=False, on_heard=None):
         """Plays audio already in hand, such as a cached acknowledgement."""
         from . import state as vstate
         if vstate.is_deaf() or not wav:
             return ("unspoken", 0.0, 0.0)
-        return self._speak([wav], interruptible)
+        return self._speak([wav], interruptible, on_heard=on_heard)
 
-    def say_stream(self, parts, cfg, interruptible=False):
-        """Speaks sentences as they arrive from a generator, one turn for all of them.
+    def say_stream(self, parts, cfg, interruptible=False, on_heard=None, on_done=None, cancel=None, on_ready=None):
+        """Speaks lines as they arrive from parts, an iterable that may still be waiting on the
+        next one, all in one turn.
 
-        Fetching runs ahead of playback in its own thread, so the second
-        sentence's audio is already in hand when the first one ends.
+        Fetching runs one line ahead of playback on its own thread: the next line is fetched
+        while the current one plays, so its audio is in hand when the current one ends. The first line does not wait for its eyes. on_ready
+        runs once the first line's audio is in; cancel, an Event, stops the fetching and drops
+        every line that has not started playing.
         """
         from . import state as vstate
         if vstate.is_deaf():
@@ -398,29 +402,55 @@ class Speaker:
             return ("unspoken", 0.0, 0.0)
         self.cfg = cfg
         self.prime()
-        ready = queue.Queue()
+        ready = queue.Queue(maxsize=1)
+        stop, finished = threading.Event(), threading.Event()
+
+        def halted():
+            return stop.is_set() or (cancel is not None and cancel.is_set())
 
         def fetch_ahead():
+            first = True
             try:
                 for text in parts:
-                    if self._killed.is_set():
+                    if halted():
                         break
-                    # Measured here, ahead of playback, while the previous sentence plays.
-                    fetched = self.fetch_face(text, cfg)
-                    if fetched is not None:
-                        ready.put(fetched)
+                    # Measured here, ahead of playback, while the previous line plays.
+                    fetched = self.fetch_face(text, cfg, eyes_wait=0.0 if first else EYES_WAIT)
+                    if fetched is None:
+                        continue
+                    if first and on_ready is not None:
+                        on_ready()
+                    first = False
+                    while not halted():
+                        try:
+                            ready.put(fetched, timeout=0.05)
+                            break
+                        except queue.Full:
+                            continue
+                    # One line ahead, no more: the next is fetched once this one starts playing,
+                    # so a cut wastes at most one fetch.
+                    while not halted() and not ready.empty():
+                        stop.wait(0.02)
             except Exception:
                 log.exception("streamed fetch failed")
             finally:
-                ready.put(None)
+                finished.set()
 
-        threading.Thread(target=fetch_ahead, daemon=True).start()
+        threading.Thread(target=fetch_ahead, daemon=True, name="fetch-ahead").start()
 
         def wavs():
-            while True:
-                wav = ready.get()
-                if wav is None:
+            while not (cancel is not None and cancel.is_set()):
+                try:
+                    item = ready.get(timeout=0.05)
+                except queue.Empty:
+                    if finished.is_set() and ready.empty():
+                        return
+                    continue
+                if cancel is not None and cancel.is_set():
                     return
-                yield wav
+                yield item
 
-        return self._speak(wavs(), interruptible, cfg)
+        try:
+            return self._speak(wavs(), interruptible, cfg, on_heard=on_heard, on_done=on_done)
+        finally:
+            stop.set()

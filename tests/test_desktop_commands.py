@@ -393,18 +393,20 @@ class TestFirstLine(unittest.TestCase):
         gate, said = __import__("threading").Event(), []
 
         def work(say):
-            say("On it, launching that on banditbox.")
+            say("On it, launching that now.")
             gate.wait(2)
             return "Done, the thread is running."
 
         tl = timeline.Timeline()
         with mock.patch.object(ears, "INLINE_WAIT_S", 0.05):
             self.assertIsNone(ears.answer_or_background(work, tl, "launch it"))
-        speak = lambda mic, speaker, words, cfg, detector, tap, tl=None, first=False: said.append((words, first)) and False
-        with mock.patch.object(ears, "say_answer", side_effect=speak), mock.patch.object(ears, "thinking_changed"):
+        speak = lambda mic, speaker, words, cfg, detector, tap, tl=None, first=False: said.append(
+            (words if isinstance(words, str) else list(words), first)) and False
+        with mock.patch.object(ears, "say_answer", side_effect=speak), mock.patch.object(ears, "thinking_changed"), \
+                mock.patch.object(ears, "FOLLOW_S", 0.05):
             self.assertTrue(ears.PENDING.has_speech())
             self.assertFalse(ears.say_ready(None, None, {}, None, None))
-            self.assertEqual(said, [("On it, launching that on banditbox.", True)])
+            self.assertEqual(said, [(["On it, launching that now."], True)])
             self.assertFalse(ears.PENDING.has_speech())
             gate.set()
             ears.PENDING.jobs[0]["done"].wait(2)
@@ -413,7 +415,7 @@ class TestFirstLine(unittest.TestCase):
         self.assertEqual(said[1:], [("Done, the thread is running.", False)])
         self.assertEqual(ears.PENDING.thinking(), 0)
 
-    def test_a_cut_in_the_first_line_keeps_the_answer_for_later(self):
+    def test_a_finished_answer_is_one_reply_and_a_cut_drops_the_rest(self):
         from voice import timeline
 
         tl, gate = timeline.Timeline(), __import__("threading").Event()
@@ -425,14 +427,13 @@ class TestFirstLine(unittest.TestCase):
 
         def speak(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
             said.append(words)
-            return first
+            return True
 
         with mock.patch.object(ears, "say_answer", side_effect=speak), mock.patch.object(ears, "thinking_changed"), \
                 mock.patch.object(tl, "save"):
             self.assertTrue(ears.say_ready(None, None, {}, None, None))
-            self.assertTrue(ears.PENDING.has_speech())
-            self.assertFalse(ears.say_ready(None, None, {}, None, None))
-        self.assertEqual(said, ["On it.", "Done."])
+            self.assertFalse(ears.PENDING.has_speech())
+        self.assertEqual(said, [["On it.", "Done."]])
         self.assertEqual(ears.PENDING.thinking(), 0)
 
     def test_a_quick_turn_says_both_lines_as_one(self):

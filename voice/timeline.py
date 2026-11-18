@@ -8,6 +8,7 @@ waterfall in the terminal or as an HTML page.
 
 import html
 import json
+import statistics
 import time
 from pathlib import Path
 
@@ -31,6 +32,8 @@ STEPS = [
     ("voice check", "turn_end", "voice_ok"),
     ("speech to text", "voice_ok", "text"),
     ("first line back", "hub_sent", "ack_back"),
+    ("beat", "brain_back", "beat_audio"),
+    ("first sound", "first_sentence", "first_audio"),
     ("first line voice", "ack_back", "ack_ready"),
     ("first line spoken", "ack_ready", "ack_spoken"),
     ("hub", "hub_sent", "hub_back"),
@@ -120,6 +123,8 @@ def hub_split(row):
         parts.append(f"jev {hub['jev_ms']} ms")
     if hub.get("first_text_ms") is not None:
         parts.append(f"first line {hub['first_text_ms']} ms")
+    if hub.get("first_say_ms") is not None:
+        parts.append(f"first sentence {hub['first_say_ms']} ms")
     if hub.get("brain_ms") is not None:
         parts.append(f"hub turn {hub['brain_ms']} ms")
     if hub.get("model"):
@@ -148,6 +153,34 @@ def text_report(rows, width=50):
             out.append(f"  {'':16} inside: " + ", ".join(extra))
         out.append("")
     return "\n".join(out) if out else "no turns timed yet: say Diablo and ask something"
+
+
+# From the end of his speech to each of these, for the medians: (label, point).
+LATENCY = [
+    ("first sentence back", "first_sentence"),
+    ("beat heard", "beat_audio"),
+    ("first audio", "first_audio"),
+    ("answer spoken", "spoken"),
+]
+
+
+def latency(rows):
+    """[(label, turns measured, median ms)] from his last word, the speech_end point, to each
+    LATENCY point, over the turns that have both. A point never reached is left out."""
+    out = []
+    for label, point in LATENCY:
+        spans = [row["points"][point] - row["points"]["speech_end"] for row in rows
+                 if point in (row.get("points") or {}) and "speech_end" in row["points"]
+                 and row["points"][point] >= row["points"]["speech_end"]]
+        out.append((label, len(spans), round(statistics.median(spans)) if spans else None))
+    return out
+
+
+def latency_report(rows):
+    lines = [f"from the end of his speech, over the last {len(rows)} turns:"]
+    for label, count, median in latency(rows):
+        lines.append(f"  {label:20} " + (f"median {median / 1000:5.2f} s over {count} turns" if count else "not measured yet"))
+    return "\n".join(lines)
 
 
 COLORS = {
