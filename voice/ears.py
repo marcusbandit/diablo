@@ -743,10 +743,11 @@ def answer_or_background(work, tl, said):
 
 
 def say_ready(mic, speaker, cfg, detector, tap):
-    """Speaks what is ready: a lone job's first lines while it works, a lone job's answer once
-    it is in, or a burst's one merged reply. True when he cut it off with the name, so a turn
-    follows. A cut reply is never said again; only the answer behind a cut first line is kept,
-    for the reply after his next turn."""
+    """Speaks what is ready: a lone job's sentences while it works, as one reply for as long as
+    they keep coming, a lone job's answer once it is in, or a burst's one merged reply. True when
+    he cut it off with the name, so a turn follows. A cut reply is never said again, the lines
+    queued behind it included; what a job still thinking writes after the cut is kept, for the
+    reply after his next turn."""
     PENDING.quiet_s = burst.quiet_s(cfg)
     for job, early in PENDING.take_early():
         if say_answer(mic, speaker, following(job, early), cfg, detector, tap, job["tl"], first=True):
