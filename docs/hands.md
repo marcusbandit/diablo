@@ -175,9 +175,11 @@ so. `front`, `windows` and `ui` only read, so they keep working then.
 
 ## The tools
 
-hub/mcp_server.py runs `./deploy/diablo-hands` in the desktop checkout over ssh
-(`desktop.host`, else the lock host; the checkout is `DIABLO_DESKTOP_REPO`, default
-`Projects/diablo`) and hands the JSON line back as the tool result.
+hub/mcp_server.py runs `./deploy/diablo-hands` in the desktop checkout through
+`desktop_run` in hub/desktop.py, the same helper focus_window, stage_window and point_on_screen
+use: over ssh to `desktop.host` (else the lock host), or straight through bash when the hub runs
+on that box. The checkout is `DIABLO_DESKTOP_REPO`, default `Projects/diablo`. The last JSON line
+diablo-hands prints is the tool result.
 
 - `desktop_front`: front.
 - `read_window` (window?, max?): ui.

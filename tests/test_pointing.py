@@ -112,6 +112,23 @@ class TestFinding(unittest.TestCase):
         self.assertIn("--window front", argv[-1])
         self.assertEqual(found["matches"][0]["text"], "Export")
 
+    def test_the_ssh_runner_keeps_its_short_connect_timeout(self):
+        run = mock.Mock(return_value=subprocess.CompletedProcess([], 0, stdout=json.dumps({"matches": []}), stderr=""))
+        pointing.ssh_runner("desk-box", "Projects/diablo", run=run)("Export", None)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:3], ["ssh", "-o", "ConnectTimeout=6"])
+        self.assertEqual(run.call_args.kwargs["timeout"], pointing.FIND_SECONDS)
+        self.assertTrue(argv[-1].endswith("find-text --window front -- Export"), argv[-1])
+
+    def test_on_the_desktop_box_itself_the_runner_skips_ssh(self):
+        run = mock.Mock(return_value=subprocess.CompletedProcess([], 0, stdout=json.dumps({"matches": [EXPORT]}), stderr=""))
+        with mock.patch("socket.gethostname", return_value="desk-box"):
+            found = pointing.ssh_runner("desk-box", "Projects/diablo", run=run)("Export", "front")
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:2], ["bash", "-c"])
+        self.assertEqual(argv[2], "cd Projects/diablo && ./deploy/diablo-hands find-text --window front -- Export")
+        self.assertEqual(found["matches"][0]["text"], "Export")
+
     def test_an_unreachable_desktop_is_an_error_not_a_crash(self):
         run = mock.Mock(side_effect=subprocess.TimeoutExpired("ssh", 12))
         find = pointing.ssh_runner("desk-box", "Projects/diablo", run=run)

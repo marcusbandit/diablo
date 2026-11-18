@@ -412,23 +412,16 @@ def keep_sound_up(arguments):
 
 
 def window_verb(verb, arguments):
-    """Runs voice/window.py on the desktop box over ssh: the one place focus and stage are done."""
-    import shlex
-    import subprocess
-
-    from . import localenv
+    """Runs voice/window.py on the desktop box: the one place focus and stage are done."""
+    from . import desktop
 
     target = " ".join(str(arguments.get("target") or "").split())
     if verb == "focus" and not target:
         return "say which window to focus"
-    repo = (localenv.get("DIABLO_DESKTOP_REPO") or "Projects/diablo").removeprefix("~/")
-    command = f"cd {shlex.quote(repo)} && .venv-voice/bin/python -m voice.window {verb} {shlex.quote(target)}"
-    host = str(settings.get("desktop.host") or "").strip() or lockguard.host()
     try:
-        done = subprocess.run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", host, command],
-                              capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return f"could not reach {host}: {error}"
+        done = desktop.desktop_run([".venv-voice/bin/python", "-m", "voice.window", verb, target], timeout=30)
+    except desktop.Unreachable as error:
+        return str(error)
     said = (done.stdout or done.stderr).strip().splitlines()
     return (said[-1] if said else f"{verb} said nothing")[:300]
 
@@ -526,27 +519,20 @@ def hands_argv(name, arguments):
 
 
 def hands(name, arguments):
-    """Runs diablo-hands on the desktop box over ssh and hands back its one JSON line as is."""
-    import shlex
-    import subprocess
-
-    from . import localenv
+    """Runs diablo-hands on the desktop box and hands back its one JSON line as is."""
+    from . import desktop
 
     try:
         argv = hands_argv(name, arguments)
     except (TypeError, ValueError) as error:
         return json.dumps({"error": str(error)})
-    repo = (localenv.get("DIABLO_DESKTOP_REPO") or "Projects/diablo").removeprefix("~/")
-    command = f"cd {shlex.quote(repo)} && ./deploy/diablo-hands " + " ".join(shlex.quote(a) for a in argv)
-    host = str(settings.get("desktop.host") or "").strip() or lockguard.host()
     try:
-        done = subprocess.run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", host, command],
-                              capture_output=True, text=True, timeout=120 if argv[0] == "act" else 40)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return json.dumps({"error": f"could not reach {host}: {error}"})
-    lines = [line for line in (done.stdout or "").splitlines() if line.strip()]
-    if lines and lines[-1].lstrip().startswith("{"):
-        return lines[-1][:60000]
+        done = desktop.desktop_run(["./deploy/diablo-hands", *argv], timeout=120 if argv[0] == "act" else 40)
+    except desktop.Unreachable as error:
+        return json.dumps({"error": str(error)})
+    line = desktop.last_json(done.stdout)
+    if line:
+        return line[:60000]
     said = (done.stderr or done.stdout or "").strip().splitlines()
     return json.dumps({"error": (said[-1] if said else f"diablo-hands exited {done.returncode}")[:300]})
 
@@ -614,7 +600,7 @@ EXTRA.append(POINT_TOOL)
 
 def point_on_screen(arguments, find=None, send=None):
     """Looks the targets up on the desktop and sends the beats to presence as each is ready."""
-    from . import localenv, pointing
+    from . import desktop, pointing
 
     if arguments.get("clear") and not arguments.get("beats"):
         failed = screen_post("/v1/screen/marks", {"clear": True})
@@ -623,8 +609,7 @@ def point_on_screen(arguments, find=None, send=None):
     if not beats:
         return "nothing to point at: give beats, each with marks that have a target"
     if find is None:
-        repo = (localenv.get("DIABLO_DESKTOP_REPO") or "Projects/diablo").removeprefix("~/")
-        find = pointing.ssh_runner(str(settings.get("desktop.host") or "").strip() or lockguard.host(), repo)
+        find = pointing.ssh_runner(desktop.desktop_host(), desktop.desktop_repo())
     report = pointing.play(beats, find, send or (lambda body: screen_post("/v1/screen/marks", body)))
     return pointing.summary(report, beats)
 

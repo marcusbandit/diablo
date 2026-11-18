@@ -15,7 +15,6 @@ Standard library only at the top, so the desktop can run this file without the h
 
 import json
 import math
-import shlex
 import subprocess
 import sys
 import time
@@ -153,15 +152,17 @@ def clean_payload(body):
 HANDS = "./deploy/diablo-hands"
 
 
-def find_command(text, window, hands=HANDS):
-    return f"{hands} find-text --window {shlex.quote(window or 'front')} -- {shlex.quote(text)}"
+def find_argv(text, window, hands=HANDS):
+    return [hands, "find-text", "--window", window or "front", "--", text]
 
 
 def parse_found(code, out):
     """find-text's answer: the matches, or the error it gave, or why it could not be read."""
-    lines = [line for line in str(out or "").strip().splitlines() if line.strip().startswith("{")]
+    from .desktop import last_json
+
+    line = last_json(out)
     try:
-        body = json.loads(lines[-1]) if lines else {}
+        body = json.loads(line) if line else {}
     except ValueError:
         body = {}
     if code != 0 or not isinstance(body.get("matches"), list):
@@ -169,19 +170,15 @@ def parse_found(code, out):
     return body
 
 
-def ssh_runner(host, repo, timeout=FIND_SECONDS, run=subprocess.run):
-    """find(text, window) over ssh on the desktop box, the way the window verbs reach it."""
-    import socket
-
-    local = socket.gethostname() == host
+def ssh_runner(host, repo, timeout=FIND_SECONDS, run=None):
+    """find(text, window) in the desktop checkout, the way the window verbs and hands tools reach it."""
+    from .desktop import Unreachable, desktop_run
 
     def find(text, window):
-        command = f"cd {shlex.quote(repo)} && {find_command(text, window)}"
-        argv = ["bash", "-c", command] if local else ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", host, command]
         try:
-            done = run(argv, capture_output=True, text=True, timeout=timeout)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            return {"matches": [], "error": f"could not reach {host}: {error}"[:200]}
+            done = desktop_run(find_argv(text, window), timeout, host=host, repo=repo, connect=6, run=run)
+        except Unreachable as error:
+            return {"matches": [], "error": str(error)[:200]}
         return parse_found(done.returncode, done.stdout or done.stderr)
 
     return find
@@ -191,8 +188,7 @@ def local_runner(timeout=FIND_SECONDS, run=subprocess.run):
     """find(text, window) on this machine, for presence resolving a beat after a wait."""
 
     def find(text, window):
-        hands = str(Path(__file__).resolve().parent.parent / "deploy" / "diablo-hands")
-        argv = [hands, "find-text", "--window", window or "front", "--", text]
+        argv = find_argv(text, window, str(Path(__file__).resolve().parent.parent / "deploy" / "diablo-hands"))
         try:
             done = run(argv, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as error:

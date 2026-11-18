@@ -10,7 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from hub import db, devices, lockguard, mcp_server
+from hub import db, desktop, devices, lockguard, mcp_server
 
 NAMES = ("desktop_front", "read_window", "find_on_screen", "act_on_desktop")
 
@@ -125,6 +125,35 @@ class Calls(Case):
         argv = self.seen[-1][0]
         self.assertEqual(argv[-2], "box.example")
         self.assertTrue(argv[-1].startswith("cd code/diablo && "))
+
+    def test_on_the_desktop_box_itself_it_runs_without_ssh(self):
+        with mock.patch("socket.gethostname", return_value="desk"):
+            text = self.call("desktop_front", stdout='{"class": "editor"}\n')
+        self.assertEqual(text, '{"class": "editor"}')
+        argv, kwargs = self.seen[-1]
+        self.assertEqual(argv[:2], ["bash", "-c"])
+        self.assertEqual(argv[2], "cd Projects/diablo && ./deploy/diablo-hands front")
+        self.assertEqual(kwargs["timeout"], 40)
+
+    def test_the_window_verbs_reach_the_desktop_the_same_way(self):
+        with mock.patch("subprocess.run", side_effect=self.ssh(stdout="focused zen\n")), \
+                mock.patch.object(mcp_server.lockguard, "host", return_value="desk"):
+            self.assertEqual(mcp_server.window_verb("focus", {"target": "zen"}), "focused zen")
+        argv, kwargs = self.seen[-1]
+        self.assertEqual(argv[:3] + argv[-2:-1], ["ssh", "-o", "ConnectTimeout=8", "desk"])
+        self.assertEqual(argv[-1], "cd Projects/diablo && .venv-voice/bin/python -m voice.window focus zen")
+        self.assertEqual(kwargs["timeout"], 30)
+
+        def broken(argv, **kwargs):
+            raise OSError("no ssh")
+
+        with mock.patch("subprocess.run", side_effect=broken), mock.patch.object(mcp_server.lockguard, "host", return_value="desk"):
+            self.assertEqual(mcp_server.window_verb("stage", {}), "could not reach desk: no ssh")
+
+    def test_the_last_json_line_is_the_answer(self):
+        self.assertEqual(desktop.last_json('warming up\n{"a": 1}\n{"b": 2}\nbye\n'), '{"b": 2}')
+        self.assertEqual(desktop.last_json("no json here\n"), "")
+        self.assertEqual(desktop.last_json(None), "")
 
     def test_a_locked_spoken_turn_refuses_before_ssh(self):
         guard = lockguard.for_turn(devices.KINDS["voice"], look=lambda: "locked")
