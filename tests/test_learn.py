@@ -42,6 +42,7 @@ class Home(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
         learn._pending.clear()
+        learn._heard.clear()
         learn._shown.clear()
         learn._fact_state.update(task=None, retry_at=0.0)
 
@@ -238,6 +239,50 @@ class TestLearningTrigger(Home):
             with self.subTest(said=said):
                 self.assertIsNone(run(go()))
         self.assertEqual(self.asked, [])
+
+    def test_a_correction_said_while_the_turn_ran_vetoes(self):
+        settings.set_setting("learn.skills.quiet_s", "0.01")
+        started = time.time() - 5
+
+        async def go():
+            learn.heard("main", "no, that's wrong")
+            return learn.after_turn("main", "rotate the logs", turn(), started=started)
+        self.assertIsNone(run(go()))
+        self.assertNotIn("main", learn._pending)
+        self.assertEqual(self.asked, [])
+
+    def test_a_correction_after_another_line_during_the_turn_still_vetoes(self):
+        started = time.time() - 5
+
+        async def go():
+            learn.heard("main", "and the weather?")
+            learn.heard("main", "wait, that is not what I asked")
+            return learn.after_turn("main", "rotate the logs", turn(), started=started)
+        self.assertIsNone(run(go()))
+
+    def test_a_line_said_while_the_turn_ran_is_its_next_message(self):
+        settings.set_setting("learn.skills.quiet_s", "60")
+        started = time.time() - 5
+
+        async def go():
+            learn.heard("main", "thanks, now the weather")
+            task = learn.after_turn("main", "rotate the logs", turn(), started=started)
+            self.assertNotIn("main", learn._pending)
+            return await asyncio.wait_for(task, 5)
+        self.assertEqual(run(go()), "rotate-the-logs")
+
+    def test_lines_before_the_turn_started_or_in_another_conversation_do_not_count(self):
+        settings.set_setting("learn.skills.quiet_s", "0.01")
+        learn.heard("main", "no, that's wrong")
+        started = learn._heard["main"][-1][0]
+
+        async def go():
+            learn.heard("web-1", "no, that's wrong")
+            learn.heard("main", "nope", machine=True)
+            task = learn.after_turn("main", "rotate the logs", turn(), started=started)
+            self.assertIs(learn._pending["main"].event.is_set(), False)
+            return await asyncio.wait_for(task, 5)
+        self.assertEqual(run(go()), "rotate-the-logs")
 
     def test_machine_lines_do_not_end_the_wait(self):
         learn._pending["main"] = pending = learn.Pending("main", "x", [], "", asyncio.Event())
