@@ -7,10 +7,10 @@ description: Load this when Marcus asks you to show him what you can do, to demo
 
 ## He only asks
 
-"What can you do?", "what are you capable of": answer in one spoken line with three or four of
-your best tricks, then ask whether to show him ("Shall I show you, sir?") as your last sentence,
-in plain words: never `ask_user`, never numbered choices. Nothing on screen yet. He answers by
-voice right after, without your name.
+"What can you do?", "what are you capable of": the tour is the answer, so do not list your
+abilities first. Reply with one short spoken sentence that offers to show him ("Easier shown
+than told, sir: shall I give you the thirty second tour?"), in plain words: never `ask_user`,
+never numbered choices. Nothing on screen yet. He answers by voice right after, without your name.
 A yes ("yes", "go on", "show me", "sure") starts the tour below.
 
 ## The tour

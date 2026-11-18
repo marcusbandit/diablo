@@ -561,3 +561,26 @@ class SaidLog(unittest.TestCase):
         list(ears.told(iter(["One.", "Two."]), tl, True, False))
         ears.spoke(tl, "Three.")
         self.assertEqual(tl.info["spoken"], ["One.", "Two.", "Three."])
+
+
+class Dismiss(unittest.TestCase):
+    def test_ways_to_send_him_away(self):
+        for line in ("Dismiss.", "That's all.", "That's all, thanks.", "Thanks, Diablo.", "go away", "nah I'm good"):
+            with self.subTest(line=line):
+                self.assertTrue(ears.dismissed(line))
+
+    def test_requests_that_start_like_one_are_not(self):
+        for line in ("Thanks for turning off the lights, can you also dim the desk", "That's all the files?",
+                     "No.", "dismiss the card on the left"):
+            with self.subTest(line=line):
+                self.assertFalse(ears.dismissed(line))
+
+    def test_dismissing_closes_the_window_and_clears_his_cards(self):
+        ears.REPLIED.set()
+        tl = timeline.Timeline()
+        with mock.patch.object(ears.presence, "clear") as clear, mock.patch.object(ears, "set_state"), \
+                mock.patch.object(ears.phrases, "pick", return_value=None), mock.patch.object(ears.chime, "play"):
+            self.assertFalse(ears.dismiss({}, None, tl))
+        clear.assert_called_once_with("reply")
+        self.assertFalse(ears.REPLIED.is_set())
+        self.assertEqual(tl.info["outcome"], "dismissed")

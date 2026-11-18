@@ -89,9 +89,17 @@ BEAT = [
     "But of course.",
 ]
 
+BYE = [
+    "Very well, sir.",
+    "I'll be here.",
+    "Until later, sir.",
+    "As you wish.",
+]
+
 BANKS = {
     "ack": ACKS,
     "beat": BEAT,
+    "bye": BYE,
     "countdown": COUNTDOWN,
     "sample": SAMPLE,
     "done": DONE,

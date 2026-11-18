@@ -74,6 +74,17 @@ TURN_READ_S = 960
 # Streamed sentences are spoken as one reply while the next keeps coming within this long, so a
 # tool at work between two sentences never splits one answer in two; the name still cuts in.
 FOLLOW_S = 30.0
+# "That's all", "dismiss", "thanks, Diablo", "go away": he is done talking. Said after an answer,
+# or straight after the name, it closes the conversation here, with no brain turn: a short
+# goodbye, his reply cards gone, and no follow-up window.
+DISMISS = re.compile(
+    r"^\W*(?:diablo\W+)?(?:(?:ok(?:ay)?|alright|right|no|nah)\W+)?"
+    r"(?:dismiss(?:ed)?|go away|you can go|leave it|that'?s all|that is all|that'?ll be all|that will be all|"
+    r"that'?s it|that is it|i'?m done|we'?re done|i'?m good|nothing else|no more|thanks?|thank you|cheers|"
+    r"bye|goodbye|good night|see you|later)"
+    r"(?:\W+(?:thanks?|thank you|diablo|sir|mate|for now|for today|then|that'?s all|that is all))*\W*$",
+    re.I,
+)
 # After an answer he can just talk on: the mic stays open this long for a follow-up without the
 # name (setting ears.follow_s, 0 turns it off).
 FOLLOW_UP_S = 8.0
@@ -1444,6 +1455,33 @@ def notify_untrained():
     )
 
 
+def dismissed(text):
+    return bool(DISMISS.match(" ".join(str(text or "").split())))
+
+
+def dismiss(cfg, speaker, tl):
+    """Sent away: a cached goodbye, his reply cards off the screen, and back to sleep."""
+    REPLIED.clear()
+    tl.note(outcome="dismissed")
+    log.info("dismissed")
+    try:
+        presence.clear("reply")
+    except Exception:
+        log.exception("could not clear the reply cards")
+    cached = phrases.pick(cfg, "bye") if speaker is not None else None
+    if cached:
+        said, wav = cached
+        spoke(tl, said)
+        try:
+            speaker.play_wav(wav)
+        except Exception:
+            log.exception("the goodbye failed")
+    else:
+        chime.play("done")
+    set_state("asleep")
+    return False
+
+
 def follow_up_s(cfg):
     try:
         return max(float(cfg.get("ears.follow_s", FOLLOW_UP_S)), 0.0)
@@ -1549,6 +1587,8 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
             chime.play("never")
         return False
     log.info("heard: %s", text)
+    if dismissed(text):
+        return dismiss(cfg, speaker, tl)
     if commands.loop_intent(text) == "start":
         tl.note(outcome="speech control on")
         return LOOP

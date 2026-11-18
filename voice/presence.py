@@ -63,6 +63,19 @@ def show(title="", big="", lines=(), kind="text", ttl=TTL_S, video=None, card_id
     return card["id"]
 
 
+def clear(kind="reply"):
+    """Takes his cards of one kind off the screen at once: he was sent away."""
+    with _lock, _file_lock():
+        cards = [c for c in _read() if c.get("kind") != kind]
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"cards": cards}))
+            tmp.replace(FILE)
+        except OSError:
+            pass
+
+
 def show_reply(words, ttl=None, card_id=None):
     """What he says, to read as well: a card that stays about as long as it takes to say. With
     card_id the reply already on screen grows instead of a second card appearing."""

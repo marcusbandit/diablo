@@ -26,9 +26,9 @@ YES = re.compile(
 )
 
 SHOW_NOTE = "(He asked you to show him what you can do: run the showcase skill now, the whole tour.)"
-ASK_NOTE = ("(He asked what you can do: follow the showcase skill. Answer in one spoken line, then ask in plain "
-            "words whether to show him, as the last sentence. No ask_user, no numbered choices, and do not start the "
-            "tour yet. He answers by voice without your name.)")
+ASK_NOTE = ("(He asked what you can do. The tour is the answer, so do not list anything: reply with one short "
+            "spoken sentence that offers to show him, for example \"Easier shown than told, sir: shall I give you the "
+            "thirty second tour?\" No ask_user, no numbered choices, no tour yet. He answers by voice without your name.)")
 
 _offered = {}
 
