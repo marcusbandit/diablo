@@ -25,7 +25,8 @@ title, matched class first, then initial class, then title, most recently focuse
 ### front
 
 The focused window: `address`, `class`, `title`, `pid`, `x`, `y`, `w`, `h`, `monitor` (its
-name), `scale`, `workspace`, `visible`, and `locked` for the screen. With nothing focused,
+name), `scale`, `workspace`, `visible`, and `locked` for the screen: true, false, or null when
+`hyprctl -j locked` gives no clear answer. With nothing focused,
 `{"window": null, "monitor", "scale"}`. About 30 ms inside, 65 ms with process start.
 
 ### windows
@@ -94,7 +95,8 @@ back through the capture's own size, so a scaled monitor comes out right. OCR ma
 `score`. `--all` runs OCR even when AT-SPI found something.
 
 OCR is skipped, with the reason in `ocr`, while the screen is locked (a capture would only show
-the lock screen) and when the window is not on a visible workspace. A window takes about 0.6 s
+the lock screen), when the lock state cannot be read, and when the window is not on a visible
+workspace. AT-SPI matches still come back in all three cases. A window takes about 0.6 s
 to read, a whole monitor about 1 s.
 
 ### act [--window W] --steps JSON
@@ -140,7 +142,9 @@ known before the plan runs are checked before any step runs; a match found while
 the plan at that step. The reply is `{"needs_confirm": "..."}` with exit 3, and the brain asks
 Marcus first.
 
-Nothing runs while the screen is locked: `act` refuses at once, whoever asked.
+Nothing runs while the screen is locked: `act` refuses at once, whoever asked. It fails closed:
+when hyprctl cannot say whether the screen is locked, `act` refuses too, with an error that says
+so. `front`, `windows` and `ui` only read, so they keep working then.
 
 ## The tools
 

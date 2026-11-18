@@ -142,10 +142,13 @@ def short(client, monitors=()):
 
 
 def locked():
+    """True or False for the screen lock, or None when hyprctl cannot say."""
     try:
-        return bool((hypr("locked") or {}).get("locked"))
+        state = hypr("locked")
     except HandsError:
-        return False
+        return None
+    value = state.get("locked") if isinstance(state, dict) else None
+    return value if isinstance(value, bool) else None
 
 
 def front():
@@ -741,7 +744,11 @@ def find_text(phrase, target="front", every=False, tree=None):
         out["window"] = {"address": client.get("address"), "class": client.get("class")}
     if out["matches"] and not every:
         return out
-    if locked():
+    state = locked()
+    if state is None:
+        out["ocr"] = "skipped: could not read whether the screen is locked"
+        return out
+    if state:
         out["locked"] = True
         out["ocr"] = "skipped: the screen is locked, so a capture would only show the lock screen"
         return out
@@ -1195,7 +1202,10 @@ def act(target, steps):
     result = {"ok": False, "steps": []}
     if note:
         result["rewritten"] = note
-    if locked():
+    state = locked()
+    if state is None:
+        raise HandsError("could not read whether the screen is locked, so nothing is clicked or typed; try again in a moment")
+    if state:
         raise HandsError("the screen is locked; nothing on it can be clicked or typed into until Marcus unlocks it")
     hands = Hands(target)
     needs_focus = hands.client is not None and hands.address != (hypr("activewindow") or {}).get("address")

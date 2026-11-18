@@ -335,6 +335,22 @@ class Acting(unittest.TestCase):
         self.assertIn("locked", str(caught.exception))
         self.assertEqual(self.clicks, [])
 
+    def test_nothing_runs_when_the_lock_cannot_be_read(self):
+        def hypr_failing(*args):
+            if args == ("locked",):
+                raise hands.HandsError("hyprctl locked failed: no such command")
+            return fake_hypr(*args)
+
+        def hypr_odd(*args):
+            return {"state": "?"} if args == ("locked",) else fake_hypr(*args)
+
+        for broken in (hypr_failing, hypr_odd):
+            with self.subTest(hypr=broken.__name__), mock.patch.object(hands, "hypr", broken), \
+                    self.assertRaises(hands.HandsError) as caught:
+                hands.act("front", [{"do": "click_at", "x": 1210, "y": 110}])
+            self.assertIn("could not read whether the screen is locked", str(caught.exception))
+        self.assertEqual(self.clicks, [])
+
 
 class Matching(unittest.TestCase):
     def test_exact_names_first_and_controls_carry_ids(self):
@@ -414,6 +430,27 @@ class Contract(unittest.TestCase):
         ocr.assert_not_called()
         self.assertTrue(out["locked"])
         self.assertEqual(out["matches"], [])
+
+    def test_an_unknown_lock_skips_ocr_but_reading_still_works(self):
+        def hypr_failing(*args):
+            if args == ("locked",):
+                raise hands.HandsError("hyprctl locked failed")
+            return fake_hypr(*args)
+
+        tree = FakeTree([node(1, "button", "Save", [1100, 100, 40, 20])], [node(1, "button", "Save", [1100, 100, 40, 20])])
+        with mock.patch.object(hands, "Tree", return_value=tree), mock.patch.object(hands, "ocr_matches") as ocr:
+            out, code = self.run_main(["find-text", "Anything"], hypr=hypr_failing)
+            ocr.assert_not_called()
+            self.assertEqual((code, out["matches"]), (0, []))
+            self.assertIn("could not read whether the screen is locked", out["ocr"])
+            self.assertNotIn("locked", out)
+            out, code = self.run_main(["find-text", "Save"], hypr=hypr_failing)
+            self.assertEqual(out["matches"][0]["source"], "atspi")
+            out, code = self.run_main(["ui"], hypr=hypr_failing)
+            self.assertEqual((code, out["controls"][0]["name"]), (0, "Save"))
+        out, code = self.run_main(["front"], hypr=hypr_failing)
+        self.assertEqual(code, 0)
+        self.assertIsNone(out["locked"])
 
     def test_the_module_imports_without_gobject(self):
         done = subprocess.run([sys.executable, "-c", "import voice.hands"], cwd=Path(__file__).resolve().parent.parent,
