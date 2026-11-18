@@ -32,7 +32,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from . import burst, chime, commands, duck, ears_api, endturn, feedback, hubclient, jevfast, mouth, ownvoice, panel, phrases, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake, window
+from . import burst, chime, commands, duck, tour, ears_api, endturn, feedback, hubclient, jevfast, mouth, ownvoice, panel, phrases, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake, window
 from . import state as vstate
 from hub import sentences
 from .dictation import NAME as SAID_NAME
@@ -1482,6 +1482,48 @@ def dismiss(cfg, speaker, tl):
     return False
 
 
+def tour_line(mic, speaker, cfg, detector, tap, tl, text):
+    """The tour, run here from its script: the cut flag when the line was about it, else None."""
+    reply = tour.answer(text)
+    if tour.wanted(text) or reply == "yes":
+        return run_tour(mic, speaker, cfg, detector, tap, tl)
+    if reply == "no":
+        tl.note(outcome="tour declined")
+        return say_answer(mic, speaker, tour.DECLINED, cfg, detector, tap, tl)
+    if tour.asked(text):
+        tl.note(outcome="tour offered")
+        tour.offer()
+        return say_answer(mic, speaker, tour.OFFER, cfg, detector, tap, tl)
+    return None
+
+
+def run_tour(mic, speaker, cfg, detector, tap, tl):
+    tl.note(outcome="tour")
+    log.info("tour")
+    controls = {}
+    reading = threading.Thread(target=lambda: controls.update(found=tour.find_target()), daemon=True)
+    reading.start()
+
+    def target():
+        reading.join(timeout=4.0)
+        return controls.get("found")
+
+    script = tour.lines(cfg, target, spoken=lambda line: spoke(tl, line))
+    if detector is None:
+        speaker.say_stream(script, cfg)
+        cut = False
+    else:
+        cut = speak_until_named(mic, speaker, script, cfg, detector, tap, tl)
+    if cut:
+        tour.Screen(cfg).clear_marks()
+        from . import panel
+
+        panel.apply("close")
+        return True
+    REPLIED.set()
+    return False
+
+
 def follow_up_s(cfg):
     try:
         return max(float(cfg.get("ears.follow_s", FOLLOW_UP_S)), 0.0)
@@ -1589,6 +1631,9 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
     log.info("heard: %s", text)
     if dismissed(text):
         return dismiss(cfg, speaker, tl)
+    toured = tour_line(mic, speaker, cfg, detector, tap, tl, text)
+    if toured is not None:
+        return toured
     if commands.loop_intent(text) == "start":
         tl.note(outcome="speech control on")
         return LOOP
@@ -2295,6 +2340,7 @@ The setup and the meter live in the desktop app: Settings, then Voice.
   diablo-ears mouth       tune his mouth to his voice by eye (show, set MS)
   diablo-ears timings     where each recent turn's time went (--last N, --html FILE, --medians)
   diablo-ears said        what he heard, said aloud and wrote in each recent turn (--last N, --json)
+  diablo-ears tour        play the "show me what you can do" tour once, here
   diablo-ears recordings  the last turns' recordings and what was heard (a number shows more)
   diablo-ears recheck     run a recording (an id, or the last) through gvoice again
   diablo-ears run         the service itself (diablo-ears.service runs this)
@@ -2422,6 +2468,12 @@ def main(argv=None):
         return timings_cli(argv[1:])
     if command == "said":
         return said_cli(argv[1:])
+    if command == "tour":
+        from .tts import Speaker
+
+        cfg = Settings(load_config()).get()
+        tour.run(cfg, Speaker(cfg, _Quiet()), on_line=lambda line: print(time.strftime("%H:%M:%S"), line, flush=True))
+        return 0
     if command == "recordings":
         for row in recordings.listed(int(argv[1]) if len(argv) > 1 and argv[1].isdigit() else 10):
             stamp = time.strftime("%H:%M:%S", time.localtime(row.get("at", 0)))

@@ -391,7 +391,8 @@ class Speaker:
         next one, all in one turn.
 
         Fetching runs one line ahead of playback on its own thread: the next line is fetched
-        while the current one plays, so its audio is in hand when the current one ends. The first line does not wait for its eyes. on_ready
+        while the current one plays, so its audio is in hand when the current one ends. A part may
+        be (text, cue): cue() runs the moment that line starts playing, to show what it talks about. The first line does not wait for its eyes. on_ready
         runs once the first line's audio is in; cancel, an Event, stops the fetching and drops
         every line that has not started playing.
         """
@@ -411,9 +412,10 @@ class Speaker:
         def fetch_ahead():
             first = True
             try:
-                for text in parts:
+                for part in parts:
                     if halted():
                         break
+                    text, cue = part if isinstance(part, tuple) else (part, None)
                     # Measured here, ahead of playback, while the previous line plays.
                     fetched = self.fetch_face(text, cfg, eyes_wait=0.0 if first else EYES_WAIT)
                     if fetched is None:
@@ -423,7 +425,7 @@ class Speaker:
                     first = False
                     while not halted():
                         try:
-                            ready.put(fetched, timeout=0.05)
+                            ready.put((fetched, cue), timeout=0.05)
                             break
                         except queue.Full:
                             continue
@@ -448,6 +450,12 @@ class Speaker:
                     continue
                 if cancel is not None and cancel.is_set():
                     return
+                item, cue = item
+                if cue is not None:
+                    try:
+                        cue()
+                    except Exception:
+                        log.exception("a line's cue failed")
                 yield item
 
         try:

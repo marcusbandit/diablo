@@ -1,7 +1,7 @@
 _diablo_ears() {
   local cur=${COMP_WORDS[COMP_CWORD]}
   if (( COMP_CWORD == 1 )); then
-    COMPREPLY=($(compgen -W "train retrain status chimes mouth timings said recordings recheck run" -- "$cur"))
+    COMPREPLY=($(compgen -W "train retrain status chimes mouth timings said tour recordings recheck run" -- "$cur"))
   elif [[ ${COMP_WORDS[1]} == train ]]; then
     COMPREPLY=($(compgen -W "--fresh" -- "$cur"))
   elif [[ ${COMP_WORDS[1]} == recheck ]]; then

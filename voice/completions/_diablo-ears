@@ -10,6 +10,7 @@ _diablo-ears() {
     'mouth:tune his mouth to his voice by eye'
     'timings:where the time of each recent turn went'
     'said:what he heard, said aloud and wrote in each recent turn'
+    'tour:play the show me what you can do tour once'
     'recordings:the last turns recordings and what was heard'
     'recheck:run a recording through gvoice again'
     'run:the service itself'
