@@ -107,7 +107,7 @@ class TestFinding(unittest.TestCase):
         found = find("Save as…'x", "front")
         argv = run.call_args.args[0]
         self.assertEqual(argv[:1] + argv[-2:-1], ["ssh", "desk-box"])
-        self.assertIn("cd Projects/diablo && .venv-voice/bin/python -m voice.hands find-text", argv[-1])
+        self.assertIn("cd Projects/diablo && ./deploy/diablo-hands find-text --window", argv[-1])
         self.assertIn("'Save as…'\"'\"'x'", argv[-1])
         self.assertIn("--window front", argv[-1])
         self.assertEqual(found["matches"][0]["text"], "Export")

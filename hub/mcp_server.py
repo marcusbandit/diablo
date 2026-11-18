@@ -718,8 +718,6 @@ def call(name, arguments):
         return window_verb(name.split("_")[0], arguments)
     if name in HANDS_COMMANDS:
         return hands(name, arguments)
-
-
     if name == "point_on_screen":
         return point_on_screen(arguments)
     if name == "send_voice":

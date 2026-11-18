@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 KINDS = ("ring", "underline", "arrow", "label", "spotlight", "highlight", "num", "check", "cross")
@@ -149,8 +150,11 @@ def clean_payload(body):
     return out
 
 
-def find_command(text, window, python=".venv-voice/bin/python"):
-    return f"{python} -m voice.hands find-text {shlex.quote(text)} --window {shlex.quote(window or 'front')}"
+HANDS = "./deploy/diablo-hands"
+
+
+def find_command(text, window, hands=HANDS):
+    return f"{hands} find-text --window {shlex.quote(window or 'front')} -- {shlex.quote(text)}"
 
 
 def parse_found(code, out):
@@ -187,7 +191,8 @@ def local_runner(timeout=FIND_SECONDS, run=subprocess.run):
     """find(text, window) on this machine, for presence resolving a beat after a wait."""
 
     def find(text, window):
-        argv = [sys.executable, "-m", "voice.hands", "find-text", text, "--window", window or "front"]
+        hands = str(Path(__file__).resolve().parent.parent / "deploy" / "diablo-hands")
+        argv = [hands, "find-text", "--window", window or "front", "--", text]
         try:
             done = run(argv, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as error:
