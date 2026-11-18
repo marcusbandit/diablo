@@ -77,14 +77,14 @@ FOLLOW_S = 30.0
 # "That's all", "dismiss", "thanks, Diablo", "go away": he is done talking. Said after an answer,
 # or straight after the name, it closes the conversation here, with no brain turn: a short
 # goodbye, his reply cards gone, and no follow-up window.
-DISMISS = re.compile(
-    r"^\W*(?:diablo\W+)?(?:(?:ok(?:ay)?|alright|right|no|nah)\W+)?"
-    r"(?:dismiss(?:ed)?|go away|you can go|leave it|that'?s all|that is all|that'?ll be all|that will be all|"
-    r"that'?s it|that is it|i'?m done|we'?re done|i'?m good|nothing else|no more|thanks?|thank you|cheers|"
-    r"bye|goodbye|good night|see you|later)"
-    r"(?:\W+(?:thanks?|thank you|diablo|sir|mate|for now|for today|then|that'?s all|that is all))*\W*$",
-    re.I,
+DISMISS_PHRASE = (
+    r"(?:(?:ok(?:ay)?|alright|right|no|nah)\W+)?"
+    r"(?:dismiss(?:ed)?|go away|you can go|leave it|shut up|be quiet|quiet|hush|stop talking|that will do|"
+    r"that'?s enough|that'?s all|that is all|that'?ll be all|that will be all|that'?s it|that is it|i'?m done|"
+    r"we'?re done|i'?m good|nothing else|no more|thanks?|thank you|cheers|bye|goodbye|good night|see you|later)"
+    r"(?:\W+(?:thanks?|thank you|diablo|sir|mate|for now|for today|then|please))*"
 )
+DISMISS = re.compile(r"^\W*(?:diablo\W+)?" + DISMISS_PHRASE + r"(?:\W+" + DISMISS_PHRASE + r")*\W*$", re.I)
 # After an answer he can just talk on: the mic stays open this long for a follow-up without the
 # name (setting ears.follow_s, 0 turns it off).
 FOLLOW_UP_S = 8.0
@@ -766,7 +766,7 @@ def say_ready(mic, speaker, cfg, detector, tap):
     PENDING.quiet_s = burst.quiet_s(cfg)
     for job, early in PENDING.take_early():
         if say_answer(mic, speaker, following(job, early), cfg, detector, tap, job["tl"], first=True):
-            PENDING.drop_early(job)
+            PENDING.drop(job)
             return True
     jobs, merged = PENDING.take()
     if not jobs:
@@ -1460,8 +1460,14 @@ def dismissed(text):
 
 
 def dismiss(cfg, speaker, tl):
-    """Sent away: a cached goodbye, his reply cards off the screen, and back to sleep."""
+    """Sent away: whatever he was still working on or about to say is dropped, then a cached
+    goodbye, his reply cards off the screen, and back to sleep."""
     REPLIED.clear()
+    if PENDING.size():
+        try:
+            cancel_thinking(cfg)
+        except Exception:
+            log.exception("could not stop what he was working on")
     tl.note(outcome="dismissed")
     log.info("dismissed")
     try:

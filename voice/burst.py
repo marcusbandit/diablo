@@ -161,6 +161,13 @@ class Burst:
             early, job["early"] = job["early"], []
             return [(job, early)]
 
+    def drop(self, job):
+        """He cut the reply off with the name: nothing more of this job is said, not the lines
+        queued behind the cut and not what it writes after it."""
+        with self.lock:
+            job["dropped"] = True
+            job["early"] = []
+
     def drop_early(self, job):
         """Drops the first lines waiting their turn: he cut the reply off with the name, and
         what was queued behind the cut is never said. Lines written after the cut still count."""
