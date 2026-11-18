@@ -79,7 +79,8 @@ FOLLOW_S = 30.0
 # goodbye, his reply cards gone, and no follow-up window.
 DISMISS_PHRASE = (
     r"(?:(?:ok(?:ay)?|alright|right|no|nah)\W+)?"
-    r"(?:dismiss(?:ed)?|go away|you can go|leave it|shut up|be quiet|quiet|hush|stop talking|that will do|"
+    r"(?:dismiss(?:ed)?|go away|you can go|leave it|shut up|be quiet|quiet|hush|silence|stop talking|that will do|"
+    r"never ?mind|forget it|die|drop dead|be ?gone|begone|get lost|piss off|fuck off|"
     r"that'?s enough|that'?s all|that is all|that'?ll be all|that will be all|that'?s it|that is it|i'?m done|"
     r"we'?re done|i'?m good|nothing else|no more|thanks?|thank you|cheers|bye|goodbye|good night|see you|later)"
     r"(?:\W+(?:thanks?|thank you|diablo|sir|mate|for now|for today|then|please))*"
@@ -90,16 +91,19 @@ DISMISS = re.compile(r"^\W*(?:diablo\W+)?" + DISMISS_PHRASE + r"(?:\W+" + DISMIS
 MAYBE_AWAY = re.compile(
     r"\b(?:dismiss(?:ed)?|go away|be ?gone|begone|disappear|vanish|get lost|leave me|shut up|stop talking|"
     r"be quiet|piss off|fuck off|bugger off|buzz off|scram|go to sleep|stand down|remove your|leave now|"
+    r"kill yourself|never ?mind|forget it|drop dead|die|silence|"
     r"you can go|that'?s all|that is all|that'?s enough|that'?s it|i'?m done|we'?re done|thanks?|thank you)\b",
     re.I,
 )
 AWAY_QUESTION = {"away": {"type": "choice", "instructions": "Is Marcus telling Diablo, his voice assistant, to go away and leave him alone",
                           "criteria": {
-                              "away": "he tells Diablo to leave him alone now: go away, be gone, dismiss, shut up, that's all",
+                              "away": ("he tells Diablo to leave him alone now, however rude or angry: go away, be gone, "
+                                       "dismiss, shut up, that's all, disappear, die, kill yourself said to Diablo"),
                               "other": "anything else, including a question about how to make someone or something go away"}}}
 AWAY_SURE = 0.8
-# After an answer he can just talk on: the mic stays open this long for a follow-up without the
-# name (setting ears.follow_s, 0 turns it off).
+# After an answer that ends with a question he can just answer: the mic stays open this long for
+# a reply without the name (setting ears.follow_s, 0 turns it off). Any other answer ends the
+# talk, so nothing said in the room afterwards reaches him without the name.
 FOLLOW_UP_S = 8.0
 REPLIED = threading.Event()
 # A first line that arrives while the answer is still awaited is said once the answer has not
@@ -1563,12 +1567,19 @@ def follow_up_s(cfg):
         return FOLLOW_UP_S
 
 
+def asked_back():
+    """Whether his last spoken line asked Marcus something, so an answer is due."""
+    return LAST_LINE["text"].rstrip().rstrip('"\'”’)').endswith("?")
+
+
 def follow_up(cfg):
     """Seconds to listen for a follow-up without the name, once an answer has been said to the end
     and nothing else is on its way; 0 for none."""
     if not REPLIED.is_set():
         return 0.0
     REPLIED.clear()
+    if not asked_back():
+        return 0.0
     if PENDING.thinking() or PENDING.has_speech() or STICKY.get("loop") or STICKY.get("dictation"):
         return 0.0
     return follow_up_s(cfg)
@@ -1749,8 +1760,14 @@ def _say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
                 LIVE.set_state(_last_state or "asleep")
 
 
+LAST_LINE = {"text": ""}
+
+
 def spoke(tl, line):
-    """Keeps every line handed to his voice on the turn, in order, for diablo-ears said."""
+    """Keeps every line handed to his voice on the turn, in order, for diablo-ears said, and the
+    last one, so the follow-up window opens only after a question."""
+    if str(line or "").strip():
+        LAST_LINE["text"] = str(line)
     if tl is not None and str(line or "").strip():
         tl.info.setdefault("spoken", []).append(str(line)[:1000])
 

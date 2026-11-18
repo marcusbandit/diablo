@@ -503,7 +503,15 @@ class FollowUp(unittest.TestCase):
         ears.REPLIED.clear()
         self.addCleanup(ears.REPLIED.clear)
 
+    def test_only_a_question_keeps_him_listening(self):
+        ears.LAST_LINE["text"] = "Withdrawing, as you wish."
+        ears.REPLIED.set()
+        with mock.patch.object(ears.PENDING, "thinking", return_value=0), \
+                mock.patch.object(ears.PENDING, "has_speech", return_value=False):
+            self.assertEqual(ears.follow_up({}), 0.0)
+
     def test_an_answer_said_to_the_end_opens_the_window_once(self):
+        ears.LAST_LINE["text"] = "Shall I give you the short tour?"
         ears.REPLIED.set()
         with mock.patch.object(ears.PENDING, "thinking", return_value=0), \
                 mock.patch.object(ears.PENDING, "has_speech", return_value=False):
@@ -511,6 +519,7 @@ class FollowUp(unittest.TestCase):
             self.assertEqual(ears.follow_up({}), 0.0)
 
     def test_no_window_while_more_is_on_its_way_or_when_turned_off(self):
+        ears.LAST_LINE["text"] = "Shall I?"
         ears.REPLIED.set()
         with mock.patch.object(ears.PENDING, "thinking", return_value=1), \
                 mock.patch.object(ears.PENDING, "has_speech", return_value=False):
@@ -567,7 +576,8 @@ class Dismiss(unittest.TestCase):
     def test_plain_goodbyes_need_no_one_to_read_them(self):
         with mock.patch.object(ears.jevfast, "ask") as asked:
             for line in ("Dismiss.", "That's all.", "That's all, thanks.", "Thanks, Diablo.", "go away", "nah I'm good",
-                         "Shut up. Dismiss.", "Okay stop talking", "That's enough, thanks"):
+                         "Shut up. Dismiss.", "Okay stop talking", "That's enough, thanks", "Never mind.", "Die.",
+                         "Forget it", "Begone"):
                 with self.subTest(line=line):
                     self.assertTrue(ears.dismissed(line))
         asked.assert_not_called()
