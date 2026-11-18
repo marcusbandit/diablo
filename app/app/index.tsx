@@ -1,6 +1,8 @@
 import { StatusBar } from "expo-status-bar";
 import { useRef, useState, type ComponentRef } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { doing, needsYou } from "../src/engine/derive";
@@ -34,6 +36,13 @@ export default function Den() {
   const now = doing(s, draft.length > 0);
   const m = mood(now, needsYou(s), s.link);
 
+  // The screen draws edge to edge, so Android does not resize it for the keyboard: the column
+  // gives up the keyboard's height frame by frame, on the UI thread, and the input rides on top.
+  // The keyboard covers the gesture bar, so the input's own bottom inset fades out as it opens.
+  const keyboard = useReanimatedKeyboardAnimation();
+  const lift = useAnimatedStyle(() => ({ paddingBottom: -keyboard.height.value }));
+  const bar = useAnimatedStyle(() => ({ paddingBottom: space(3.5) + insets.bottom * (1 - keyboard.progress.value) }));
+
   const send = () => {
     const text = draft;
     setDraft("");
@@ -41,7 +50,7 @@ export default function Den() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: color.bg }}>
+    <Animated.View style={[{ flex: 1, backgroundColor: color.bg }, lift]}>
       <StatusBar style={m.fill === color.attention ? "dark" : "light"} />
       <MoodBlock mood={m} label={LABEL[now]} inset={insets.top} />
       <ScrollView
@@ -49,6 +58,7 @@ export default function Den() {
         style={{ flex: 1 }}
         contentContainerStyle={{ padding: space(3.5), gap: space(3) }}
         onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })}
+        onLayout={() => scroll.current?.scrollToEnd({ animated: false })}
       >
         {s.pairing.confirm ? (
           <View style={{ gap: space(2) }}>
@@ -77,7 +87,7 @@ export default function Den() {
           </Pressable>
         ))}
       </ScrollView>
-      <View style={{ padding: space(3.5), paddingBottom: space(3.5) + insets.bottom }}>
+      <Animated.View style={[{ paddingHorizontal: space(3.5), paddingTop: space(3.5) }, bar]}>
         <TextInput
           value={draft}
           onChangeText={setDraft}
@@ -88,7 +98,7 @@ export default function Den() {
           placeholderTextColor={color.dim}
           style={{ backgroundColor: color.raised, borderRadius: radius.field, paddingHorizontal: space(3), paddingVertical: space(2.5), color: color.text, fontFamily: font.regular, ...type.body }}
         />
-      </View>
-    </View>
+      </Animated.View>
+    </Animated.View>
   );
 }
