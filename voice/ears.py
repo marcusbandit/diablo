@@ -71,9 +71,13 @@ ONSET_PROB = 0.3
 # A streamed answer can be quiet between its first line and its end for as long as a hub turn
 # may run (hub/brains.py TURN_SECONDS), plus a margin.
 TURN_READ_S = 960
-# Streamed sentences are spoken as one reply while the next keeps coming within this long; a
-# longer pause, usually a tool at work, ends the reply, and what comes later is said after it.
-FOLLOW_S = 1.5
+# Streamed sentences are spoken as one reply while the next keeps coming within this long, so a
+# tool at work between two sentences never splits one answer in two; the name still cuts in.
+FOLLOW_S = 30.0
+# After an answer he can just talk on: the mic stays open this long for a follow-up without the
+# name (setting ears.follow_s, 0 turns it off).
+FOLLOW_UP_S = 8.0
+REPLIED = threading.Event()
 # A first line that arrives while the answer is still awaited is said once the answer has not
 # followed within this long, instead of after the whole INLINE_WAIT_S.
 STIR_GRACE_S = 0.15
@@ -775,13 +779,18 @@ def say_ready(mic, speaker, cfg, detector, tap):
 
 def following(job, early):
     """The lines of a lone job still thinking: those in hand, then each next one as it is written,
-    for as long as the next keeps coming within FOLLOW_S."""
+    for as long as the next keeps coming within FOLLOW_S, and once the job is done the rest of its
+    answer, so the whole answer is one reply."""
     yield from early
     while True:
         line = PENDING.pull_early(job, FOLLOW_S)
-        if line is None:
-            return
-        yield line
+        if line is not None:
+            yield line
+            continue
+        if job["done"].is_set() and not job["dropped"] and not job.get("grouped"):
+            rest, job["words"] = job["words"], ""
+            yield from (sentences.split(rest) if rest and rest.strip() else [])
+        return
 
 
 def cancel_thinking(cfg):
@@ -1433,7 +1442,25 @@ def notify_untrained():
     )
 
 
-def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lead=None, tl=None):
+def follow_up_s(cfg):
+    try:
+        return max(float(cfg.get("ears.follow_s", FOLLOW_UP_S)), 0.0)
+    except (TypeError, ValueError):
+        return FOLLOW_UP_S
+
+
+def follow_up(cfg):
+    """Seconds to listen for a follow-up without the name, once an answer has been said to the end
+    and nothing else is on its way; 0 for none."""
+    if not REPLIED.is_set():
+        return 0.0
+    REPLIED.clear()
+    if PENDING.thinking() or PENDING.has_speech() or STICKY.get("loop") or STICKY.get("dictation"):
+        return 0.0
+    return follow_up_s(cfg)
+
+
+def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lead=None, tl=None, window=None):
     """One turn. True when Marcus cut the reply off with the name, so another turn follows,
     LOOP when he asked for the voice loop.
 
@@ -1444,6 +1471,8 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
     tl = tl or timeline.Timeline("follow-up")
     tl.mark("name")
     set_state("listening", holding=False)
+    if window:
+        tl.note(follow_up=True)
     # The chime first, before anything slow, so he hears at once that the name landed.
     chime.play("listen")
     tl.mark("chime")
@@ -1470,9 +1499,14 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
         heard = record(mic, cfg, after, vad, start_audio=lead,
                        probe=lambda clip: transcribe(clip, cfg), hold=set_holding, tl=tl,
                        early=lambda words: early_read(cfg, words, lambda: seen.desktop or commands.desktop_state()),
-                       judge=own_voice(cfg, tap, slack))
+                       judge=own_voice(cfg, tap, slack), **({"no_speech_s": window} if window else {}))
         audio, spoke = heard
     if not spoke:
+        if window:
+            log.info("no follow-up")
+            tl.note(outcome="no follow-up")
+            set_state("asleep")
+            return False
         log.info("woke, heard nothing")
         tl.note(outcome="heard nothing")
         chime.play("never")
@@ -1486,7 +1520,8 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
         # past the wake check is caught here, before anything reaches the hub.
         log.info("request refused, voice %.3f against his talk", voice)
         tl.note(outcome=f"refused, voice {voice:.2f}")
-        chime.play("never")
+        if not window:
+            chime.play("never")
         return False
     if heard.early is None:
         # An early act gets only its own ok sound, not the heard chime as well.
@@ -1508,7 +1543,8 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
     if stt.is_noise(text):
         log.info("woke, transcript empty or noise: %r", text)
         tl.note(outcome="noise")
-        chime.play("never")
+        if not window:
+            chime.play("never")
         return False
     log.info("heard: %s", text)
     if commands.loop_intent(text) == "start":
@@ -1531,7 +1567,19 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
 def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
     """Speaks the answer, or with first his lines ahead of the work. words is the text, or its
     sentences as a list or as an iterator still being written: each is fetched while the one
-    before plays. True when Marcus cut it off with the name."""
+    before plays. True when Marcus cut it off with the name. An answer said to the end opens the
+    follow-up window (REPLIED)."""
+    cut = _say_answer(mic, speaker, words, cfg, detector, tap, tl, first)
+    if cut is False and _spoke.get("any"):
+        REPLIED.set()
+    return cut
+
+
+_spoke = {"any": False}
+
+
+def _say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
+    _spoke["any"] = False
     if not isinstance(words, str):
         words = list(words) if isinstance(words, (list, tuple)) else words
         if isinstance(words, list):
@@ -1554,6 +1602,7 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
     after = "listening" if STICKY.get("loop") else "asleep"
 
     def heard():
+        _spoke["any"] = True
         tl.mark("first_audio")
         set_state("speaking")
 
@@ -1943,10 +1992,10 @@ def run():
 WARM_WAIT_S = 20
 
 
-def timed_turn(tl, *args):
+def timed_turn(tl, *args, **kwargs):
     """turn(), with its timeline saved however it ends."""
     try:
-        return turn(*args, tl=tl)
+        return turn(*args, tl=tl, **kwargs)
     except Exception:
         tl.note(outcome="failed")
         raise
@@ -2004,10 +2053,12 @@ def loop(mic, settings, speaker, vad, controller, ears, reload, live, cfg, dicta
         if PENDING.has_speech():
             try:
                 cut = say_ready(mic, speaker, settings.get(), detector, tap)
-                while cut:
+                while cut or (cut is False and follow_up(settings.get())):
                     mic.drain()
                     detector.reset()
-                    cut = timed_turn(timeline.Timeline("follow-up"), mic, settings, speaker, vad, detector, tap)
+                    window = None if cut else follow_up_s(settings.get())
+                    cut = timed_turn(timeline.Timeline("follow-up"), mic, settings, speaker, vad, detector, tap,
+                                     window=window)
                     if cut == LOOP:
                         cut = voice_loop(mic, settings, speaker, vad, detector, tap, dictation)
             except Exception:
@@ -2081,13 +2132,15 @@ def loop(mic, settings, speaker, vad, controller, ears, reload, live, cfg, dicta
             # A reply cut off with the name goes straight into the next turn.
             woke_at = stamp
             result = timed_turn(tl, mic, settings, speaker, vad, detector, tap, woke_at, lead)
-            while result:
+            while result or (result is False and follow_up(settings.get())):
                 mic.drain()
                 detector.reset()
                 if result == LOOP:
                     result = voice_loop(mic, settings, speaker, vad, detector, tap, dictation)
                 else:
-                    result = timed_turn(timeline.Timeline("follow-up"), mic, settings, speaker, vad, detector, tap)
+                    window = None if result else follow_up_s(settings.get())
+                    result = timed_turn(timeline.Timeline("follow-up"), mic, settings, speaker, vad, detector, tap,
+                                        window=window)
         except Exception:
             log.exception("turn failed")
         mic.drain()

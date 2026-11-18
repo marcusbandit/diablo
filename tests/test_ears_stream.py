@@ -266,6 +266,20 @@ class TestFollowing(unittest.TestCase):
         self.assertEqual(job["early"], ["Three."])
         gate.set()
 
+    def test_the_rest_of_a_finished_answer_joins_the_same_reply(self):
+        def work(say):
+            say("I run your lights.")
+            time.sleep(0.1)
+            return "Shall I show you? It takes half a minute."
+
+        job = self.job(work)
+        time.sleep(0.02)
+        [(found, early)] = self.group.take_early()
+        with mock.patch.object(ears, "FOLLOW_S", 1.0):
+            lines = list(ears.following(found, early))
+        self.assertEqual(lines, ["I run your lights.", "Shall I show you?", "It takes half a minute."])
+        self.assertEqual(job["words"], "")
+
     def test_a_first_line_is_said_without_waiting_out_the_inline_wait(self):
         gate = threading.Event()
 
@@ -481,3 +495,40 @@ class TestTimings(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FollowUp(unittest.TestCase):
+    def setUp(self):
+        ears.REPLIED.clear()
+        self.addCleanup(ears.REPLIED.clear)
+
+    def test_an_answer_said_to_the_end_opens_the_window_once(self):
+        ears.REPLIED.set()
+        with mock.patch.object(ears.PENDING, "thinking", return_value=0), \
+                mock.patch.object(ears.PENDING, "has_speech", return_value=False):
+            self.assertEqual(ears.follow_up({}), ears.FOLLOW_UP_S)
+            self.assertEqual(ears.follow_up({}), 0.0)
+
+    def test_no_window_while_more_is_on_its_way_or_when_turned_off(self):
+        ears.REPLIED.set()
+        with mock.patch.object(ears.PENDING, "thinking", return_value=1), \
+                mock.patch.object(ears.PENDING, "has_speech", return_value=False):
+            self.assertEqual(ears.follow_up({}), 0.0)
+        ears.REPLIED.set()
+        with mock.patch.object(ears.PENDING, "thinking", return_value=0), \
+                mock.patch.object(ears.PENDING, "has_speech", return_value=False):
+            self.assertEqual(ears.follow_up({"ears.follow_s": "0"}), 0.0)
+
+    def test_say_answer_marks_a_reply_heard_to_the_end(self):
+        def spoken(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
+            ears._spoke["any"] = True
+            return False
+
+        with mock.patch.object(ears, "_say_answer", side_effect=spoken):
+            self.assertFalse(ears.say_answer(None, None, "Done.", {}, None, None))
+        self.assertTrue(ears.REPLIED.is_set())
+        ears.REPLIED.clear()
+        with mock.patch.object(ears, "_say_answer", return_value=True):
+            ears._spoke["any"] = True
+            self.assertTrue(ears.say_answer(None, None, "Done.", {}, None, None))
+        self.assertFalse(ears.REPLIED.is_set())
