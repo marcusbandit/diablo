@@ -39,9 +39,13 @@ export default function Den() {
   // The screen draws edge to edge, so Android does not resize it for the keyboard: the column
   // gives up the keyboard's height frame by frame, on the UI thread, and the input rides on top.
   // The keyboard covers the gesture bar, so the input's own bottom inset fades out as it opens.
+  // Numbers only inside the worklets: they run on the UI thread, where a plain JS function such
+  // as space() cannot be called.
   const keyboard = useReanimatedKeyboardAnimation();
+  const pad = space(3.5);
+  const inset = insets.bottom;
   const lift = useAnimatedStyle(() => ({ paddingBottom: -keyboard.height.value }));
-  const bar = useAnimatedStyle(() => ({ paddingBottom: space(3.5) + insets.bottom * (1 - keyboard.progress.value) }));
+  const bar = useAnimatedStyle(() => ({ paddingBottom: pad + inset * (1 - keyboard.progress.value) }));
 
   const send = () => {
     const text = draft;
