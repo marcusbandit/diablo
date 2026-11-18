@@ -718,6 +718,41 @@ def take_handover(conv):
     return note or None
 
 
+DEEP_ORIGIN = "background run for a line he said aloud at his desk; nothing is spoken, the outcome is read in the app"
+DEEP_NOTE = ("(He asked aloud for the big brain. A background run on it already does that work and reports in the app "
+             "when done. Answer in one short spoken line: say it is being worked on, add anything quick you can, "
+             "and do not do the heavy work yourself.)")
+
+
+def launch_deep(conv, text, images, decision):
+    """Heavy work asked for aloud goes to its own run on the asked-for model; the spoken turn stays quick."""
+    model, effort_level = decision.background
+    picked = route.Decision(subject=decision.subject, tier=decision.tier, reason="asked aloud for the big brain",
+                            path=list(decision.path), explicit=True)
+    picked.model, picked.effort = model, effort_level
+    logger.info("%s: %r goes to a background run on %s %s", conv, text[:80], model, effort_level)
+    return background(run_deep(conv, text, images, picked))
+
+
+async def run_deep(conv, text, images, decision):
+    from . import deliver as delivery
+
+    shown = busy_turns.start(conv, DEEP_ORIGIN)
+    try:
+        turn = await run_side(conv, prefix(DEEP_ORIGIN) + "\n" + text, images, None, decision, origin=DEEP_ORIGIN)
+        reply = turn.text.strip() or (f"The background run failed: {turn.error[:300]}" if turn.error else agent.FALLBACK)
+        did = turn.did or did_for(turn)
+    except Exception as error:
+        logger.exception("background run for %s failed", conv)
+        reply, did = f"The background run failed: {str(error)[:300]}", ""
+    finally:
+        busy_turns.end(shown)
+    try:
+        await delivery.deliver(reply, "report", origin=DEEP_ORIGIN, meta={"did": did, "pushed": False, "deep": True})
+    except Exception:
+        logger.exception("could not deliver the background run for %s", conv)
+
+
 async def run_side(conv, text, images, on_step, decision=None, on_say=None, origin=""):
     """A spoken request that has nothing to do with what Claude is busy on: a fork of the busy
     session answers it at once, beside the first, and is closed after the one turn. It has a turn
@@ -1195,9 +1230,12 @@ def pick_tier(conv, text, images, origin, answer=None, recent_light=False, needs
         if machine and route.rank(decision.tier) < route.rank("voice"):
             decision.tier = "voice"
             decision.model, decision.effort = route.model_effort("voice")
-        brain = route.spoken_brain() if aloud(origin) and not machine and not decision.explicit else None
+        brain = route.spoken_brain() if aloud(origin) and not machine else None
         if brain:
-            decision.adjusted.append(f"spoken aloud: {decision.model} {decision.effort} -> {brain[0]} {brain[1]}")
+            if decision.explicit and not decision.handoff:
+                decision.background = (decision.model, decision.effort)
+            decision.adjusted.append(f"spoken aloud: {decision.model} {decision.effort} -> {brain[0]} {brain[1]}"
+                                     + (" with the asked-for brain in the background" if decision.background else ""))
             decision.model, decision.effort = brain
     except Exception:
         logger.exception("router failed, the turn runs on the default model")
@@ -1296,6 +1334,9 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                              machine=machine)
         if needs_context:
             notes = [CONTEXT_NOTE] + list(notes or [])
+        if decision is not None and decision.background:
+            launch_deep(conv, text, images, decision)
+            notes = [DEEP_NOTE] + list(notes or [])
         if decision is not None and decision.handoff:
             notes = [handoff_note(decision.handoff)] + list(notes or [])
     act = route.desktop_action(answer, text, desktop) if asked else None

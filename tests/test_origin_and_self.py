@@ -236,7 +236,8 @@ if __name__ == "__main__":
 
 class TestSpokenBrain(unittest.TestCase):
     def decide(self, origin, explicit=False, setting=None, machine=False):
-        decision = mock.MagicMock(tier="chat", handoff=None, explicit=explicit, model="claude-opus-5-5", effort="medium")
+        decision = mock.MagicMock(tier="chat", handoff=None, explicit=explicit, model="claude-opus-5-5", effort="medium",
+                                  background=())
         decision.adjusted = []
         values = {"route.spoken": setting}
         with mock.patch.object(brains.route, "route", return_value=decision), \
@@ -253,9 +254,36 @@ class TestSpokenBrain(unittest.TestCase):
             decision = self.decide(origin)
             self.assertEqual((decision.model, decision.effort), ("claude-opus-5-5", "medium"), origin)
 
-    def test_naming_a_model_aloud_wins(self):
+    def test_asking_aloud_for_the_big_brain_sends_it_to_the_background(self):
         decision = self.decide("spoken aloud at his desk", explicit=True)
-        self.assertEqual(decision.model, "claude-opus-5-5")
+        self.assertEqual((decision.model, decision.effort), ("claude-haiku-5-5", "xhigh"))
+        self.assertEqual(decision.background, ("claude-opus-5-5", "medium"))
+
+    def test_a_plain_spoken_line_has_no_background_run(self):
+        self.assertEqual(self.decide("spoken aloud at his desk").background, ())
+
+    def test_the_background_run_gets_the_asked_for_brain_and_lands_in_the_app(self):
+        from hub import route
+
+        decision = route.Decision(subject="other", tier="deep", reason="", path=["x"], explicit=True)
+        decision.background = ("claude-opus-5-5", "high")
+        seen = {}
+
+        async def side(conv, text, images, on_step, picked=None, on_say=None, origin=""):
+            seen.update(model=picked.model, effort=picked.effort, text=text, origin=origin)
+            return brains.Turn(text="Here is the deep answer.", did="answered")
+
+        async def go():
+            with mock.patch.object(brains, "run_side", side), mock.patch.object(brains.busy_turns, "_publish"), \
+                    mock.patch("hub.deliver.deliver", new=mock.AsyncMock()) as deliver:
+                await brains.launch_deep("main", "prove it", None, decision)
+                return deliver
+
+        deliver = asyncio.run(go())
+        self.assertEqual((seen["model"], seen["effort"]), ("claude-opus-5-5", "high"))
+        self.assertTrue(seen["text"].endswith("prove it"))
+        self.assertEqual(deliver.await_args.args[0], "Here is the deep answer.")
+        self.assertTrue(deliver.await_args.kwargs["meta"]["deep"])
 
     def test_machine_turns_are_never_switched(self):
         decision = self.decide("spoken aloud at his desk", machine=True)

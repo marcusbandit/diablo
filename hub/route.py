@@ -19,9 +19,11 @@ Precedence in route():
 3. The tree tier, capped at route.max_tier (default chat) and floored at
    route.min_tier (default none).
 
-A line said aloud at his desk then runs on route.spoken (default
-"claude-haiku-5-5|xhigh", off keeps the tier's model) unless he named a model;
-typed lines, voice notes and machine turns keep the tier's model.
+A line said aloud at his desk then always runs on route.spoken (default
+"claude-haiku-5-5|xhigh", off keeps the tier's model), so the spoken answer stays
+fast. When he asked aloud for the big brain ("think hard", "use opus"), that model
+gets the work as a background run instead (brains.run_deep), and its outcome lands
+in the app. Typed lines, voice notes and machine turns keep the tier's model.
 
 Settings: route.enabled (on/off; off still computes and logs the decision),
 route.max_tier, route.min_tier, route.tier.<tier>, route.spoken. Log: ~/.local/state/diablo/route.jsonl.
@@ -498,6 +500,7 @@ class Decision:
     explicit: bool = False
     applied: bool = False
     elapsed_us: int = 0
+    background: tuple = ()
     id: str = ""
     adjusted: list = field(default_factory=list)
     features: dict = field(default_factory=dict)
