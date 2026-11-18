@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient
 
-from hub import brains, db, devices, sentences, server
+from hub import brains, context, db, devices, route, sentences, server, standby
 
 TOKEN = "test-token"
 HEADERS = {"X-Diablo-Token": TOKEN}
@@ -227,6 +227,70 @@ class TestSayLines(unittest.TestCase):
         self.assertEqual(done["rest"], "Sunny today. Twelve degrees.")
         lines = self.run_turn(["Checking.", "Sunny today."], "Checking.", "Sunny today. Twelve degrees.")
         self.assertEqual(lines[-1]["done"]["rest"], "Twelve degrees.")
+
+
+
+DIM = {"tier": "fast", "tier_confidence": 0.95, "action": "dim", "action_confidence": 0.97,
+       "target": "all", "target_confidence": 0.9, "amount": "normal", "color": "none", "color_confidence": 0.9,
+       "work": "none", "work_confidence": 0.9, "refers_to": "none", "refers_to_confidence": 0.9}
+
+
+class TestBrainLine(unittest.TestCase):
+    """The stream says when the full brain has a spoken turn, so the ears can play a beat."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        folder = Path(self.tmp.name)
+        db.init(str(folder / "diablo.db"))
+        db.set_setting("brain.backend", "claude")
+        db.set_setting("jev.enabled", "on")
+        db.set_setting("threads.enabled", "off")
+        config = {"hub_token": TOKEN}
+        for patch in (mock.patch.object(server, "get_config", return_value=config),
+                      mock.patch.object(devices, "get_config", return_value=config),
+                      mock.patch.object(standby, "get_config", return_value=config),
+                      mock.patch.object(context, "STATE", folder / "context.json"),
+                      mock.patch.object(brains, "STATE", folder),
+                      mock.patch.object(route, "LOG", folder / "route.jsonl")):
+            patch.start()
+            self.addCleanup(patch.stop)
+        context._events.clear()
+        context._answered.clear()
+        standby._state = {"state": "mirror"}
+        self.client = TestClient(server.app)
+        self.lamps = [{"id": "left", "name": "corner lamp", "on": True, "bri": 254}]
+
+    def lines(self, text, jev=None, source="voice"):
+        async def claude(conv, message, images, on_step, decision=None, **kwargs):
+            if kwargs.get("on_say"):
+                await kwargs["on_say"]("The lamp is off.")
+            return brains.Turn(backend="claude", text="The lamp is off.", first_text="The lamp is off.",
+                               said=["The lamp is off."] if kwargs.get("on_say") else [])
+
+        with mock.patch.object(brains, "jev_answer", return_value=jev), \
+                mock.patch.object(brains, "lamps_now", side_effect=lambda *a: [dict(l) for l in self.lamps]), \
+                mock.patch.object(brains.hue, "hue_light", return_value="ok"), \
+                mock.patch.object(brains.hue, "lamp_states", side_effect=lambda: [dict(l) for l in self.lamps]), \
+                mock.patch.object(brains, "run_claude", side_effect=claude), mock.patch.object(server, "publish"):
+            response = self.client.post("/v1/chat", headers=HEADERS, json={
+                "text": text, "source": source, "stream": True, "client_id": f"c-{text}-{source}"})
+        return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+    def test_a_line_for_claude_says_so_before_his_first_sentence(self):
+        lines = self.lines("Write me a poem about the lamp.")
+        self.assertEqual(lines[0], {"brain": "claude"})
+        self.assertEqual(lines[1], {"say": "The lamp is off."})
+        self.assertEqual(lines[-1]["done"]["rest"], "")
+
+    def test_a_direct_answer_has_no_brain_line(self):
+        lines = self.lines("Dim the lights.", jev=DIM)
+        self.assertNotIn({"brain": "claude"}, lines)
+        self.assertEqual(lines[-1]["done"]["backend"], "direct")
+
+    def test_only_spoken_turns_get_it(self):
+        lines = self.lines("Write me a poem about the lamp.", source="desktop")
+        self.assertNotIn({"brain": "claude"}, lines)
 
 
 if __name__ == "__main__":

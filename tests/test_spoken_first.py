@@ -110,9 +110,10 @@ class TestReader(unittest.TestCase):
 
 
 class TestCharter(unittest.TestCase):
-    def test_the_charter_asks_for_a_first_line_on_spoken_turns(self):
+    def test_the_charter_asks_spoken_turns_to_open_with_substance(self):
         text = charter.charter()
-        self.assertIn("decide first, say it, then do it", text)
+        self.assertIn("open with substance", text)
+        self.assertIn("every sentence you write is spoken the moment it ends", text)
         self.assertNotIn("—", text)
         self.assertNotIn("–", text)
 

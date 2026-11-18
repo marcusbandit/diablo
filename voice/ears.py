@@ -32,7 +32,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from . import burst, chime, commands, duck, ears_api, endturn, feedback, hubclient, jevfast, mouth, ownvoice, panel, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake, window
+from . import burst, chime, commands, duck, ears_api, endturn, feedback, hubclient, jevfast, mouth, ownvoice, panel, phrases, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake, window
 from . import state as vstate
 from hub import sentences
 from .dictation import NAME as SAID_NAME
@@ -650,14 +650,15 @@ def transcribe(audio, cfg, tl=None, fallback=False):
         Path(path).unlink(missing_ok=True)
 
 
-def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None):
+def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None, on_brain=None):
     """The hub's answer to the words, as it sent it: reply, say, backend and maybe act.
 
     With on_say the answer streams: his first line comes to on_say the moment the hub has it,
     before the work it announces is done. A hub that does not stream answers in one piece.
     What was on screen at the wake goes along. A picture goes only when the words point
     at the screen, so a plain question stays fast. desktop (the open windows and media
-    players) lets Jev pick a plain desktop command, which comes back as "act"."""
+    players) lets Jev pick a plain desktop command, which comes back as "act". on_brain runs
+    the moment the hub says the full brain has the turn."""
     import base64
 
     body = {"text": text, "section": "", "source": "voice", "client_id": f"ears-{uuid.uuid4()}",
@@ -686,11 +687,12 @@ def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None):
             response.read()
             found = response.json()
             return found if isinstance(found, dict) else {}
-        return read_lines(response.iter_lines(), on_say)
+        return read_lines(response.iter_lines(), on_say, on_brain)
 
 
-def read_lines(lines, on_say):
-    """The streamed answer: each {"say"} line goes to on_say, {"done"} is the answer."""
+def read_lines(lines, on_say, on_brain=None):
+    """The streamed answer: each {"say"} line goes to on_say, {"brain"} to on_brain, and
+    {"done"} is the answer."""
     for line in lines:
         if not line.strip():
             continue
@@ -700,6 +702,9 @@ def read_lines(lines, on_say):
         if "say" in item:
             if on_say is not None and str(item["say"] or "").strip():
                 on_say(str(item["say"]))
+        elif "brain" in item:
+            if on_brain is not None:
+                on_brain()
         elif "done" in item:
             found = item["done"]
             return found if isinstance(found, dict) else {}
@@ -1184,25 +1189,70 @@ def dictate(mic, settings, vad, tl, speaker=None, first="", ended=False, since=N
     return f"That didn't work: {why}. The words are in the chat."
 
 
+def beat_on(cfg):
+    return str(cfg.get("ears.beat", "1") if hasattr(cfg, "get") else "1").strip().lower() not in ("0", "off", "false", "no")
+
+
+def beat_for(speaker, cfg, tl):
+    """on_brain for answer_words: the moment Claude has the turn, a short cached line from the
+    phrase bank plays at once, on a thread of its own so the answer keeps streaming in. Nothing
+    plays when another turn is in flight, he is already speaking, or ears.beat is 0."""
+
+    def beat():
+        if speaker is None or not beat_on(cfg) or PENDING.size() > 1 or speaker.speaking or vstate.is_muted():
+            return ""
+        cached = phrases.pick(cfg, "beat")
+        if not cached:
+            return ""
+        said, wav = cached
+
+        def play():
+            try:
+                speaker.play_wav(wav, on_heard=lambda: tl.mark("beat_audio"))
+            except Exception:
+                log.exception("the beat failed")
+
+        threading.Thread(target=play, daemon=True, name="beat").start()
+        return said
+
+    return beat
+
+
 def speaks_direct(cfg):
     """A direct change (a light, a window) is silent unless ears.speak_direct is on."""
     return str(cfg.get("ears.speak_direct") or "0").strip().lower() in ("1", "on", "true", "yes")
 
 
-def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
+def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None, on_brain=None):
     """The words to say for one heard line, after running any desktop act. Empty: say nothing.
 
     With on_say, each sentence he writes goes there as soon as the hub has it, and the words
-    returned are only the sentences no line carried, so nothing is said twice."""
+    returned are only the sentences no line carried, so nothing is said twice. on_brain() runs
+    once the hub says Claude has the turn and gives the text of the beat it started, or "";
+    a first line that only acknowledges is then not said again."""
     tl = tl or timeline.Timeline()
     tl.mark("hub_sent")
     first, heard = [], []
-    capped = []
+    capped, beat = [], []
+
+    def heard_brain():
+        tl.mark("brain_back")
+        if on_brain is None or first or beat:
+            return
+        said = on_brain()
+        if said:
+            beat.append(said)
+            tl.note(beat=said)
 
     def heard_first(line):
         tl.mark("ack_back")
         heard.append(line)
         words = spoken(line.strip())
+        if words and beat and len(heard) == 1:
+            # The beat said "very well" already; "On it, checking now" goes on with "Checking now".
+            words = phrases.after_beat(words)
+            if not words:
+                tl.note(ack_skipped=line[:120])
         if not words or capped:
             return
         if first and sum(len(w) + 1 for w in first) + len(words) > SPOKEN_CHARS:
@@ -1214,7 +1264,8 @@ def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
         on_say(words)
 
     try:
-        found = ask(cfg, text, context, shot, desktop, on_say=heard_first if on_say is not None else None)
+        found = ask(cfg, text, context, shot, desktop, on_say=heard_first if on_say is not None else None,
+                    **({"on_brain": heard_brain} if on_say is not None and on_brain is not None else {}))
     except (httpx.HTTPError, ValueError) as error:
         log.warning("hub chat failed: %s", error)
         tl.mark("hub_back")
@@ -1461,7 +1512,8 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
         note_control(tl, heard.early)
         return say_answer(mic, speaker, run_act(heard.early["act"], tl, cfg), cfg, detector, tap, tl)
     context, shot = seen.get()
-    words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, seen.desktop, tl, say), tl, text)
+    words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, seen.desktop, tl, say,
+                                                          beat_for(speaker, cfg, tl)), tl, text)
     if words is None:
         return False
     return say_answer(mic, speaker, words, cfg, detector, tap, tl)
@@ -1630,7 +1682,8 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
     tl.points.pop("hub_back", None)
     context = surroundings.lines()
     shot = surroundings.screenshot() if surroundings.points_at_screen(text) else None
-    words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, desktop, tl, say), tl, text)
+    words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, desktop, tl, say,
+                                                          beat_for(speaker, cfg, tl)), tl, text)
     if words is not None and say_answer(mic, speaker, words, cfg, detector, tap, tl):
         return CUT
     return True
@@ -1826,6 +1879,8 @@ def run():
         log.exception("direct Jev unavailable, every Jev call goes through the hub")
     vad = SileroVAD(cfg["silero_path"])
     speaker = Speaker(cfg, _Quiet())
+    # The cached lines for the current voice, the beat among them; missing ones are fetched once.
+    phrases.start(settings.get, speaker, log)
     # Every model a wake or a reply uses is loaded and run once before the mic opens, so
     # nothing loads on the wake path, the first wake after a start included.
     warming = time.monotonic()

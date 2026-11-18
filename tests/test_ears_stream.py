@@ -8,7 +8,7 @@ from unittest import mock
 
 import numpy as np
 
-from voice import burst, ears, timeline, tts, wake
+from voice import burst, ears, phrases, timeline, tts, wake
 
 
 def asked(say_lines, done):
@@ -287,6 +287,124 @@ class TestLongReply(unittest.TestCase):
         self.assertEqual(heard[-1], "The rest is in the chat.")
         self.assertLessEqual(sum(len(h) for h in heard[:-1]), ears.SPOKEN_CHARS)
         self.assertEqual(words, "")
+
+
+
+class TestBeat(unittest.TestCase):
+    def words(self, say_lines, done, beat="Very well."):
+        heard, beats = [], []
+
+        def ask(cfg, text, context, shot, desktop, on_say=None, on_brain=None):
+            on_brain()
+            for line in say_lines:
+                on_say(line)
+            return done
+
+        def on_brain():
+            beats.append(beat)
+            return beat
+
+        tl = timeline.Timeline()
+        with mock.patch.object(ears, "ask", side_effect=ask):
+            words = ears.answer_words({}, "do it", [], None, {}, tl, heard.append, on_brain)
+        return heard, words, beats, tl
+
+    def test_a_first_line_that_only_acknowledges_is_not_said_after_the_beat(self):
+        heard, words, beats, tl = self.words(["On it, sir.", "The lamp is off."],
+                                             {"reply": "On it, sir.\n\nThe lamp is off.", "spoken_first": "On it, sir.",
+                                              "rest": "", "backend": "claude"})
+        self.assertEqual(beats, ["Very well."])
+        self.assertEqual(heard, ["The lamp is off."])
+        self.assertEqual(tl.info["beat"], "Very well.")
+        self.assertEqual(words, "")
+
+    def test_a_first_line_keeps_what_follows_its_acknowledgement(self):
+        heard, _, _, _ = self.words(["On it, checking the weather now.", "Right, sunny."],
+                                    {"reply": "x", "spoken_first": "x", "rest": "", "backend": "claude"})
+        self.assertEqual(heard, ["Checking the weather now.", "Right, sunny."])
+
+    def test_without_a_beat_the_first_line_is_said_whole(self):
+        heard, _, _, _ = self.words(["On it, sir."], {"reply": "On it, sir.", "spoken_first": "On it, sir.",
+                                                      "rest": "", "backend": "claude"}, beat="")
+        self.assertEqual(heard, ["On it, sir."])
+
+    def test_read_lines_hands_the_brain_line_over(self):
+        import json
+
+        seen = []
+        lines = [json.dumps({"brain": "claude"}), json.dumps({"say": "Hi."}), json.dumps({"done": {"reply": "Hi."}})]
+        self.assertEqual(ears.read_lines(iter(lines), seen.append, lambda: seen.append("brain")), {"reply": "Hi."})
+        self.assertEqual(seen, ["brain", "Hi."])
+
+    def test_after_beat(self):
+        self.assertEqual(phrases.after_beat("On it."), "")
+        self.assertEqual(phrases.after_beat("Right away, sir."), "")
+        self.assertEqual(phrases.after_beat("One moment. Checking."), "Checking.")
+        self.assertEqual(phrases.after_beat("On it, launching that now."), "Launching that now.")
+        self.assertEqual(phrases.after_beat("Right now the lamp is on."), "Right now the lamp is on.")
+        self.assertEqual(phrases.after_beat("On iteration two it failed."), "On iteration two it failed.")
+
+
+class BeatSpeaker:
+    def __init__(self):
+        self.speaking = False
+        self.played = []
+        self.done = threading.Event()
+
+    def play_wav(self, wav, interruptible=False, on_heard=None):
+        if on_heard:
+            on_heard()
+        self.played.append(wav)
+        self.done.set()
+
+
+class TestBeatFor(unittest.TestCase):
+    def setUp(self):
+        self.group = burst.Burst()
+        patcher = mock.patch.object(ears, "PENDING", self.group)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch("voice.state.is_muted", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_beat_plays_a_cached_line_at_once(self):
+        speaker, tl = BeatSpeaker(), timeline.Timeline()
+        self.group.start(lambda say: "", tl, "x", run=False)
+        with mock.patch.object(ears.phrases, "pick", return_value=("At once.", b"wav")) as pick:
+            self.assertEqual(ears.beat_for(speaker, {}, tl)(), "At once.")
+            self.assertTrue(speaker.done.wait(2))
+        pick.assert_called_with({}, "beat")
+        self.assertEqual(speaker.played, [b"wav"])
+        self.assertIn("beat_audio", tl.points)
+
+    def test_no_beat_in_a_burst_while_speaking_or_switched_off(self):
+        speaker, tl = BeatSpeaker(), timeline.Timeline()
+        with mock.patch.object(ears.phrases, "pick", return_value=("At once.", b"wav")):
+            self.group.start(lambda say: "", tl, "x", run=False)
+            self.assertEqual(ears.beat_for(speaker, {"ears.beat": "0"}, tl)(), "")
+            speaker.speaking = True
+            self.assertEqual(ears.beat_for(speaker, {}, tl)(), "")
+            speaker.speaking = False
+            self.group.start(lambda say: "", tl, "y", run=False)
+            self.assertEqual(ears.beat_for(speaker, {}, tl)(), "")
+        self.assertEqual(speaker.played, [])
+
+
+class TestBeatBank(unittest.TestCase):
+    def test_the_beat_lines_are_short_and_fetched_for_the_voice(self):
+        import tempfile
+        from pathlib import Path
+
+        self.assertTrue(4 <= len(phrases.BEAT) <= 6)
+        self.assertTrue(all(len(line.split()) <= 4 for line in phrases.BEAT))
+        fetched = []
+        speaker = mock.Mock(_cloud_wav=lambda text, cfg: fetched.append(text) or b"RIFF")
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(phrases, "ROOT", Path(folder)):
+            phrases.ensure({"tts_voice_id": "voice-a", "tts_provider": "cartesia"}, speaker)
+            self.assertTrue(set(phrases.BEAT) <= set(fetched))
+            text, wav = phrases.pick({"tts_voice_id": "voice-a", "tts_provider": "cartesia"}, "beat")
+        self.assertIn(text, phrases.BEAT)
 
 
 if __name__ == "__main__":

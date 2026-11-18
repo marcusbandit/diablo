@@ -205,6 +205,19 @@ the lines written after it are the next reply. Saying his name stops the line pl
 every line behind it. A reply streamed past 700 characters ends with "the rest is in the chat", and
 the final answer never says a sentence a line already said.
 
+## A beat while Claude starts
+
+When a spoken line goes to Claude, and not to a plain command, a direct answer or a desktop act, the
+hub's stream says so with `{"brain": "claude"}` and the ears play a short line from the phrase bank
+at once: "Very well.", "At once.", "Allow me.", "Certainly." or "But of course." (`voice/phrases.py`
+`BEAT`). The clips are cached per voice id under `~/.local/share/diablo/phrases`, and the ears fetch
+any missing one for the current voice themselves, so no beat costs a speech call. It plays on its
+own thread, so his sentences keep streaming in behind it, and only for a turn alone: not in a burst,
+not over something he is already saying, and not with `ears.beat` set to 0. When his first sentence
+then opens with an acknowledgement of its own ("On it", "Right away, sir"), that part is not said
+again: "On it, checking now." comes out as "Checking now.", and a line that was nothing else is
+skipped. The charter tells him the beat already plays, so a spoken turn opens with substance.
+
 ## Where the time goes
 
 Every turn keeps a timeline from the moment his name ended: the wake word firing, the checks, the

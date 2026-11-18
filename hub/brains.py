@@ -1257,7 +1257,7 @@ _background = set()
 
 
 async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=None, machine=False, message_id=None,
-               thread_hint=None, desktop=None, on_say=None):
+               thread_hint=None, desktop=None, on_say=None, on_brain=None):
     started = time.time()
     looking = asyncio.create_task(asyncio.to_thread(lockguard.for_turn, origin))
     chosen = backend()
@@ -1312,6 +1312,13 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
             refresh_panels(turn)
             usage_log(turn, conv, origin, started, decision)
             return turn
+    if chosen == "claude" and on_brain is not None:
+        # No plain command and no direct answer: the full brain has the turn, and the ears can
+        # say a beat while he works.
+        try:
+            await on_brain()
+        except Exception:
+            logger.exception("the brain hook failed")
     guard = await looking
     if guard.line:
         notes = [guard.line] + list(notes or [])

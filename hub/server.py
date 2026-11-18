@@ -78,8 +78,9 @@ class ChatIn(BaseModel):
     # The ears' desktop at the wake: open windows and media players, so jev can pick a plain
     # desktop command and the ears run it (the reply then carries "act").
     desktop: Optional[dict] = None
-    # The ears ask for the answer as ndjson lines: one {"say": ...} for each sentence the moment
-    # it is written on a spoken turn, then {"done": <the usual reply>} or {"error": ...} at the end.
+    # The ears ask for the answer as ndjson lines: {"brain": "claude"} once the full brain has a
+    # spoken turn, one {"say": ...} for each sentence the moment it is written, then
+    # {"done": <the usual reply>} or {"error": ...} at the end.
     stream: bool = False
     # The box whose ears heard a spoken turn; banditbox when left out.
     host: str = ""
@@ -471,9 +472,12 @@ async def chat_lines(body, caller):
     async def on_say(text):
         lines.put_nowait({"say": text})
 
+    async def on_brain():
+        lines.put_nowait({"brain": "claude"})
+
     async def run():
         try:
-            lines.put_nowait({"done": await run_chat(body, caller, on_say=on_say)})
+            lines.put_nowait({"done": await run_chat(body, caller, on_say=on_say, on_brain=on_brain)})
         except HTTPException as problem:
             lines.put_nowait({"error": {"status": problem.status_code, "detail": problem.detail}})
         except Exception:
@@ -511,7 +515,7 @@ async def may_answer(question, origin):
     return not guard.restricted
 
 
-async def run_chat(body, caller, picking=None, on_say=None):
+async def run_chat(body, caller, picking=None, on_say=None, on_brain=None):
     """One chat turn. picking is (question, choices, words) for a tap on a question card: the answer is
     recorded only once the request is known to be good, and the turn carries it."""
     answering = None
@@ -615,12 +619,14 @@ async def run_chat(body, caller, picking=None, on_say=None):
 
     said = questions.answer_line(answering) if answering is not None else text
     early = on_say if source == "voice" else None
+    beat = on_brain if source == "voice" else None
     hint = (answering.get("threads") or None) if answering is not None else None
     try:
         turn = await brains.ask(conv, said, origin=origin, notes=notes,
                                 images=images or None, on_step=on_step, message_id=user_id,
                                 **({"thread_hint": hint} if hint else {}),
                                 **({"on_say": early} if early else {}),
+                                **({"on_brain": beat} if beat else {}),
                                 **({"desktop": await with_threads(said, body.desktop)} if body.desktop and source == "voice" else {}))
     except Exception:
         logger.exception("chat handler failed")

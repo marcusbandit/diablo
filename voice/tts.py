@@ -379,12 +379,12 @@ class Speaker:
         wait = 0.0 if self._killed.is_set() else eyes_wait
         return wav, mouth.face_for(spoken, wav, looks(wait), load=False)
 
-    def play_wav(self, wav, interruptible=False):
+    def play_wav(self, wav, interruptible=False, on_heard=None):
         """Plays audio already in hand, such as a cached acknowledgement."""
         from . import state as vstate
         if vstate.is_deaf() or not wav:
             return ("unspoken", 0.0, 0.0)
-        return self._speak([wav], interruptible)
+        return self._speak([wav], interruptible, on_heard=on_heard)
 
     def say_stream(self, parts, cfg, interruptible=False, on_heard=None, on_done=None, cancel=None, on_ready=None):
         """Speaks lines as they arrive from parts, an iterable that may still be waiting on the
