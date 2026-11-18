@@ -34,6 +34,7 @@ import numpy as np
 
 from . import burst, chime, commands, duck, ears_api, endturn, feedback, hubclient, jevfast, mouth, ownvoice, panel, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake, window
 from . import state as vstate
+from hub import sentences
 from .dictation import NAME as SAID_NAME
 from .config import load_config
 
@@ -1178,14 +1179,15 @@ def speaks_direct(cfg):
 def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
     """The words to say for one heard line, after running any desktop act. Empty: say nothing.
 
-    With on_say, his first line goes there as soon as the hub has it, and the words returned
-    are only what comes after it."""
+    With on_say, each sentence he writes goes there as soon as the hub has it, and the words
+    returned are only the sentences no line carried, so nothing is said twice."""
     tl = tl or timeline.Timeline()
     tl.mark("hub_sent")
-    first = []
+    first, heard = [], []
 
     def heard_first(line):
         tl.mark("ack_back")
+        heard.append(line)
         words = spoken(line.strip())
         if words:
             first.append(words)
@@ -1220,6 +1222,8 @@ def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
         # Cancelled on purpose ("never mind", a new request): nothing to say about it.
         tl.note(outcome="stopped")
         return ""
+    if heard:
+        reply = sentences.unsaid(reply, heard + first)
     tl.note(outcome=f"answered by {found.get('backend') or 'the hub'}")
     return said_aloud(reply, found.get("say"))
 

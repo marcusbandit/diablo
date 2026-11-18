@@ -29,10 +29,10 @@ class StreamCase(unittest.TestCase):
 
     def stream(self, first, final, source="voice", stream=True):
         async def ask(conv, text, **kwargs):
-            on_text = kwargs.get("on_text")
-            if on_text and first:
-                await on_text(first)
-            return brains.Turn(text=final, backend="claude", first_text=first)
+            on_say = kwargs.get("on_say")
+            if on_say and first:
+                await on_say(first)
+            return brains.Turn(text=final, backend="claude", first_text=first, said=[first] if on_say and first else [])
 
         with mock.patch.object(server.brains, "ask", side_effect=ask) as asked, mock.patch.object(server, "publish"):
             response = self.client.post("/v1/chat", headers=HEADERS,
@@ -59,7 +59,7 @@ class StreamCase(unittest.TestCase):
 
     def test_only_spoken_turns_get_the_early_line(self):
         response, asked = self.stream("On it.", "Done.", source="desktop", stream=False)
-        self.assertNotIn("on_text", asked.call_args.kwargs)
+        self.assertNotIn("on_say", asked.call_args.kwargs)
         self.assertEqual(response.json()["reply"], "Done.")
         self.assertNotIn("spoken_first", response.json())
 
@@ -87,7 +87,7 @@ class FakeOut:
 
 
 class TestReader(unittest.TestCase):
-    def test_the_first_text_block_is_handed_over_once_with_its_time(self):
+    def test_every_text_block_is_handed_over_sentence_by_sentence(self):
         events = [
             {"type": "assistant", "message": {"content": [{"type": "text", "text": "Checking the weather."}]}},
             {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "WebSearch", "input": {"query": "weather"}}]}},
@@ -98,12 +98,12 @@ class TestReader(unittest.TestCase):
         session.proc = mock.Mock(stdout=FakeOut(events))
         result, heard = brains.Turn(), []
 
-        async def on_text(text):
-            heard.append((text, list(result.steps)))
+        async def on_say(text):
+            heard.append((text, len(result.steps)))
 
         with mock.patch.object(brains.usage, "record_claude", return_value={}):
-            asyncio.run(session._read(result, None, on_text))
-        self.assertEqual(heard, [("Checking the weather.", [])])
+            asyncio.run(session._read(result, None, on_say))
+        self.assertEqual(heard, [("Checking the weather.", 0), ("Sunny.", 1)])
         self.assertEqual(result.first_text, "Checking the weather.")
         self.assertGreater(result.first_text_at, 0)
         self.assertEqual(result.text, "Sunny.")

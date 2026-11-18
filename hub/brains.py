@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import busy as busy_turns
-from . import agent, charter, context, db, events, hue, jev, lockguard, modules, questions, route, settings, standby, t3link, threads, usage
+from . import agent, charter, context, db, events, hue, jev, lockguard, modules, questions, route, sentences, settings, standby, t3link, threads, usage
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,8 @@ class Turn:
     timing: dict = None
     first_text: str = ""
     first_text_at: float = 0.0
+    said: list = field(default_factory=list)
+    first_said_at: float = 0.0
 
 
 def home():
@@ -205,6 +207,8 @@ def usage_log(turn, conv, origin, started, decision=None, extra=None):
                    "tier": decision.tier if decision is not None else None}
     if turn.first_text_at:
         turn.timing["first_text_ms"] = round((turn.first_text_at - started) * 1000)
+    if turn.first_said_at:
+        turn.timing["first_say_ms"] = round((turn.first_said_at - started) * 1000)
     try:
         STATE.mkdir(parents=True, exist_ok=True)
         row = {
@@ -328,6 +332,7 @@ class ClaudeSession:
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--verbose",
+            "--include-partial-messages",
             "--model", model,
             "--effort", effort_level,
             "--permission-mode", "bypassPermissions",
@@ -437,7 +442,7 @@ class ClaudeSession:
         self.signature = signature
         return True
 
-    async def turn(self, content, model, effort_level, on_step=None, on_text=None):
+    async def turn(self, content, model, effort_level, on_step=None, on_say=None):
         await self.warm(model, effort_level)
         self.used = True
         if not self.side:
@@ -450,7 +455,7 @@ class ClaudeSession:
         try:
             self.proc.stdin.write((json.dumps(message) + "\n").encode())
             await self.proc.stdin.drain()
-            await asyncio.wait_for(self._read(result, on_step, on_text), timeout=TURN_SECONDS)
+            await asyncio.wait_for(self._read(result, on_step, on_say), timeout=TURN_SECONDS)
         except asyncio.TimeoutError:
             self.kill()
             result.error = f"the turn ran past {TURN_SECONDS // 60} minutes and was stopped"
@@ -468,8 +473,18 @@ class ClaudeSession:
                 result.error += f" ({tail[:300]})"
         return result
 
-    async def _read(self, result, on_step, on_text=None):
+    async def _read(self, result, on_step, on_say=None):
         texts = []
+        splitter = sentences.Splitter()
+        partial = False
+
+        async def say(lines):
+            for line in lines:
+                result.said.append(line)
+                result.first_said_at = result.first_said_at or time.time()
+                if on_say:
+                    await on_say(line)
+
         while True:
             line = await self.proc.stdout.readline()
             if not line:
@@ -488,7 +503,23 @@ class ClaudeSession:
                     result.session_id = sid
                     if not self.side:
                         settings.set_setting(session_key("claude", self.conv), sid)
+            elif kind == "stream_event":
+                if event.get("parent_tool_use_id"):
+                    continue
+                partial = True
+                inner = event.get("event") or {}
+                step = inner.get("type")
+                if step == "content_block_delta":
+                    delta = inner.get("delta") or {}
+                    if delta.get("type") == "text_delta" and delta.get("text"):
+                        # Each sentence is said aloud the moment it ends, while he writes on.
+                        await say(splitter.feed(delta["text"]))
+                elif step == "content_block_start" or step == "content_block_stop":
+                    # A tool about to run cuts the sentence it interrupts loose at once.
+                    await say(splitter.flush())
             elif kind == "assistant":
+                if event.get("parent_tool_use_id"):
+                    continue
                 used = (event.get("message") or {}).get("usage") or {}
                 seen = sum(int(used.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
                 if seen:
@@ -498,12 +529,15 @@ class ClaudeSession:
                     if block.get("type") == "text" and block.get("text", "").strip():
                         texts.append(block["text"])
                         if not result.first_text:
-                            # His first line, written before any tool runs on a spoken turn, is
-                            # said aloud at once while the work goes on.
                             result.first_text, result.first_text_at = block["text"].strip(), time.time()
-                            if on_text:
-                                await on_text(result.first_text)
+                        if partial:
+                            await say(splitter.flush())
+                        else:
+                            # A CLI without partial messages hands over whole blocks: their
+                            # sentences are said once the block is done.
+                            await say(sentences.split(block["text"]))
                     elif block.get("type") == "tool_use":
+                        await say(splitter.flush())
                         name = block.get("name", "tool")
                         arguments = block.get("input") or {}
                         label = step_label(name, arguments)
@@ -514,6 +548,7 @@ class ClaudeSession:
             elif kind == "rate_limit_event":
                 record_limits(event.get("rate_limit_info") or {})
             elif kind == "result":
+                await say(splitter.flush())
                 result.cost = float(event.get("total_cost_usd") or 0.0)
                 self.spent = usage.record_claude(self.spent, event)
                 final = str(event.get("result") or "").strip()
@@ -683,7 +718,7 @@ def take_handover(conv):
     return note or None
 
 
-async def run_side(conv, text, images, on_step, decision=None, on_text=None, origin=""):
+async def run_side(conv, text, images, on_step, decision=None, on_say=None, origin=""):
     """A spoken request that has nothing to do with what Claude is busy on: a fork of the busy
     session answers it at once, beside the first, and is closed after the one turn. It has a turn
     file of its own, so its origin never replaces the busy turn's."""
@@ -696,7 +731,7 @@ async def run_side(conv, text, images, on_step, decision=None, on_text=None, ori
     _side[conv].add(session)
     model, effort_level = (decision.model, decision.effort) if decision else (model_for("claude"), effort())
     try:
-        return await session.turn(build_content(text, images), model, effort_level, on_step, on_text)
+        return await session.turn(build_content(text, images), model, effort_level, on_step, on_say)
     finally:
         _side[conv].discard(session)
         await session.close()
@@ -823,7 +858,7 @@ def build_content(text, images):
     return blocks
 
 
-async def run_claude(conv, text, images, on_step, decision=None, session=None, on_text=None):
+async def run_claude(conv, text, images, on_step, decision=None, session=None, on_say=None):
     if session is None:
         session = _sessions.get(conv)
     if session is None:
@@ -831,16 +866,19 @@ async def run_claude(conv, text, images, on_step, decision=None, session=None, o
         _sessions[conv] = session
     content = build_content(text, images)
     model, effort_level = (decision.model, decision.effort) if decision else (model_for("claude"), effort())
-    result = await session.turn(content, model, effort_level, on_step, on_text)
+    result = await session.turn(content, model, effort_level, on_step, on_say)
     if result.error and not result.steps and "No conversation found" in " ".join(session.stderr) + result.error:
         logger.warning("stored claude session for %s is gone, starting fresh", conv)
         settings.set_setting(session_key("claude", conv), "")
         session.used = False
         await session.close()
         said = result
-        result = await session.turn(content, model, effort_level, on_step, None if said.first_text else on_text)
+        result = await session.turn(content, model, effort_level, on_step, None if said.said else on_say)
         if said.first_text:
             result.first_text, result.first_text_at = said.first_text, said.first_text_at
+        if said.said:
+            result.said = said.said + result.said
+            result.first_said_at = said.first_said_at
     return result
 
 
@@ -1219,7 +1257,7 @@ _background = set()
 
 
 async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=None, machine=False, message_id=None,
-               thread_hint=None, desktop=None, on_text=None):
+               thread_hint=None, desktop=None, on_say=None):
     started = time.time()
     looking = asyncio.create_task(asyncio.to_thread(lockguard.for_turn, origin))
     chosen = backend()
@@ -1318,10 +1356,10 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                 text = "\n".join(notes) + "\n" + text
             if beside:
                 turn = await run_side(conv, message, images, on_step, decision, origin=origin,
-                                      **({"on_text": on_text} if on_text else {}))
+                                      **({"on_say": on_say} if on_say else {}))
             elif chosen == "claude":
                 turn = await run_claude(conv, message, images, on_step, decision,
-                                        **({"session": session} if session else {}), **({"on_text": on_text} if on_text else {}))
+                                        **({"session": session} if session else {}), **({"on_say": on_say} if on_say else {}))
             elif chosen == "opencode":
                 turn = await run_opencode(conv, message, on_step)
             else:
@@ -1331,6 +1369,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                 failed = turn
                 turn = await run_api(conv, text, origin)
                 turn.first_text, turn.first_text_at = failed.first_text, failed.first_text_at
+                turn.said, turn.first_said_at = failed.said, failed.first_said_at
                 turn.note = f"{chosen} failed ({failed.error[:160]}), the api brain answered instead"
     except BaseException:
         if handover:

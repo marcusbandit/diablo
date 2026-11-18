@@ -110,7 +110,19 @@ makes anyway. When it is sure enough (`route.desktop_threshold` 0.8 to close a w
 `"act": {"kind": "desktop", "action", "did", ...}` with `window`, `workspace` or `player` as the
 action needs. The ears run it on banditbox. Anything else goes on to Claude as before.
 Every reply also carries `"timing": {"brain_ms", "jev_ms", "backend", "model", "tools", "tier"}`, the
-hub's own split of the turn, when the turn went through the router.
+hub's own split of the turn, when the turn went through the router. `first_text_ms` is when his first
+text block was done and `first_say_ms` when his first sentence went out, both from the start of the turn.
+
+`"stream": true` answers as ndjson lines instead of one body. On a spoken turn (source `voice`) the
+claude brain streams its text token by token (`--include-partial-messages`), and every sentence goes
+out as `{"say": "..."}` the moment it ends: at `. ! ?` and a space, or near 220 characters for a
+run-on, never inside a word or a link. A tool starting cuts the sentence it interrupts loose at once.
+Code fences, list items, table rows and headings are never sent as say lines. The last line is
+`{"done": <the usual reply>}` or `{"error": {"status", "detail"}}`. The done reply keeps the whole
+answer for the chat in `reply`, the first text block in `spoken_first`, and in `rest` only the
+sentences of the final answer that no say line carried, so nothing is said twice. A brain without
+partial messages (opencode, the api brain, an older CLI) sends its sentences when each whole text
+block is done, or none at all; the answer then comes in `done` as before.
 
 A turn cannot be rewritten once answered, since the brain's session already holds it, so editing
 and answering again are new turns that say what they replace:

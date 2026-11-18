@@ -1,0 +1,233 @@
+import asyncio
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from fastapi.testclient import TestClient
+
+from hub import brains, db, devices, sentences, server
+
+TOKEN = "test-token"
+HEADERS = {"X-Diablo-Token": TOKEN}
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "claude_partial.jsonl"
+
+
+def streamed(text, step=3):
+    splitter = sentences.Splitter()
+    out = []
+    for at in range(0, len(text), step):
+        out += splitter.feed(text[at:at + step])
+    return out + splitter.flush()
+
+
+class TestSplitter(unittest.TestCase):
+    def check(self, text, expected):
+        self.assertEqual(sentences.split(text), expected)
+        for step in (1, 2, 5, 17):
+            self.assertEqual(streamed(text, step), expected, f"step {step}")
+
+    def test_sentences_end_at_a_stop_followed_by_a_space_or_the_end(self):
+        self.check('Checking now. The command printed "hi". That is all!',
+                   ["Checking now.", 'The command printed "hi".', "That is all!"])
+
+    def test_a_sentence_is_not_said_until_it_has_ended(self):
+        splitter = sentences.Splitter()
+        self.assertEqual(splitter.feed("It costs 1"), [])
+        self.assertEqual(splitter.feed(".5 euro"), [])
+        self.assertEqual(splitter.feed(". Next"), ["It costs 1.5 euro."])
+        self.assertEqual(splitter.flush(), ["Next"])
+
+    def test_links_numbers_and_abbreviations_stay_whole(self):
+        self.check("See https://example.com/a.b?c=d. Use e.g. this one. Version 1.5 is out.",
+                   ["See https://example.com/a.b?c=d.", "Use e.g. this one.", "Version 1.5 is out."])
+
+    def test_code_fences_and_lists_are_never_spoken(self):
+        self.check("Run this:\n```bash\necho hi. there\n```\nIt prints hi.\n- one item.\n- two.\n3. three.\nDone.",
+                   ["Run this:", "It prints hi.", "Done."])
+
+    def test_headings_and_tables_are_not_spoken(self):
+        self.check("## Weather\n| a | b |\n|---|---|\nSunny today. 12 degrees.", ["Sunny today.", "12 degrees."])
+
+    def test_a_paragraph_break_ends_a_sentence(self):
+        self.check("First paragraph without a stop\n\nSecond one. Yes", ["First paragraph without a stop", "Second one.", "Yes"])
+
+    def test_inline_code_holds_its_stops(self):
+        self.check("Type `a. b` here. Next", ["Type `a. b` here.", "Next"])
+
+    def test_a_run_on_is_cut_near_the_limit_at_a_comma(self):
+        text = ("This sentence goes on and on, " * 12).strip() + " and ends."
+        out = sentences.split(text)
+        self.assertGreater(len(out), 1)
+        self.assertTrue(all(len(line) <= sentences.LIMIT for line in out))
+        self.assertTrue(out[0].endswith(","))
+        self.assertEqual(" ".join(out), " ".join(text.split()))
+        for step in (1, 7):
+            self.assertEqual(streamed(text, step), out)
+
+    def test_a_long_link_is_never_cut(self):
+        link = "https://example.com/" + "x" * 300
+        self.assertEqual(sentences.split(f"Open {link} now"), [f"Open {link} now"])
+
+    def test_flush_starts_fresh(self):
+        splitter = sentences.Splitter()
+        splitter.feed("```\ncode")
+        self.assertEqual(splitter.flush(), [])
+        self.assertEqual(splitter.feed("Back to prose. "), ["Back to prose."])
+
+    def test_unsaid_drops_what_was_said(self):
+        self.assertEqual(sentences.unsaid("On it. Done, the lights are off.", ["On it."]), "Done, the lights are off.")
+        self.assertEqual(sentences.unsaid("Done.", ["done"]), "")
+        self.assertEqual(sentences.unsaid("A. B.", []), "A. B.")
+
+
+class FakeOut:
+    def __init__(self, events):
+        self.lines = [(json.dumps(e) + "\n").encode() for e in events]
+        self.read = 0
+
+    async def readline(self):
+        if not self.lines:
+            return b""
+        self.read += 1
+        return self.lines.pop(0)
+
+
+def read_events(events):
+    session = brains.ClaudeSession("test")
+    out = FakeOut(events)
+    session.proc = mock.Mock(stdout=out)
+    result, heard = brains.Turn(), []
+
+    async def on_say(text):
+        heard.append((text, list(result.steps), out.read))
+
+    async def on_step(label):
+        pass
+
+    with mock.patch.object(brains.usage, "record_claude", return_value={}), \
+            mock.patch.object(brains.settings, "set_setting"):
+        asyncio.run(session._read(result, on_step, on_say))
+    return result, heard
+
+
+class TestPartialEvents(unittest.TestCase):
+    def test_the_cli_is_asked_for_partial_messages(self):
+        captured = {}
+
+        async def spawn(*argv, **kwargs):
+            captured["argv"] = argv
+            return mock.Mock(stdout=None, stderr=None, returncode=None)
+
+        async def drain():
+            return None
+
+        session = brains.ClaudeSession("test")
+        session._drain_stderr = drain
+        with mock.patch.object(brains, "executable", return_value="/usr/bin/claude"), \
+                mock.patch.object(brains, "write_private"), \
+                mock.patch.object(brains, "mcp_config", return_value={}), \
+                mock.patch.object(brains.lockguard, "hook_settings", return_value="{}"), \
+                mock.patch.object(brains.charter, "charter", return_value=""), \
+                mock.patch.object(brains.asyncio, "create_subprocess_exec", side_effect=spawn):
+            asyncio.run(session.spawn("haiku", "high", None))
+        self.assertIn("--include-partial-messages", captured["argv"])
+
+    def test_the_recorded_stream_says_each_sentence_as_it_ends(self):
+        events = [json.loads(line) for line in FIXTURE.read_text().splitlines()]
+        result, heard = read_events(events)
+        said = [text for text, _, _ in heard]
+        self.assertEqual(said, ["Checking now.", 'The command printed "hi".', "That is the only output it produced."])
+        self.assertEqual(heard[0][1], [], "the first line goes before the tool runs")
+        final_block = next(n for n, e in enumerate(events, 1)
+                           if e["type"] == "assistant" and "That is" in json.dumps(e))
+        self.assertLess(heard[1][2], final_block, "a sentence goes out before its whole block is done")
+        self.assertEqual(result.said, said)
+        self.assertEqual(result.text, 'The command printed "hi". That is the only output it produced.')
+        self.assertEqual(result.first_text, "Checking now.")
+        self.assertGreater(result.first_said_at, 0)
+
+    def test_a_tool_start_cuts_the_pending_sentence_loose(self):
+        def delta(text):
+            return {"type": "stream_event", "parent_tool_use_id": None,
+                    "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}}}
+
+        events = [
+            delta("Turning the lights off"),
+            {"type": "stream_event", "parent_tool_use_id": None,
+             "event": {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "name": "hue_light"}}},
+            {"type": "result", "result": "Done."},
+        ]
+        result, heard = read_events(events)
+        self.assertEqual([h[0] for h in heard], ["Turning the lights off"])
+        self.assertEqual(heard[0][2], 2)
+
+    def test_subagent_text_is_not_spoken(self):
+        events = [
+            {"type": "stream_event", "parent_tool_use_id": "toolu_x",
+             "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Inner work. "}}},
+            {"type": "result", "result": "Done."},
+        ]
+        result, heard = read_events(events)
+        self.assertEqual(heard, [])
+
+    def test_without_partial_events_whole_blocks_are_split(self):
+        events = [
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Checking the weather. One moment."}]}},
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "WebSearch", "input": {"query": "weather"}}]}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Sunny."}]}},
+            {"type": "result", "result": "Sunny."},
+        ]
+        result, heard = read_events(events)
+        self.assertEqual([(h[0], h[1]) for h in heard],
+                         [("Checking the weather.", []), ("One moment.", []), ("Sunny.", ["WebSearch: weather"])])
+        self.assertEqual(result.first_text, "Checking the weather. One moment.")
+        self.assertEqual(result.text, "Sunny.")
+
+
+class TestSayLines(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        db.init(str(Path(self.tmp.name) / "diablo.db"))
+        for target in (server, devices):
+            config = mock.patch.object(target, "get_config", return_value={"hub_token": TOKEN})
+            config.start()
+            self.addCleanup(config.stop)
+        self.client = TestClient(server.app)
+
+    def run_turn(self, said, first, final):
+        async def ask(conv, text, **kwargs):
+            on_say = kwargs.get("on_say")
+            for line in said:
+                await on_say(line)
+            return brains.Turn(text=final, backend="claude", first_text=first, said=list(said))
+
+        with mock.patch.object(server.brains, "ask", side_effect=ask), mock.patch.object(server, "publish"):
+            response = self.client.post("/v1/chat", headers=HEADERS,
+                                        json={"text": "lights", "source": "voice", "stream": True})
+        return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+    def test_one_say_line_per_sentence_then_done(self):
+        lines = self.run_turn(["On it.", "The lights are off.", "Anything else?"], "On it.",
+                              "The lights are off. Anything else?")
+        self.assertEqual(lines[:3], [{"say": "On it."}, {"say": "The lights are off."}, {"say": "Anything else?"}])
+        done = lines[-1]["done"]
+        self.assertEqual(done["reply"], "On it.\n\nThe lights are off. Anything else?")
+        self.assertEqual(done["rest"], "")
+
+    def test_the_rest_holds_only_sentences_not_said(self):
+        lines = self.run_turn(["Checking."], "Checking.", "Sunny today. Twelve degrees.")
+        done = lines[-1]["done"]
+        self.assertEqual(done["spoken_first"], "Checking.")
+        self.assertEqual(done["rest"], "Sunny today. Twelve degrees.")
+        lines = self.run_turn(["Checking.", "Sunny today."], "Checking.", "Sunny today. Twelve degrees.")
+        self.assertEqual(lines[-1]["done"]["rest"], "Twelve degrees.")
+
+
+if __name__ == "__main__":
+    unittest.main()
