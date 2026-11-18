@@ -21,6 +21,17 @@ QtObject {
     readonly property color dictating: "#d8c48c"
     readonly property color trouble: "#f29ba8"
 
+    readonly property color ember: "#ff4d2e"
+    readonly property color emberInk: "#ff8a70"
+    readonly property color emberText: "#131112"
+    readonly property color ink: "#f1ebe4"
+    readonly property color ok: "#63c7a4"
+    readonly property color warn: "#e9b44c"
+    readonly property color fail: "#f4708f"
+    readonly property color overlay: "#262122"
+    readonly property color halo: Qt.rgba(0.075, 0.067, 0.071, 0.5)
+    readonly property color scrim: Qt.rgba(0.024, 0.016, 0.02, 0.6)
+
     readonly property string family: Qt.application.font.family
     readonly property int small: 12
     readonly property int normal: 14
