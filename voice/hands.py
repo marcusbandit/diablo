@@ -42,6 +42,9 @@ BUTTONS = ("left", "right", "middle")
 DIRECTIONS = ("up", "down", "left", "right")
 ADDRESS_KEYS = ("ctrl+l", "alt+d", "f6")
 RETURN_KEYS = ("return", "enter", "kp_enter")
+COMPOSITOR_MODS = ("super", "logo", "win", "meta")
+LABEL_REACH = (160, 40)
+LABEL_GAP = 24
 SETTLE = {"click_text": 0.3, "click": 0.3, "click_at": 0.3, "key": 0.2, "type": 0.1, "fill": 0.1,
           "scroll": 0.2, "open": 0.5, "focus": 0.15}
 
@@ -51,6 +54,10 @@ RISKY = re.compile(
     r"slet|fjern|betal|køb|indsend|bestil|afgiv ordre|log ud|afinstaller|formater|overfør)\b",
     re.I,
 )
+ADDRESS_FIELD = re.compile(r"\b(?:address|location|url) bar\b|\baddress and search bar\b|\benter (?:an )?address\b|"
+                           r"\btype a url\b|\benter (?:a )?url\b|\bomnibox\b", re.I)
+BROWSERS = {"firefox", "zen", "chromium", "chrome", "brave", "vivaldi", "librewolf", "epiphany", "edge", "opera",
+            "qutebrowser", "floorp", "waterfox", "falkon", "midori", "thorium", "mullvadbrowser", "torbrowser"}
 URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*://\S+|(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?::\d+)?(?:[/?#]\S*)?)$", re.I)
 
 CONTROL_ROLES = {
@@ -66,7 +73,8 @@ TEXT_ROLES = ("LABEL", "HEADING", "PARAGRAPH", "STATIC", "TEXT", "CAPTION", "SEC
 DOCUMENT_ROLES = ("DOCUMENT_WEB", "DOCUMENT_FRAME")
 POPUP_ROLES = ("MENU", "POPUP_MENU", "TOOL_TIP", "WINDOW")
 STATE_NAMES = (("FOCUSED", "focused"), ("CHECKED", "checked"), ("SELECTED", "selected"), ("EXPANDED", "expanded"),
-               ("PRESSED", "pressed"), ("EDITABLE", "editable"), ("READ_ONLY", "readonly"), ("REQUIRED", "required"))
+               ("PRESSED", "pressed"), ("EDITABLE", "editable"), ("READ_ONLY", "readonly"), ("REQUIRED", "required"),
+               ("DEFAULT", "default"))
 PRESS_ACTIONS = ("click", "press", "activate", "jump", "toggle", "open", "select", "switch", "check", "uncheck")
 EDITABLE_ROLES = ("field", "password", "combo", "spin", "terminal")
 
@@ -142,10 +150,13 @@ def short(client, monitors=()):
 
 
 def locked():
+    """True or False for the screen lock, or None when hyprctl cannot say."""
     try:
-        return bool((hypr("locked") or {}).get("locked"))
+        state = hypr("locked")
     except HandsError:
-        return False
+        return None
+    value = state.get("locked") if isinstance(state, dict) else None
+    return value if isinstance(value, bool) else None
 
 
 def front():
@@ -713,6 +724,32 @@ def ocr(region):
     return parse_tsv(read.stdout.decode(errors="replace")), size
 
 
+def ocr_label(x, y, monitors):
+    """The words OCR reads on the line at a global point, or "" when nothing is written there."""
+    monitor = next((m for m in monitors if inside(x, y, logical(m))), None)
+    if monitor is None:
+        return ""
+    mx, my, mw, mh = logical(monitor)
+    left, top = max(mx, x - LABEL_REACH[0]), max(my, y - LABEL_REACH[1])
+    right, bottom = min(mx + mw, x + LABEL_REACH[0]), min(my + mh, y + LABEL_REACH[1])
+    if right - left < 4 or bottom - top < 4:
+        return ""
+    region = (left, top, right - left, bottom - top)
+    words, size = ocr(region)
+    best = None
+    for segment in rows_of(words):
+        bx, by, bw, bh = to_global(union(segment), region, size)
+        dx, dy = max(bx - x, 0, x - (bx + bw)), max(by - y, 0, y - (by + bh))
+        gap = dx * dx + dy * dy
+        if gap <= LABEL_GAP * LABEL_GAP and (best is None or gap < best[0]):
+            best = (gap, " ".join(w["text"] for w in segment))
+    return best[1] if best else ""
+
+
+def inside(x, y, box):
+    return box[0] <= x < box[0] + box[2] and box[1] <= y < box[1] + box[3]
+
+
 def ocr_matches(phrase, client, monitors):
     region = ocr_region(client, monitors)
     words, size = ocr(region)
@@ -741,7 +778,11 @@ def find_text(phrase, target="front", every=False, tree=None):
         out["window"] = {"address": client.get("address"), "class": client.get("class")}
     if out["matches"] and not every:
         return out
-    if locked():
+    state = locked()
+    if state is None:
+        out["ocr"] = "skipped: could not read whether the screen is locked"
+        return out
+    if state:
         out["locked"] = True
         out["ocr"] = "skipped: the screen is locked, so a capture would only show the lock screen"
         return out
@@ -858,24 +899,62 @@ def looks_like_url(text):
     return bool(URL.match(str(text or "").strip())) and " " not in str(text).strip()
 
 
-def rewrite(steps):
-    """(steps, note): a plan that only types an address into the address bar and presses Return
-    becomes one open of that address, which is faster and lands in the default browser."""
+def is_browser(client):
+    """Whether a hyprctl client is a web browser, by the words of its class."""
+    words = re.split(r"[^a-z0-9]+", str((client or {}).get("class") or (client or {}).get("initialClass") or "").lower())
+    return any(word in BROWSERS for word in words)
+
+
+def address_field(name):
+    return bool(ADDRESS_FIELD.search(norm(name)))
+
+
+def rewrite(steps, client=None):
+    """(steps, note): a plan that only types an address into a browser's address bar and presses
+    Return becomes one open of that address, which is faster and lands in the default browser.
+
+    The plan has to aim at the address bar: a ctrl+l, alt+d or F6 first, a click on the address
+    bar, a fill whose field is the address bar, or a browser as the target with no field named.
+    A fill into any other field, or typing into an app that is not a browser, stays as it is."""
     core = [s for s in steps if s["do"] not in ("focus", "wait")]
+    aimed = False
     if core and core[0]["do"] == "key" and core[0]["key"].lower().replace(" ", "") in ADDRESS_KEYS:
-        core = core[1:]
-    if core and core[0]["do"] == "click_text" and norm(core[0]["text"]) in ("address bar", "search or enter address",
-                                                                          "search or type a url", "search with google or enter address"):
-        core = core[1:]
+        core, aimed = core[1:], True
+    if core and core[0]["do"] == "click_text" and address_field(core[0]["text"]):
+        core, aimed = core[1:], True
     url = None
     if len(core) == 2 and core[0]["do"] in ("type", "fill") and core[1]["do"] == "key" and \
-            core[1]["key"].lower() in RETURN_KEYS:
+            core[1]["key"].lower().replace(" ", "") in RETURN_KEYS:
         url = core[0]["text"].strip()
     elif len(core) == 1 and core[0]["do"] == "type" and core[0]["text"].endswith("\n"):
         url = core[0]["text"].strip()
-    if url and looks_like_url(url):
-        return [{"do": "open", "target": url}], f"typing {url} into the address bar became an open of it"
-    return steps, None
+    if not url or not looks_like_url(url):
+        return steps, None
+    field = core[0].get("field")
+    if field:
+        aimed = address_field(field)
+    elif not aimed:
+        aimed = is_browser(client)
+    if not aimed:
+        return steps, None
+    return [{"do": "open", "target": url}], f"typing {url} into the address bar became an open of it"
+
+
+def submits(step):
+    """Whether a step presses Enter in the app: a Return key, or typed text that ends in a newline."""
+    if step["do"] == "type":
+        return step["text"].endswith(("\n", "\r"))
+    if step["do"] != "key":
+        return False
+    parts = step["key"].lower().replace(" ", "").split("+")
+    return parts[-1] in RETURN_KEYS and not any(p in COMPOSITOR_MODS for p in parts[:-1])
+
+
+def submit_labels(tree):
+    """What Enter would act on, as far as AT-SPI says: the focused control, then the default button."""
+    names = [n.name for n in tree.controls if "focused" in n.states]
+    names += [n.name for n in tree.controls if "default" in n.states]
+    return [name for name in names if name]
 
 
 def _dispatch(lua, legacy):
@@ -1009,6 +1088,7 @@ class Hands:
             self.client, self.monitors = None, hypr("monitors") or []
         self._tree = None
         self.pointer = None
+        self.acted = False
 
     @property
     def address(self):
@@ -1052,10 +1132,39 @@ class Hands:
                 self.refresh()
         return None
 
-    def check(self, label, step):
+    def check(self, label, step, doing=None):
         if risky(label) and not step.get("confirmed"):
-            raise NeedsConfirm(f'clicking "{str(label)[:80]}" may delete, pay, send or sign out; '
-                               "ask Marcus, then run the step again with confirmed true")
+            doing = doing or f'clicking "{str(label)[:80]}"'
+            raise NeedsConfirm(f"{doing} may delete, pay, send or sign out; ask Marcus, then run the step again with confirmed true")
+
+    def label_at(self, x, y):
+        """The name of the control at a point, or the words OCR reads there when AT-SPI has none."""
+        node = self.tree().at(x, y) if self.client is not None else None
+        if node is not None and node.name.strip():
+            return node.name
+        try:
+            return ocr_label(x, y, self.monitors)
+        except HandsError as error:
+            raise NeedsConfirm(f"could not read what is at {x},{y} ({str(error)[:120]}); "
+                               "ask Marcus, then run the step again with confirmed true") from error
+
+    def check_point(self, step):
+        if not step.get("confirmed"):
+            self.check(self.label_at(step["x"], step["y"]), step)
+
+    def check_submit(self, step, title_only=False):
+        """Enter in a window or on a control whose name is risky needs the same yes as clicking it."""
+        if step.get("confirmed") or not submits(step):
+            return
+        doing = f"pressing {step['key']}" if step["do"] == "key" else "typing a line that ends in Enter"
+        if not title_only:
+            self.refresh()
+        title = str((self.client or {}).get("title") or "")
+        self.check(title, step, f'{doing} in the window "{title[:80]}"')
+        if title_only or self.client is None:
+            return
+        for name in submit_labels(self.tree()):
+            self.check(name, step, f'{doing} on "{name[:80]}"')
 
     def precheck(self, steps):
         for step in steps:
@@ -1066,9 +1175,9 @@ class Hands:
                 if node is not None:
                     self.check(node.name, step)
             elif step["do"] == "click_at":
-                node = self.tree().at(step["x"], step["y"])
-                if node is not None:
-                    self.check(node.name, step)
+                self.check_point(step)
+            elif submits(step):
+                self.check_submit(step, title_only=True)
 
     def run(self, step):
         kind = step["do"]
@@ -1104,12 +1213,16 @@ class Hands:
             click_point(x, y, step["button"], step["double"])
             return f'clicked {node.kind} "{node.name[:60]}" at {x},{y}'
         if kind == "click_at":
+            if self.acted:
+                self.check_point(step)
             self.remember_pointer()
             click_point(step["x"], step["y"], step["button"], step["double"])
             return f"clicked at {step['x']},{step['y']}"
         if kind == "type":
+            self.check_submit(step)
             return type_text(step["text"])
         if kind == "key":
+            self.check_submit(step)
             return f"pressed {press(step['key'])}"
         if kind == "fill":
             return self._fill(step)
@@ -1191,13 +1304,16 @@ def act(target, steps):
     """Runs a plan; the result names each step and ends with the front window and its controls."""
     started = time.monotonic()
     plan = validate(steps)
-    plan, note = rewrite(plan)
+    state = locked()
+    if state is None:
+        raise HandsError("could not read whether the screen is locked, so nothing is clicked or typed; try again in a moment")
+    if state:
+        raise HandsError("the screen is locked; nothing on it can be clicked or typed into until Marcus unlocks it")
+    hands = Hands(target)
+    plan, note = rewrite(plan, hands.client)
     result = {"ok": False, "steps": []}
     if note:
         result["rewritten"] = note
-    if locked():
-        raise HandsError("the screen is locked; nothing on it can be clicked or typed into until Marcus unlocks it")
-    hands = Hands(target)
     needs_focus = hands.client is not None and hands.address != (hypr("activewindow") or {}).get("address")
     if needs_focus and any(s["do"] in ("type", "key", "fill") for s in plan) and plan[0]["do"] != "focus":
         plan = [{"do": "focus"}] + plan
@@ -1228,6 +1344,7 @@ def act(target, steps):
             if step["do"] not in ("wait",):
                 time.sleep(SETTLE.get(step["do"], 0.1))
                 hands._tree = None
+                hands.acted = True
         result["ok"] = code == 0
     finally:
         hands.restore_pointer()

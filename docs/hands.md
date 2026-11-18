@@ -25,7 +25,8 @@ title, matched class first, then initial class, then title, most recently focuse
 ### front
 
 The focused window: `address`, `class`, `title`, `pid`, `x`, `y`, `w`, `h`, `monitor` (its
-name), `scale`, `workspace`, `visible`, and `locked` for the screen. With nothing focused,
+name), `scale`, `workspace`, `visible`, and `locked` for the screen: true, false, or null when
+`hyprctl -j locked` gives no clear answer. With nothing focused,
 `{"window": null, "monitor", "scale"}`. About 30 ms inside, 65 ms with process start.
 
 ### windows
@@ -48,7 +49,7 @@ when it carries one. `role` is short (`button`, `toggle`, `checkbox`, `radio`, `
 `password`, `spin`, `slider`, `link`, `menuitem`, `menu`, `tab`, `item`, `switch`, `terminal`),
 or AT-SPI's own role name for anything else that takes focus and has a name. `states` lists only
 what is set: `focused`, `checked`, `selected`, `expanded`, `pressed`, `editable`, `readonly`,
-`required`, `disabled`. `value` is a field's text or a slider's number. `more_controls` counts the
+`required`, `default` (the button Enter presses), `disabled`. `value` is a field's text or a slider's number. `more_controls` counts the
 ones past `--max`; `truncated` means the walk hit its cap (3000 nodes, 2.5 s, depth 60, 400
 children a node).
 
@@ -94,7 +95,8 @@ back through the capture's own size, so a scaled monitor comes out right. OCR ma
 `score`. `--all` runs OCR even when AT-SPI found something.
 
 OCR is skipped, with the reason in `ocr`, while the screen is locked (a capture would only show
-the lock screen) and when the window is not on a visible workspace. A window takes about 0.6 s
+the lock screen), when the lock state cannot be read, and when the window is not on a visible
+workspace. AT-SPI matches still come back in all three cases. A window takes about 0.6 s
 to read, a whole monitor about 1 s.
 
 ### act [--window W] --steps JSON
@@ -128,25 +130,56 @@ target window is not the focused one and the plan types or presses keys, a focus
 Each acting step waits a moment for the app to draw (0.1 to 0.5 s), and click_text tries once
 more 0.6 s later when its text is not there yet.
 
-A plan that only puts an address in the address bar and presses Return (`ctrl+l`, `alt+d` or
-`f6`, then type or fill a URL, then Return) is turned into one `open` of that URL; the reply says
-so in `rewritten`.
+A plan that only puts an address in a browser's address bar and presses Return is turned into
+one `open` of that URL; the reply says so in `rewritten`. The plan has to aim at the address bar:
+a `ctrl+l`, `alt+d` or `f6` first, a click_text on the address bar, a fill whose field names the
+address or location bar ("Address and search bar", "Search with Google or enter address"), or a
+browser as the target window (Firefox, Zen, Chromium, Chrome, Brave and the like, by class) with
+no field named. A fill into any other field, such as a chat's Message box, stays as written even
+in a browser, and so does typing into an app that is not a browser. One case still guesses: in a
+browser, a type or a fill without a field, with no address key first, is taken to be aimed at the
+address bar, so a link typed into a web page's focused box that way opens instead of being sent.
+Name the field to keep it.
 
-Risky clicks: a click whose text, control name or the control under the point matches delete,
-remove, pay, buy, purchase, send, submit order, place order, sign out, log out, uninstall,
-format or transfer, or the Danish slet, fjern, betal, køb, indsend, bestil, afgiv ordre, log ud,
-afinstaller, formater or overfør, is refused unless that step carries `confirmed: true`. Words
-known before the plan runs are checked before any step runs; a match found while acting stops
-the plan at that step. The reply is `{"needs_confirm": "..."}` with exit 3, and the brain asks
-Marcus first.
+Risky actions: these words are risky: delete, remove, pay, buy, purchase, send, submit order,
+place order, sign out, log out, uninstall, format or transfer, or the Danish slet, fjern, betal,
+køb, indsend, bestil, afgiv ordre, log ud, afinstaller, formater or overfør. A step that may act
+on one is refused unless it carries `confirmed: true`:
 
-Nothing runs while the screen is locked: `act` refuses at once, whoever asked.
+- click_text, when its text or the match found says one.
+- click, when the control's name says one.
+- click_at, when the control under the point says one. Where AT-SPI has no named control there
+  (Electron apps, canvases, icons), OCR reads the line of text at the point, within 24 pixels of
+  it, and that is checked instead. When OCR cannot run, the click needs a yes as well.
+- Enter: a key step whose key ends in Return, Enter or KP_Enter (with ctrl or shift too, not with
+  super), or a type step whose text ends in a newline. It is checked against the window's title,
+  the focused control's name and the name of any button AT-SPI marks as the default.
+
+Words known before the plan runs (click_text text, control names, the point's label, the window
+title for Enter) are checked before any step runs; a match found while acting stops the plan at
+that step, and click_at and Enter are checked again then, since earlier steps may have changed
+the screen. The reply is `{"needs_confirm": "..."}` with exit 3, and the brain asks Marcus first.
+
+What this does not catch: Enter in a web form whose submit button AT-SPI does not mark as the
+default, when neither the page title nor the focused field says a risky word (a field named
+Amount on a page called Netbank goes through); Enter that an app binds to something risky
+without saying so; a keyboard shortcut that deletes or sends (ctrl+Return in a mail client is
+caught only through the same three names, ctrl+d or Delete not at all); and a click_at whose OCR
+misreads the label. In the other direction, a window title that merely contains a risky word,
+such as a web page about deleting a branch or a terminal in a folder called remove-dupes, makes
+every Enter there need a yes. Typing without a newline is never checked.
+
+Nothing runs while the screen is locked: `act` refuses at once, whoever asked. It fails closed:
+when hyprctl cannot say whether the screen is locked, `act` refuses too, with an error that says
+so. `front`, `windows` and `ui` only read, so they keep working then.
 
 ## The tools
 
-hub/mcp_server.py runs `./deploy/diablo-hands` in the desktop checkout over ssh
-(`desktop.host`, else the lock host; the checkout is `DIABLO_DESKTOP_REPO`, default
-`Projects/diablo`) and hands the JSON line back as the tool result.
+hub/mcp_server.py runs `./deploy/diablo-hands` in the desktop checkout through
+`desktop_run` in hub/desktop.py, the same helper focus_window, stage_window and point_on_screen
+use: over ssh to `desktop.host` (else the lock host), or straight through bash when the hub runs
+on that box. The checkout is `DIABLO_DESKTOP_REPO`, default `Projects/diablo`. The last JSON line
+diablo-hands prints is the tool result.
 
 - `desktop_front`: front.
 - `read_window` (window?, max?): ui.
