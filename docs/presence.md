@@ -247,6 +247,37 @@ after 12 s).
 `scripts/presence-shots.sh marks-all marks-spotlight marks-steps` draws every kind over a made-up
 document window.
 
+## Drawing diagrams
+
+"Make a diagram of how the Linux kernel runs a program" is drawn on the real screen piece by piece
+while he talks, the way a teacher draws on a whiteboard, instead of a page in a card. The brain
+calls `draw_diagram` (hub/mcp_server.py) once with a title and 3 to 6 beats, each a line he then
+says and the nodes (`{id, label, shape}`, box, round or diamond) and edges (`{from, to, label}`)
+that line is about. At most 8 beats, 14 nodes, 20 edges, labels of 28 characters.
+
+hub/diagram.py lays the whole drawing out before the first beat goes, so earlier pieces never
+move: each node is ranked by the longest path to it from a source (edges that close a cycle are
+left out of the ranking), ordered within its rank by first appearance, and every rank is centered.
+Ranks run down the screen, or across with `direction: "right"`; a rank too wide for the region
+wraps onto a second row, and everything scales down together when it still does not fit. The
+region is 70% of the focused monitor, centered, read from `diablo-hands front` (its `screen`) on
+the desktop the way pointing reaches it, else a 1920 by 1080 monitor at the origin. Edges come out
+as points on the two nodes' borders with a control point, bent only as far as it takes to miss
+the boxes in between.
+
+Each beat goes to `POST /v1/screen/marks` at once, with `keep: true` and `linger: 45`. The overlay
+paces them like pointing beats, by how long each line takes to say, and a `keep` beat adds its
+pieces to the earlier beats of the same show instead of fading them, so only the new pieces
+animate: a `node` (a rounded box, pill or diamond whose ember outline is drawn on like a pen
+stroke, then its dark fill and label), an `edge` (an ember line drawn along its curve, the head
+last, a small label at its middle) and a `title` (written left to right in a dark pill above the
+region). The drawing stays 45 s after the last beat; the next drawing or pointing show replaces
+it, and `point_on_screen` with clear or sending him away (voice/ears.py `dismiss`) takes it down.
+Without `keep` a beat behaves exactly as before, and point_on_screen never carries diagram pieces.
+
+`scripts/presence-shots.sh diagram-early diagram-last` draws the kernel sample from
+`diagram.SAMPLE` over the made-up document window, after two beats and after all five.
+
 ## Lists in the central card
 
 A list or checklist comes as `sections` (`[{title, items: [{text, done}]}]`, at most 160 items;

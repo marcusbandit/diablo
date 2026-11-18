@@ -1504,6 +1504,10 @@ def dismiss(cfg, speaker, tl):
         presence.clear("reply")
     except Exception:
         log.exception("could not clear the reply cards")
+    try:
+        tour.Screen(cfg).clear_marks()
+    except Exception:
+        log.exception("could not clear the marks")
     cached = phrases.pick(cfg, "bye") if speaker is not None else None
     if cached:
         said, wav = cached

@@ -609,9 +609,11 @@ class Dismiss(unittest.TestCase):
         tl = timeline.Timeline()
         with mock.patch.object(ears.presence, "clear") as clear, mock.patch.object(ears, "set_state"), \
                 mock.patch.object(ears.PENDING, "size", return_value=0), \
-                mock.patch.object(ears.phrases, "pick", return_value=None), mock.patch.object(ears.chime, "play"):
+                mock.patch.object(ears.phrases, "pick", return_value=None), mock.patch.object(ears.chime, "play"), \
+                mock.patch.object(ears.tour.Screen, "clear_marks") as marks:
             self.assertFalse(ears.dismiss({}, None, tl))
         clear.assert_called_once_with("reply")
+        marks.assert_called_once_with()
         self.assertFalse(ears.REPLIED.is_set())
         self.assertEqual(tl.info["outcome"], "dismissed")
 

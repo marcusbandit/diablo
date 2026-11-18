@@ -1,6 +1,6 @@
 ---
 name: explain-3d
-description: Load this when Marcus asks how something works, what something looks like inside, or to see something in 3D, and a picture he can turn would explain it better than words, such as an engine, an atom, a planet's orbit, a molecule, a bridge, a network, a data structure or a machine. Builds one small interactive three.js page and shows it big in the central card on his desktop.
+description: Load this when Marcus asks to see something in 3D, or what something looks like inside, and it really needs turning in space, such as an engine, an atom, a planet's orbit, a molecule or a bridge. Builds one small interactive three.js page and shows it big in the central card on his desktop. A flow, process, pipeline, architecture or hierarchy is never this skill: draw it with draw_diagram.
 ---
 
 # Explaining in 3D
@@ -10,8 +10,11 @@ the reply itself to a line ("Here is how a four-stroke engine moves, sir.").
 
 ## When
 
-- "How does X work", "show me X", "what does X look like", "explain X in 3D".
-- Something with parts in space or motion: mechanisms, structures, orbits, molecules, layouts.
+- "Show me X in 3D", "what does X look like inside", "how does this engine move".
+- Something whose parts sit in space or move: mechanisms, structures, orbits, molecules.
+- Not for a flow, process, pipeline, architecture, hierarchy, network or data structure, or "how
+  does X work" when the answer is parts and arrows: those are `draw_diagram`, drawn on his screen
+  box by box while you talk. It is one fast call; never build a page for them.
 - Not for plain facts, numbers or lists: those are a small card (`show_on_screen` with title,
   big and lines), a list in `sections`, or words.
 
