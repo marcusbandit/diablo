@@ -227,6 +227,13 @@ and the speaking. Loop lines count from his first word. Turns go to
 `~/.local/state/diablo/turns.jsonl`, newest 2000 kept. `diablo-ears timings` draws the last ten as a
 waterfall; `--last N` shows more, `--html FILE` writes a page.
 
+A streamed turn adds its own points: `brain_back` when the hub said Claude has it, `beat_audio`
+when the beat was first heard, `first_sentence` when his first sentence came in and `first_audio`
+when the first sample of any reply reached the speakers. `diablo-ears timings --medians` prints the
+median from his last word (`speech_end`) to each of them and to the end of the spoken answer, over
+the last 200 turns or `--last N`, counting only the turns that reached that point. Turns logged
+before these points existed show up as not measured.
+
 ## Letting him breathe
 
 A breath or a moment to think is quiet in the middle of a sentence, and the ears used to

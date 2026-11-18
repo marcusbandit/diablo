@@ -407,5 +407,51 @@ class TestBeatBank(unittest.TestCase):
         self.assertIn(text, phrases.BEAT)
 
 
+
+class TestTimings(unittest.TestCase):
+    def test_the_first_sentence_and_the_first_sound_are_marked(self):
+        tl = timeline.Timeline()
+        with mock.patch.object(ears, "ask", side_effect=asked(["One."], {"reply": "One.", "spoken_first": "One.",
+                                                                         "rest": "", "backend": "claude"})):
+            ears.answer_words({}, "x", [], None, {}, tl, lambda w: None)
+        self.assertIn("first_sentence", tl.points)
+
+        class Speaker:
+            def say_stream(self, lines, cfg, interruptible=False, on_heard=None, on_done=None, on_ready=None):
+                list(lines)
+                on_heard()
+
+        with mock.patch.object(ears, "set_state"), mock.patch.object(ears.presence, "show_reply"):
+            ears.say_answer(None, Speaker(), ["One.", "Two."], {}, None, None, tl)
+        self.assertIn("first_audio", tl.points)
+        self.assertIn("spoken", tl.points)
+
+    def test_medians_from_the_end_of_his_speech(self):
+        rows = [
+            {"points": {"speech_end": 1000, "first_sentence": 3000, "first_audio": 3500, "spoken": 6000}},
+            {"points": {"speech_end": 1000, "first_sentence": 5000, "first_audio": 5600, "beat_audio": 1900}},
+            {"points": {"speech_end": 2000, "first_audio": 2400}},
+            {"points": {"first_audio": 100}},
+        ]
+        got = {label: (count, median) for label, count, median in timeline.latency(rows)}
+        self.assertEqual(got["first sentence back"], (2, 3000))
+        self.assertEqual(got["first audio"], (3, 2500))
+        self.assertEqual(got["beat heard"], (1, 900))
+        self.assertEqual(got["answer spoken"], (1, 5000))
+        self.assertIn("not measured yet", timeline.latency_report([{"points": {}}]))
+
+    def test_the_cli_prints_the_medians(self):
+        import io
+        from contextlib import redirect_stdout
+
+        rows = [{"points": {"speech_end": 0, "first_audio": 1200}}]
+        out = io.StringIO()
+        with mock.patch.object(timeline, "load", return_value=rows) as load, redirect_stdout(out):
+            self.assertEqual(ears.timings_cli(["--medians"]), 0)
+        load.assert_called_with(last=200)
+        self.assertIn("first audio", out.getvalue())
+        self.assertIn("1.20 s", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

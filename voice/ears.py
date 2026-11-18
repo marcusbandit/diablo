@@ -1246,6 +1246,7 @@ def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None, on_bra
 
     def heard_first(line):
         tl.mark("ack_back")
+        tl.mark("first_sentence")
         heard.append(line)
         words = spoken(line.strip())
         if words and beat and len(heard) == 1:
@@ -1545,6 +1546,7 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
     after = "listening" if STICKY.get("loop") else "asleep"
 
     def heard():
+        tl.mark("first_audio")
         set_state("speaking")
 
     def done():
@@ -2180,7 +2182,7 @@ The setup and the meter live in the desktop app: Settings, then Voice.
   diablo-ears retrain     learn again from the takes already saved
   diablo-ears chimes      play every sound he makes, one after another
   diablo-ears mouth       tune his mouth to his voice by eye (show, set MS)
-  diablo-ears timings     where each recent turn's time went (--last N, --html FILE)
+  diablo-ears timings     where each recent turn's time went (--last N, --html FILE, --medians)
   diablo-ears recordings  the last turns' recordings and what was heard (a number shows more)
   diablo-ears recheck     run a recording (an id, or the last) through gvoice again
   diablo-ears run         the service itself (diablo-ears.service runs this)
@@ -2211,7 +2213,7 @@ def recheck_cli(clip):
 
 def timings_cli(args):
     """The last turns as a waterfall: in the terminal, or as a page with --html FILE."""
-    last, page = 10, None
+    last, page, medians = None, None, False
     rest = list(args)
     while rest:
         flag = rest.pop(0)
@@ -2219,10 +2221,15 @@ def timings_cli(args):
             last = int(rest.pop(0))
         elif flag == "--html" and rest:
             page = rest.pop(0)
+        elif flag == "--medians":
+            medians = True
         else:
-            print("usage: diablo-ears timings [--last N] [--html FILE]")
+            print("usage: diablo-ears timings [--last N] [--html FILE] [--medians]")
             return 1
-    rows = timeline.load(last=last)
+    rows = timeline.load(last=last or (200 if medians else 10))
+    if medians:
+        print(timeline.latency_report(rows))
+        return 0
     if page:
         Path(page).write_text(timeline.html_report(rows))
         print(f"{len(rows)} turns written to {page}")
