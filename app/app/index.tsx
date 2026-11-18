@@ -31,6 +31,7 @@ export default function Den() {
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState("");
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  const atEnd = useRef(true);
   const s = useEngine((x) => x);
   const lines = s.conversations[MAIN] ?? EMPTY;
   const now = doing(s, draft.length > 0);
@@ -61,8 +62,16 @@ export default function Den() {
         ref={scroll}
         style={{ flex: 1 }}
         contentContainerStyle={{ padding: space(3.5), gap: space(3) }}
-        onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })}
-        onLayout={() => scroll.current?.scrollToEnd({ animated: false })}
+        keyboardShouldPersistTaps="handled"
+        scrollEventThrottle={32}
+        onScroll={(e) => {
+          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          atEnd.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - space(10);
+        }}
+        // New lines and a shrinking view (the keyboard, a fold) keep the newest line in view, but
+        // only while he is at the end: reading back up is never pulled down.
+        onContentSizeChange={() => atEnd.current && scroll.current?.scrollToEnd({ animated: false })}
+        onLayout={() => atEnd.current && scroll.current?.scrollToEnd({ animated: false })}
       >
         {s.pairing.confirm ? (
           <View style={{ gap: space(2) }}>
