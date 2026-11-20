@@ -1,13 +1,16 @@
+import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useRef, useState, type ComponentRef } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useEffect, useRef, useState, type ComponentRef } from "react";
+import { AppState, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { doing, needsYou } from "../src/engine/derive";
 import { MAIN, type Shown } from "../src/engine/engine";
+import { assist } from "../modules/diablo-assist";
 import { mood } from "../src/mood";
+import { assistIntro } from "../src/platform";
 import { MoodBlock } from "../src/MoodBlock";
 import { color, font, radius, space, type, type State } from "../src/tokens";
 import { engine, useEngine } from "../src/useEngine";
@@ -48,6 +51,24 @@ export default function Den() {
   const lift = useAnimatedStyle(() => ({ paddingBottom: -keyboard.height.value }));
   const bar = useAnimatedStyle(() => ({ paddingBottom: pad + inset * (1 - keyboard.progress.value) }));
 
+  // The assistant's introduction opens once, the first time the hub knows this phone. Steps left
+  // for later keep one quiet line here that opens it again.
+  const [assistLeft, setAssistLeft] = useState(false);
+  useEffect(() => {
+    if (!assist.available) return;
+    const check = () => {
+      const st = assist.status();
+      setAssistLeft(!(st.mic && st.assistant && st.overlay));
+    };
+    check();
+    const sub = AppState.addEventListener("change", (x) => x === "active" && check());
+    return () => sub.remove();
+  }, []);
+  useEffect(() => {
+    if (s.link !== "online" || !assistLeft) return;
+    void assistIntro.seen().then((seen) => !seen && router.push("/assistant"));
+  }, [s.link, assistLeft]);
+
   const send = () => {
     const text = draft;
     setDraft("");
@@ -81,6 +102,11 @@ export default function Den() {
               <Chip label="Not now" onPress={() => void engine.confirmHost(false)} />
             </View>
           </View>
+        ) : null}
+        {assistLeft && s.link === "online" ? (
+          <Pressable onPress={() => router.push("/assistant")}>
+            <Text style={{ color: color.sub, fontFamily: font.medium, ...type.body }}>Hold power for Diablo</Text>
+          </Pressable>
         ) : null}
         {s.pairing.working ? <Text style={{ color: color.sub, fontFamily: font.regular, ...type.body }}>Pairing</Text> : null}
         {s.pairing.error ? <Text style={{ color: color.attention, fontFamily: font.regular, ...type.body }}>{s.pairing.error}</Text> : null}

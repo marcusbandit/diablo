@@ -1,0 +1,45 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <uses-permission android:name="android.permission.INTERNET" />
+
+  <queries>
+    <intent>
+      <action android:name="android.speech.RecognitionService" />
+    </intent>
+    <intent>
+      <action android:name="android.intent.action.TTS_SERVICE" />
+    </intent>
+  </queries>
+
+  <application>
+    <!-- Android's assistant role: holding power, or the corner swipe, opens a session. -->
+    <service
+        android:name="com.marcusrosado.diablo.assist.DiabloAssistService"
+        android:exported="true"
+        android:label="Diablo"
+        android:permission="android.permission.BIND_VOICE_INTERACTION">
+      <meta-data android:name="android.voice_interaction" android:resource="@xml/diablo_assist" />
+      <intent-filter>
+        <action android:name="android.service.voice.VoiceInteractionService" />
+      </intent-filter>
+    </service>
+
+    <service
+        android:name="com.marcusrosado.diablo.assist.DiabloSessionService"
+        android:exported="true"
+        android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+    <!-- The assistant must name a recognizer; this one hands every request to the phone's own. -->
+    <service
+        android:name="com.marcusrosado.diablo.assist.DiabloRecognitionService"
+        android:exported="true"
+        android:label="Diablo">
+      <intent-filter>
+        <action android:name="android.speech.RecognitionService" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
+      <meta-data android:name="android.speech" android:resource="@xml/diablo_recognition" />
+    </service>
+  </application>
+</manifest>

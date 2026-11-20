@@ -65,3 +65,13 @@ export function platform(): EngineOptions {
     source: "web",
   };
 }
+
+/** The browser has no assistant. */
+export async function assistLink(_current: string | null): Promise<{ hubs: string[]; token: string | null }> {
+  return { hubs: [], token: null };
+}
+
+export const assistIntro = {
+  seen: async () => true,
+  mark: async () => undefined,
+};

@@ -1,0 +1,41 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.marcusrosado.diablo.assist'
+version = '0.1.0'
+
+// His faces and the app's type come from the one copy in the repo (assets/faces at the root,
+// app/assets/fonts), copied into generated resources when Gradle configures the module.
+def repo = file("${projectDir}/../../../..")
+def generated = file("${buildDir}/generated/diablo-assist-res")
+project.copy {
+  into generated
+  ["resting", "listening", "thinking", "talking", "sorry"].each { state ->
+    from("${repo}/assets/faces/${state}") {
+      include "*.png"
+      into "drawable-nodpi"
+      rename { name -> "diablo_face_${state}_${name}" }
+    }
+  }
+  from("${repo}/app/assets/fonts") {
+    include "BricolageGrotesque-Regular.ttf", "BricolageGrotesque-Medium.ttf"
+    into "font"
+    rename { name -> name.contains("Medium") ? "diablo_bricolage_medium.ttf" : "diablo_bricolage_regular.ttf" }
+  }
+}
+
+android {
+  namespace "com.marcusrosado.diablo.assist"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  sourceSets {
+    main.res.srcDirs += generated
+  }
+  lintOptions {
+    abortOnError false
+  }
+}

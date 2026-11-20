@@ -2,7 +2,8 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 
 import { Engine, type EngineState } from "./engine/engine";
-import { platform } from "./platform";
+import { assist } from "../modules/diablo-assist";
+import { assistLink, platform } from "./platform";
 
 /** The one engine the whole app shares. */
 export const engine = new Engine(platform());
@@ -13,7 +14,21 @@ export function useEngineLifecycle() {
     void engine.start();
     engine.setForeground(AppState.currentState !== "background");
     const sub = AppState.addEventListener("change", (s) => engine.setForeground(s === "active"));
-    return () => sub.remove();
+    // The assistant talks to the hub on its own: hand it the hub and the token whenever they change.
+    let handed = "";
+    const hand = () => {
+      const s = engine.getState();
+      const key = `${s.hub}|${s.device?.id ?? ""}|${s.link}`;
+      if (!assist.available || key === handed || s.link === "starting") return;
+      handed = key;
+      void assistLink(s.hub).then(({ hubs, token }) => assist.configure(hubs, s.link === "unpaired" || s.link === "refused" ? null : token));
+    };
+    hand();
+    const unsubscribe = engine.subscribe(hand);
+    return () => {
+      sub.remove();
+      unsubscribe();
+    };
   }, []);
 }
 
