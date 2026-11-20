@@ -352,3 +352,142 @@ function keepsEarlier(beat) {
 function clampTo(v, lo, hi) {
     return hi < lo ? lo : Math.max(lo, Math.min(hi, v));
 }
+
+// Hand-drawn diagrams: every line wobbles a little and overshoots its corners, every shape is
+// gone over twice, and the wobble is seeded from the piece itself so it holds still between frames.
+
+function seeded(text) {
+    let h = 2166136261;
+    const s = String(text);
+    for (let i = 0; i < s.length; i++)
+        h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+    return function () {
+        h = Math.imul(h ^ (h >>> 15), 2246822507);
+        h = Math.imul(h ^ (h >>> 13), 3266489909);
+        h ^= h >>> 16;
+        return (h >>> 0) / 4294967296;
+    };
+}
+
+function wobble(rand, by) {
+    return (rand() * 2 - 1) * by;
+}
+
+function n1(v) {
+    return Math.round(v * 10) / 10;
+}
+
+function sketchLine(a, b, rand, loose) {
+    loose = loose === undefined ? 1 : loose;
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len;
+    const over = Math.min(7, 2 + len * 0.02) * loose;
+    const s = { x: a.x - ux * over * rand() + wobble(rand, 1.5 * loose), y: a.y - uy * over * rand() + wobble(rand, 1.5 * loose) };
+    const e = { x: b.x + ux * over * rand() + wobble(rand, 1.5 * loose), y: b.y + uy * over * rand() + wobble(rand, 1.5 * loose) };
+    const bow = wobble(rand, Math.min(4.5, 0.8 + len * 0.012) * loose), at = 0.35 + rand() * 0.3;
+    const c = { x: a.x + dx * at - uy * bow, y: a.y + dy * at + ux * bow };
+    return `M ${n1(s.x)} ${n1(s.y)} Q ${n1(c.x)} ${n1(c.y)} ${n1(e.x)} ${n1(e.y)}`;
+}
+
+function sketchPolygon(points, rand, loose) {
+    const jittered = points.map(p => ({ x: p.x + wobble(rand, 2 * loose), y: p.y + wobble(rand, 2 * loose) }));
+    return jittered.map((p, i) => sketchLine(p, jittered[(i + 1) % jittered.length], rand, loose)).join(" ");
+}
+
+function sketchLoop(cx, cy, rx, ry, rand, loose) {
+    const steps = 12, start = rand() * Math.PI * 2, sweep = Math.PI * 2 + 0.35 + rand() * 0.35;
+    const pts = [];
+    for (let i = 0; i <= steps; i++) {
+        const a = start + (sweep * i) / steps, k = 1 + wobble(rand, 0.035 * loose) + (i / steps) * 0.04 * loose;
+        pts.push({ x: cx + Math.cos(a) * rx * k, y: cy + Math.sin(a) * ry * k });
+    }
+    let d = `M ${n1(pts[0].x)} ${n1(pts[0].y)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+        d += ` C ${n1(p1.x + (p2.x - p0.x) / 6)} ${n1(p1.y + (p2.y - p0.y) / 6)} ${n1(p2.x - (p3.x - p1.x) / 6)} ${n1(p2.y - (p3.y - p1.y) / 6)} ${n1(p2.x)} ${n1(p2.y)}`;
+    }
+    return d;
+}
+
+// The outline of a node as two passes of the pen, plus a fill that sits a touch off the lines.
+function sketchNode(box, shape, seed) {
+    const rand = seeded(`${seed}|${n1(box.x)}|${n1(box.y)}|${n1(box.w)}`);
+    const x = box.x, y = box.y, w = box.w, h = box.h, cx = x + w / 2, cy = y + h / 2;
+    const fx = wobble(rand, 3), fy = 2 + rand() * 2;
+    if (shape === "round") {
+        const rx = w / 2 + 8, ry = h / 2 + 3;
+        return {
+            first: sketchLoop(cx, cy, rx, ry, rand, 1), second: sketchLoop(cx, cy, rx + 2, ry + 1, rand, 1.3),
+            fill: sketchLoop(cx + fx, cy + fy, rx - 2, ry - 2, rand, 0.3)
+        };
+    }
+    const corners = shape === "diamond"
+        ? [{ x: cx, y: y }, { x: x + w, y: cy }, { x: cx, y: y + h }, { x: x, y: cy }]
+        : [{ x: x, y: y }, { x: x + w, y: y }, { x: x + w, y: y + h }, { x: x, y: y + h }];
+    const fill = corners.map(p => ({ x: p.x + fx + wobble(rand, 2), y: p.y + fy + wobble(rand, 2) }));
+    return {
+        first: sketchPolygon(corners, rand, 1), second: sketchPolygon(corners, rand, 1.4),
+        fill: `M ${fill.map(p => `${n1(p.x)} ${n1(p.y)}`).join(" L ")} Z`
+    };
+}
+
+function quadAt(a, c, b, t) {
+    const u = 1 - t;
+    return { x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y };
+}
+
+// An edge as a loose pen stroke gone over twice, an open arrowhead of two flicks, and where its
+// label sits: beside the line, never on it.
+function sketchEdge(start, end, via, seed, gap) {
+    gap = gap === undefined ? 6 : gap;
+    via = via || { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    const rand = seeded(`${seed}|${n1(start.x)}|${n1(start.y)}|${n1(end.x)}|${n1(end.y)}`);
+    const pull = (p, toward, by) => {
+        const d = Math.hypot(toward.x - p.x, toward.y - p.y) || 1;
+        return { x: p.x + ((toward.x - p.x) / d) * by, y: p.y + ((toward.y - p.y) / d) * by };
+    };
+    const a = pull(start, via, gap), b = pull(end, via, gap);
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const bend = Math.min(10, len * 0.05);
+    const pass = loose => {
+        const c = { x: via.x + wobble(rand, bend * loose), y: via.y + wobble(rand, bend * loose) };
+        const s = { x: a.x + wobble(rand, 1.5 * loose), y: a.y + wobble(rand, 1.5 * loose) };
+        const e = { x: b.x + wobble(rand, 1.5 * loose), y: b.y + wobble(rand, 1.5 * loose) };
+        return { c: c, d: `M ${n1(s.x)} ${n1(s.y)} Q ${n1(c.x)} ${n1(c.y)} ${n1(e.x)} ${n1(e.y)}` };
+    };
+    const first = pass(1), second = pass(1.6);
+    let angle = Math.atan2(b.y - first.c.y, b.x - first.c.x);
+    if (Math.hypot(b.x - first.c.x, b.y - first.c.y) < 1e-6)
+        angle = Math.atan2(b.y - a.y, b.x - a.x);
+    const head = Math.min(20, Math.max(12, len * 0.2));
+    const flick = side => {
+        const spread = 0.42 + wobble(rand, 0.08), long = head * (0.9 + rand() * 0.25);
+        const tip = { x: b.x + wobble(rand, 1), y: b.y + wobble(rand, 1) };
+        const out = { x: b.x - long * Math.cos(angle + side * spread), y: b.y - long * Math.sin(angle + side * spread) };
+        return sketchLine(out, tip, rand, 0.5);
+    };
+    const mid = quadAt(a, first.c, b, 0.5);
+    const tx = b.x - a.x, ty = b.y - a.y;
+    let nx = -ty / len, ny = tx / len;
+    if (nx < 0 || (Math.abs(nx) < 1e-6 && ny > 0)) {
+        nx = -nx;
+        ny = -ny;
+    }
+    return {
+        first: first.d, second: second.d, head: `${flick(1)} ${flick(-1)}`, mx: n1(mid.x), my: n1(mid.y), nx: nx, ny: ny,
+        beside: Math.abs(nx) >= Math.abs(ny)
+    };
+}
+
+// A quick scribbled underline under a heading's text, from x1 to x2 at y.
+function scribble(x1, x2, y, seed) {
+    const rand = seeded(`${seed}|${n1(x1)}|${n1(x2)}`);
+    return {
+        first: sketchLine({ x: x1, y: y + wobble(rand, 1.5) }, { x: x2, y: y + wobble(rand, 2.5) }, rand, 1),
+        second: sketchLine({ x: x1 + 10 + rand() * 16, y: y + 6 + wobble(rand, 1.5) }, { x: x2 - 4 - rand() * 20, y: y + 5 + wobble(rand, 2) }, rand, 1)
+    };
+}
+
+function phase(t, from, to) {
+    return Math.max(0, Math.min(1, (t - from) / (to - from)));
+}

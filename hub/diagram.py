@@ -92,7 +92,7 @@ def clean(arguments):
             where[key] = n
             by_label.setdefault(label.casefold(), key)
             added.append(key)
-        beats.append({"say": words(item.get("say"), 300), "nodes": added, "edges": []})
+        beats.append({"say": words(item.get("say"), 300), "nodes": added, "edges": [], "circle": []})
     find = lambda ref: (lambda k: k if k in nodes else by_label.get(k.casefold()))(words(ref, 40))
     edges, seen = [], set()
     for n, item in enumerate(raw):
@@ -113,6 +113,15 @@ def clean(arguments):
             at = max(n, where[a], where[b])
             edges.append({"from": a, "to": b, "label": words(edge.get("label"), LABEL), "beat": at})
             beats[at]["edges"].append(len(edges) - 1)
+    for n, item in enumerate(raw):
+        circle = item.get("circle") or []
+        for ref in [circle] if isinstance(circle, str) else circle if isinstance(circle, list) else []:
+            key = find(ref) if isinstance(ref, str) else None
+            if not key:
+                continue
+            at = max(n, where[key])
+            if key not in beats[at]["circle"]:
+                beats[at]["circle"].append(key)
     beats = [b for b in beats if b["say"] or b["nodes"] or b["edges"]]
     if not nodes:
         return "nothing to draw: give beats with nodes, each {id, label}"
@@ -309,6 +318,8 @@ def plan(arguments, screen=None, show=None):
             if e["label"]:
                 mark["text"] = e["label"]
             marks.append(mark)
+        for key in beat.get("circle", []):
+            marks.append({"kind": "ring", "box": boxes[key]})
         out.append({"show": show, "n": n, "count": len(beats), "say": beat["say"], "marks": marks, "keep": True,
                     "linger": LINGER})
     return out, notes
@@ -335,7 +346,8 @@ SAMPLE = {
         {"say": "When it needs anything real, it makes a system call.",
          "nodes": [{"id": "sys", "label": "System call"}], "edges": [{"from": "app", "to": "sys", "label": "read, write, fork"}]},
         {"say": "That traps into the kernel, which checks and takes over.",
-         "nodes": [{"id": "kernel", "label": "Kernel", "shape": "diamond"}], "edges": [{"from": "sys", "to": "kernel", "label": "trap"}]},
+         "nodes": [{"id": "kernel", "label": "Kernel", "shape": "diamond"}], "edges": [{"from": "sys", "to": "kernel", "label": "trap"}],
+         "circle": ["kernel"]},
         {"say": "The kernel hands CPU time out through the scheduler, and devices through drivers.",
          "nodes": [{"id": "sched", "label": "Scheduler"}, {"id": "drv", "label": "Device drivers"}],
          "edges": [{"from": "kernel", "to": "sched"}, {"from": "kernel", "to": "drv"}]},

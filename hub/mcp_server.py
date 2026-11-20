@@ -624,7 +624,9 @@ DIAGRAM_TOOL = {
         "plus the 1 to 3 pieces that line is about. Pieces add up across beats: a later beat adds boxes and arrows, it never "
         "replaces them, so give each node once, in the beat that introduces it. Nodes are {id, label, shape?}: a short id you "
         "reuse in edges, a label of at most 28 characters, shape box (default), round for a start or end, diamond for a "
-        "decision or hub. Edges are {from, to, label?} by node id; an arrow can go in the same beat as its new node. The "
+        "decision or hub. Edges are {from, to, label?} by node id; an arrow can go in the same beat as its new node. A beat's "
+        "circle lists node ids to ring by hand for emphasis, the way you would circle the key box on a whiteboard. It is all "
+        "drawn by hand, wobbly lines and handwriting, so keep labels short. The "
         "hub lays it out in rows from the sources down (direction down) or in columns left to right (direction right) and "
         "scales it to his monitor. At most 8 beats, 14 nodes, 20 edges. It stays up 45 s after the last beat; the next "
         "drawing, point_on_screen clear, or sending you away takes it down. 3D stays for things that really turn in space."
@@ -664,6 +666,12 @@ DIAGRAM_TOOL = {
                                 },
                                 "required": ["from", "to"],
                             },
+                        },
+                        "circle": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "node ids to circle by hand on this beat: the one piece the line is really about; "
+                                           "use it on one or two beats, not every one",
                         },
                     },
                     "required": ["say"],

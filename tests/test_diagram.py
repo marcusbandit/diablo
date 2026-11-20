@@ -177,6 +177,15 @@ class Plan(unittest.TestCase):
         _, _, _, edges = laid_out(arguments)
         self.assertEqual(len(edges), 1)
 
+    def test_a_circle_rings_its_node_once_it_is_drawn(self):
+        arguments = {"title": "t", "beats": [{"say": "a", "nodes": [{"id": "a", "label": "A"}], "circle": ["b", "nobody"]},
+                                             {"say": "b", "nodes": [{"id": "b", "label": "B"}]},
+                                             {"say": "again a", "circle": "A"}]}
+        beats, _, boxes, _ = laid_out(arguments)
+        rings = [[m["box"] for m in b["marks"] if m["kind"] == "ring"] for b in beats]
+        self.assertEqual(rings, [[], [boxes["B"]], [boxes["A"]]])
+        self.assertEqual(beats[1]["marks"][-1]["kind"], "ring")
+
     def test_caps(self):
         many = {"title": "x" * 90, "beats": [{"say": f"s{i}", "nodes": [{"id": f"{i}-{j}", "label": "L" * 40} for j in range(2)]}
                                              for i in range(10)]}
