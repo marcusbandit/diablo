@@ -110,7 +110,24 @@ makes anyway. When it is sure enough (`route.desktop_threshold` 0.8 to close a w
 `"act": {"kind": "desktop", "action", "did", ...}` with `window`, `workspace` or `player` as the
 action needs. The ears run it on banditbox. Anything else goes on to Claude as before.
 Every reply also carries `"timing": {"brain_ms", "jev_ms", "backend", "model", "tools", "tier"}`, the
-hub's own split of the turn, when the turn went through the router.
+hub's own split of the turn, when the turn went through the router. `first_text_ms` is when his first
+text block was done and `first_say_ms` when his first sentence went out, both from the start of the turn.
+
+`"stream": true` answers as ndjson lines instead of one body. On a spoken turn (source `voice`) the
+claude brain streams its text token by token (`--include-partial-messages`), and every sentence goes
+out as `{"say": "..."}` the moment it ends: at `. ! ?` and a space, or near 220 characters for a
+run-on, never inside a word or a link. A tool starting cuts the sentence it interrupts loose at once.
+A list item goes out as its own say line without its bullet or number, with a full stop added when it has
+none. Code fences, table rows and headings are never sent as say lines. Before any say
+line, `{"brain": "claude"}` comes the moment the hub knows the turn goes to the full brain, after
+Jev found no plain command and no direct answer, so the ears can play a beat. The last line is
+`{"done": <the usual reply>}` or `{"error": {"status", "detail"}}`. The done reply keeps the whole
+answer for the chat in `reply`, the first text block in `spoken_first`, and in `rest` only the
+sentences of the final answer that no say line carried, so nothing is said twice. A sentence
+counts as carried only when a say line was that same sentence, so a closing "Done." after
+"Checking whether the build is done." is still said. A brain without
+partial messages (opencode, the api brain, an older CLI) sends its sentences when each whole text
+block is done, or none at all; the answer then comes in `done` as before.
 
 A turn cannot be rewritten once answered, since the brain's session already holds it, so editing
 and answering again are new turns that say what they replace:
@@ -272,6 +289,16 @@ on each change, and `off` when they stop.
 rest of the spoken conversation, or turns it down again. It goes out as a `duck` event that
 `presence/busy.py` hands to the ears (docs/ears.md, "Other sound goes quiet while he talks").
 
+`POST /v1/screen/marks` (hub token only) draws one beat of marks over the real desktop screen, the
+brain's `point_on_screen` (hub/pointing.py, docs/presence.md "Pointing at the real screen"):
+`{"show", "n", "count", "say", "marks": [...], "wait"?: "click", "caption"?, "lazy"?}`. `show` names
+the call, `n` is the beat's place and `count` how many the call has. A mark is `{"kind", "box":
+{x, y, w, h}}` or `{"kind", "point": {x, y}}` in global logical screen pixels, with `text` for a
+`label`, `n` for a `num` and an optional `from` point for an `arrow`; kinds are `ring`, `underline`,
+`arrow`, `label`, `spotlight`, `highlight`, `num`, `check` and `cross`. Only a `lazy` beat may carry
+`target: {text, window, near}` instead, to be found on the desktop when its turn comes. `{"clear":
+true}` takes every mark down. A beat with a target that is not lazy, or an `n` past 7, is a 400.
+
 ## Panels
 
 A section's `panels` lists module ids. `GET /v1/sections/{id}/panel` returns what to show above the
@@ -313,6 +340,10 @@ without a card around it, and `wide` keeps a `list` out of a two column layout. 
   `T3 on nemurenai`, `ssh diablo-pi`). `source` says where the message came from. A client
   that only wants the reply can keep waiting for `message`.
 - `t3`: the list at `GET /v1/t3/threads` changed. Fetch it.
+- `screen`: something for the desktop's presence to show. `{"kind": "screen", "card", "size"}` from
+  `POST /v1/screen`, `{"kind": "screen", "open"}` from `POST /v1/screen/open`, or `{"kind":
+  "screen", "marks"}` from `POST /v1/screen/marks`, one beat of marks or `{"clear": true}`.
+  presence/busy.py writes them into presence.json, panel.json and marks.json.
 - `task`: a task card was created or changed. `{"kind": "task", "change", "task"}`, where `change`
   is `created`, `updated` or `seen` and `task` is the whole card as in `GET /v1/tasks`, so a client
   can patch its list without a fetch. Fetch the list again after a reconnect.
@@ -323,6 +354,10 @@ without a card around it, and `wide` keeps a `list` out of a two column layout. 
   `launching on banditbox`). `GET /v1/busy` returns the same snapshot for a client that just
   connected. A turn older than 30 minutes is left out, so nothing reads as busy forever. The orb
   beside the cursor (presence/busy.py) follows this.
+
+- `learned`: Diablo learned something on his own, after a reply and off the hot path (docs/learning.md).
+  `{"kind": "learned", "what": "skill" | "fact", "change": "created" | "updated", "label"}`, with
+  `id` for a fact. A client may show it quietly; it never pushes to Telegram.
 
 `?ping=<seconds>` sets the keepalive comment interval, for clients that hold the stream in the
 background.

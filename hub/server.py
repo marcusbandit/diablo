@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from . import deliver as delivery
-from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, questions, releases, route, sections, selfrestart, standby, stt, t3link, t3threads, tasks, threads, usage, voicemerge, watch
+from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, usage, voicemerge, watch
 from . import settings as app_settings
 from .config import get_config
 
@@ -78,8 +78,9 @@ class ChatIn(BaseModel):
     # The ears' desktop at the wake: open windows and media players, so jev can pick a plain
     # desktop command and the ears run it (the reply then carries "act").
     desktop: Optional[dict] = None
-    # The ears ask for the answer as ndjson lines: {"say": ...} the moment his first line is
-    # written on a spoken turn, then {"done": <the usual reply>} or {"error": ...} at the end.
+    # The ears ask for the answer as ndjson lines: {"brain": "claude"} once the full brain has a
+    # spoken turn, one {"say": ...} for each sentence the moment it is written, then
+    # {"done": <the usual reply>} or {"error": ...} at the end.
     stream: bool = False
     # The box whose ears heard a spoken turn; banditbox when left out.
     host: str = ""
@@ -167,6 +168,20 @@ class ScreenIn(BaseModel):
 
 class ScreenOpenIn(BaseModel):
     page: str = "settings"
+
+
+class MarksIn(BaseModel):
+    show: str = ""
+    n: int = 0
+    count: int = 1
+    say: str = ""
+    marks: list = []
+    wait: str = ""
+    caption: bool = False
+    lazy: bool = False
+    keep: bool = False
+    linger: float = 0
+    clear: bool = False
 
 
 class EarsDuckIn(BaseModel):
@@ -468,12 +483,15 @@ async def chat_lines(body, caller):
     early leaves it to finish and be filed like any other."""
     lines = asyncio.Queue()
 
-    async def on_text(text):
+    async def on_say(text):
         lines.put_nowait({"say": text})
+
+    async def on_brain(beat=True):
+        lines.put_nowait({"brain": "claude", "beat": bool(beat)})
 
     async def run():
         try:
-            lines.put_nowait({"done": await run_chat(body, caller, on_text=on_text)})
+            lines.put_nowait({"done": await run_chat(body, caller, on_say=on_say, on_brain=on_brain)})
         except HTTPException as problem:
             lines.put_nowait({"error": {"status": problem.status_code, "detail": problem.detail}})
         except Exception:
@@ -511,7 +529,7 @@ async def may_answer(question, origin):
     return not guard.restricted
 
 
-async def run_chat(body, caller, picking=None, on_text=None):
+async def run_chat(body, caller, picking=None, on_say=None, on_brain=None):
     """One chat turn. picking is (question, choices, words) for a tap on a question card: the answer is
     recorded only once the request is known to be good, and the turn carries it."""
     answering = None
@@ -614,13 +632,15 @@ async def run_chat(body, caller, picking=None, on_text=None):
         publish(dict(where, state="doing", step=label, tool=events.plain_step(label)))
 
     said = questions.answer_line(answering) if answering is not None else text
-    early = on_text if source == "voice" else None
+    early = on_say if source == "voice" else None
+    beat = on_brain if source == "voice" else None
     hint = (answering.get("threads") or None) if answering is not None else None
     try:
         turn = await brains.ask(conv, said, origin=origin, notes=notes,
                                 images=images or None, on_step=on_step, message_id=user_id,
                                 **({"thread_hint": hint} if hint else {}),
-                                **({"on_text": early} if early else {}),
+                                **({"on_say": early} if early else {}),
+                                **({"on_brain": beat} if beat else {}),
                                 **({"desktop": await with_threads(said, body.desktop)} if body.desktop and source == "voice" else {}))
     except Exception:
         logger.exception("chat handler failed")
@@ -647,6 +667,9 @@ async def run_chat(body, caller, picking=None, on_text=None):
     rest = ""
     if first:
         reply, rest = spoken_split(first, turn.text.strip() or (reply if turn.error else ""))
+        if turn.said:
+            # Every sentence streamed was said already; the voice says only the ones left.
+            rest = sentences.unsaid(rest, turn.said)
     meta = {"section": section["id"], "client_id": body.client_id, "objects": turn.objects, "backend": turn.backend,
             "did": turn.did}
     if turn.act:
@@ -1493,6 +1516,22 @@ async def screen_open(body: ScreenOpenIn, caller: dict = Depends(require_token))
         raise HTTPException(status_code=400, detail=f"page is one of {', '.join(SCREEN_PAGES)}")
     publish({"kind": "screen", "open": body.page})
     return {"ok": True, "page": body.page}
+
+
+@app.post("/v1/screen/marks")
+async def screen_marks(body: MarksIn, caller: dict = Depends(require_token)):
+    """One beat of marks over Marcus's real screen (hub/pointing.py), or clear to take them all
+    down. It goes out as a `screen` event with `marks`, which presence/busy.py writes into
+    marks.json for the overlay."""
+    if not caller.get("master"):
+        raise HTTPException(status_code=403, detail="only the hub token may mark the screen")
+    from . import pointing
+
+    marks = pointing.clean_payload(body.model_dump())
+    if isinstance(marks, str):
+        raise HTTPException(status_code=400, detail=marks)
+    publish({"kind": "screen", "marks": marks})
+    return {"ok": True, "marks": len(marks.get("marks") or [])}
 
 
 def screen_card(body):

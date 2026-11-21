@@ -1,7 +1,7 @@
 _diablo_ears() {
   local cur=${COMP_WORDS[COMP_CWORD]}
   if (( COMP_CWORD == 1 )); then
-    COMPREPLY=($(compgen -W "train retrain status chimes mouth timings recordings recheck run" -- "$cur"))
+    COMPREPLY=($(compgen -W "train retrain status chimes mouth timings said tour recordings recheck run" -- "$cur"))
   elif [[ ${COMP_WORDS[1]} == train ]]; then
     COMPREPLY=($(compgen -W "--fresh" -- "$cur"))
   elif [[ ${COMP_WORDS[1]} == recheck ]]; then
@@ -12,8 +12,10 @@ _diablo_ears() {
     if [[ ${COMP_WORDS[COMP_CWORD-1]} == --html ]]; then
       COMPREPLY=($(compgen -f -- "$cur"))
     else
-      COMPREPLY=($(compgen -W "--last --html" -- "$cur"))
+      COMPREPLY=($(compgen -W "--last --html --medians" -- "$cur"))
     fi
+  elif [[ ${COMP_WORDS[1]} == said ]]; then
+    COMPREPLY=($(compgen -W "--last --json" -- "$cur"))
   fi
 }
 complete -F _diablo_ears diablo-ears

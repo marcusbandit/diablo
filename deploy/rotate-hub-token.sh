@@ -83,7 +83,7 @@ for box in "$@"; do
   put "$box" .config/diablo/config.toml
 done
 
-for unit in diablo-voice diablo-fast diablo-pool diablo-remind; do
+for unit in diablo-ears diablo-fast diablo-pool diablo-remind; do
   if systemctl --user is-active -q "$unit"; then
     systemctl --user restart "$unit"
     echo "rotate: restarted $unit"

@@ -32,8 +32,9 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from . import burst, chime, commands, duck, ears_api, endturn, feedback, hubclient, jevfast, mouth, ownvoice, panel, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake, window
+from . import burst, chime, commands, duck, tour, ears_api, endturn, feedback, hubclient, jevfast, mouth, ownvoice, panel, phrases, presence, quick, recordings, speakers, stt, surroundings, timeline, voiceid, wake, window
 from . import state as vstate
+from hub import sentences
 from .dictation import NAME as SAID_NAME
 from .config import load_config
 
@@ -70,6 +71,44 @@ ONSET_PROB = 0.3
 # A streamed answer can be quiet between its first line and its end for as long as a hub turn
 # may run (hub/brains.py TURN_SECONDS), plus a margin.
 TURN_READ_S = 960
+# Streamed sentences are spoken as one reply while the next keeps coming within this long, so a
+# tool at work between two sentences never splits one answer in two; the name still cuts in.
+FOLLOW_S = 30.0
+# "That's all", "dismiss", "thanks, Diablo", "go away": he is done talking. Said after an answer,
+# or straight after the name, it closes the conversation here, with no brain turn: a short
+# goodbye, his reply cards gone, and no follow-up window.
+DISMISS_PHRASE = (
+    r"(?:(?:ok(?:ay)?|alright|right|no|nah)\W+)?"
+    r"(?:dismiss(?:ed)?|go away|you can go|leave it|shut up|be quiet|quiet|hush|silence|stop talking|that will do|"
+    r"never ?mind|forget it|die|drop dead|be ?gone|begone|get lost|piss off|fuck off|"
+    r"that'?s enough|that'?s all|that is all|that'?ll be all|that will be all|that'?s it|that is it|i'?m done|"
+    r"we'?re done|i'?m good|nothing else|no more|thanks?|thank you|cheers|bye|goodbye|good night|see you|later)"
+    r"(?:\W+(?:thanks?|thank you|diablo|sir|mate|for now|for today|then|please))*"
+)
+DISMISS = re.compile(r"^\W*(?:diablo\W+)?" + DISMISS_PHRASE + r"(?:\W+" + DISMISS_PHRASE + r")*\W*$", re.I)
+# Lines that may be him sending Diablo away in other words; Jev reads each one to tell "I said go
+# away" from "how would I make someone go away" before anything is done.
+MAYBE_AWAY = re.compile(
+    r"\b(?:dismiss(?:ed)?|go away|be ?gone|begone|disappear|vanish|get lost|leave me|shut up|stop talking|"
+    r"be quiet|piss off|fuck off|bugger off|buzz off|scram|go to sleep|stand down|remove your|leave now|"
+    r"kill yourself|never ?mind|forget it|drop dead|die|silence|"
+    r"you can go|that'?s all|that is all|that'?s enough|that'?s it|i'?m done|we'?re done|thanks?|thank you)\b",
+    re.I,
+)
+AWAY_QUESTION = {"away": {"type": "choice", "instructions": "Is Marcus telling Diablo, his voice assistant, to go away and leave him alone",
+                          "criteria": {
+                              "away": ("he tells Diablo to leave him alone now, however rude or angry: go away, be gone, "
+                                       "dismiss, shut up, that's all, disappear, die, kill yourself said to Diablo"),
+                              "other": "anything else, including a question about how to make someone or something go away"}}}
+AWAY_SURE = 0.8
+# After an answer that ends with a question he can just answer: the mic stays open this long for
+# a reply without the name (setting ears.follow_s, 0 turns it off). Any other answer ends the
+# talk, so nothing said in the room afterwards reaches him without the name.
+FOLLOW_UP_S = 8.0
+REPLIED = threading.Event()
+# A first line that arrives while the answer is still awaited is said once the answer has not
+# followed within this long, instead of after the whole INLINE_WAIT_S.
+STIR_GRACE_S = 0.15
 # Jev ends the turn: after EARLY_S of quiet on a short line, the words so far go to Jev on a
 # thread while the ears keep listening. A plain command Jev is EARLY_SURE of ends the turn
 # there and then, instead of after the full quiet; talk that resumes throws the read away.
@@ -643,14 +682,15 @@ def transcribe(audio, cfg, tl=None, fallback=False):
         Path(path).unlink(missing_ok=True)
 
 
-def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None):
+def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None, on_brain=None):
     """The hub's answer to the words, as it sent it: reply, say, backend and maybe act.
 
     With on_say the answer streams: his first line comes to on_say the moment the hub has it,
     before the work it announces is done. A hub that does not stream answers in one piece.
     What was on screen at the wake goes along. A picture goes only when the words point
     at the screen, so a plain question stays fast. desktop (the open windows and media
-    players) lets Jev pick a plain desktop command, which comes back as "act"."""
+    players) lets Jev pick a plain desktop command, which comes back as "act". on_brain runs
+    the moment the hub says the full brain has the turn."""
     import base64
 
     body = {"text": text, "section": "", "source": "voice", "client_id": f"ears-{uuid.uuid4()}",
@@ -679,11 +719,12 @@ def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None):
             response.read()
             found = response.json()
             return found if isinstance(found, dict) else {}
-        return read_lines(response.iter_lines(), on_say)
+        return read_lines(response.iter_lines(), on_say, on_brain)
 
 
-def read_lines(lines, on_say):
-    """The streamed answer: each {"say"} line goes to on_say, {"done"} is the answer."""
+def read_lines(lines, on_say, on_brain=None):
+    """The streamed answer: each {"say"} line goes to on_say, {"brain"} to on_brain, and
+    {"done"} is the answer."""
     for line in lines:
         if not line.strip():
             continue
@@ -693,6 +734,9 @@ def read_lines(lines, on_say):
         if "say" in item:
             if on_say is not None and str(item["say"] or "").strip():
                 on_say(str(item["say"]))
+        elif "brain" in item:
+            if on_brain is not None and item.get("beat", True):
+                on_brain()
         elif "done" in item:
             found = item["done"]
             return found if isinstance(found, dict) else {}
@@ -714,12 +758,14 @@ def answer_or_background(work, tl, said):
     or unsaid joins that one's burst, and the burst is spoken as one merged reply (voice/burst.py)."""
     job = PENDING.start(work, tl, said)
     alone = PENDING.alone(job)
-    if alone and job["done"].wait(INLINE_WAIT_S):
+    if alone and PENDING.settle(job, INLINE_WAIT_S, STIR_GRACE_S):
         PENDING.forget(job)
         return burst.answer_of(job)
     tl.note(background=True)
     tl.mark("backgrounded")
-    feedback.thinking()
+    if not (alone and job["early"]):
+        # A first line about to be said tells him enough; the thinking chime would only cover it.
+        feedback.thinking()
     thinking_changed()
     if alone:
         log.info("still thinking on %r, listening again", said[:80])
@@ -729,16 +775,16 @@ def answer_or_background(work, tl, said):
 
 
 def say_ready(mic, speaker, cfg, detector, tap):
-    """Speaks what is ready: a lone job's first lines while it works, a lone job's answer once
-    it is in, or a burst's one merged reply. True when he cut it off with the name, so a turn
-    follows. A cut reply is never said again; only the answer behind a cut first line is kept,
-    for the reply after his next turn."""
+    """Speaks what is ready: a lone job's sentences while it works, as one reply for as long as
+    they keep coming, a lone job's answer once it is in, or a burst's one merged reply. True when
+    he cut it off with the name, so a turn follows. A cut reply is never said again, the lines
+    queued behind it included; what a job still thinking writes after the cut is kept, for the
+    reply after his next turn."""
     PENDING.quiet_s = burst.quiet_s(cfg)
     for job, early in PENDING.take_early():
-        for n, words in enumerate(early):
-            if say_answer(mic, speaker, words, cfg, detector, tap, job["tl"], first=True):
-                PENDING.keep_early(job, early[n + 1:])
-                return True
+        if say_answer(mic, speaker, following(job, early), cfg, detector, tap, job["tl"], first=True):
+            PENDING.drop(job)
+            return True
     jobs, merged = PENDING.take()
     if not jobs:
         return False
@@ -747,13 +793,8 @@ def say_ready(mic, speaker, cfg, detector, tap):
     tl = last["tl"] or timeline.Timeline()
     try:
         if merged is None:
-            early, last["early"] = list(last["early"]), []
-            for n, words in enumerate(early):
-                if say_answer(mic, speaker, words, cfg, detector, tap, tl, first=True):
-                    last["early"] = early[n + 1:]
-                    PENDING.keep([last])
-                    return True
-            return say_answer(mic, speaker, last["words"], cfg, detector, tap, tl)
+            lines, last["early"] = [w for w in list(last["early"]) + [last["words"]] if w and w.strip()], []
+            return say_answer(mic, speaker, lines if len(lines) > 1 else " ".join(lines), cfg, detector, tap, tl)
         log.info("a burst of %d spoken as one reply", len(jobs))
         tl.note(burst=[job["said"][:120] for job in jobs])
         return say_answer(mic, speaker, merged, cfg, detector, tap, tl)
@@ -762,6 +803,22 @@ def say_ready(mic, speaker, cfg, detector, tap):
             if job["tl"] is not None and job not in PENDING.jobs:
                 job["tl"].mark("end")
                 job["tl"].save()
+
+
+def following(job, early):
+    """The lines of a lone job still thinking: those in hand, then each next one as it is written,
+    for as long as the next keeps coming within FOLLOW_S, and once the job is done the rest of its
+    answer, so the whole answer is one reply."""
+    yield from early
+    while True:
+        line = PENDING.pull_early(job, FOLLOW_S)
+        if line is not None:
+            yield line
+            continue
+        if job["done"].is_set() and not job["dropped"] and not job.get("grouped"):
+            rest, job["words"] = job["words"], ""
+            yield from (sentences.split(rest) if rest and rest.strip() else [])
+        return
 
 
 def cancel_thinking(cfg):
@@ -1170,29 +1227,84 @@ def dictate(mic, settings, vad, tl, speaker=None, first="", ended=False, since=N
     return f"That didn't work: {why}. The words are in the chat."
 
 
+def beat_on(cfg):
+    return str(cfg.get("ears.beat", "1") if hasattr(cfg, "get") else "1").strip().lower() not in ("0", "off", "false", "no")
+
+
+def beat_for(speaker, cfg, tl):
+    """on_brain for answer_words: the moment Claude has the turn, a short cached line from the
+    phrase bank plays at once, on a thread of its own so the answer keeps streaming in. Nothing
+    plays when another turn is in flight, he is already speaking, or ears.beat is 0."""
+
+    def beat():
+        if speaker is None or not beat_on(cfg) or PENDING.size() > 1 or speaker.speaking or vstate.is_muted():
+            return ""
+        cached = phrases.pick(cfg, "beat")
+        if not cached:
+            return ""
+        said, wav = cached
+
+        def play():
+            try:
+                speaker.play_wav(wav, on_heard=lambda: tl.mark("beat_audio"))
+            except Exception:
+                log.exception("the beat failed")
+
+        threading.Thread(target=play, daemon=True, name="beat").start()
+        return said
+
+    return beat
+
+
 def speaks_direct(cfg):
     """A direct change (a light, a window) is silent unless ears.speak_direct is on."""
     return str(cfg.get("ears.speak_direct") or "0").strip().lower() in ("1", "on", "true", "yes")
 
 
-def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
+def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None, on_brain=None):
     """The words to say for one heard line, after running any desktop act. Empty: say nothing.
 
-    With on_say, his first line goes there as soon as the hub has it, and the words returned
-    are only what comes after it."""
+    With on_say, each sentence he writes goes there as soon as the hub has it, and the words
+    returned are only the sentences no line carried, so nothing is said twice. on_brain() runs
+    once the hub says Claude has the turn and gives the text of the beat it started, or "";
+    a first line that only acknowledges is then not said again."""
     tl = tl or timeline.Timeline()
     tl.mark("hub_sent")
-    first = []
+    first, heard = [], []
+    capped, beat = [], []
+
+    def heard_brain():
+        tl.mark("brain_back")
+        if on_brain is None or first or beat:
+            return
+        said = on_brain()
+        if said:
+            beat.append(said)
+            tl.note(beat=said)
 
     def heard_first(line):
         tl.mark("ack_back")
+        tl.mark("first_sentence")
+        heard.append(line)
         words = spoken(line.strip())
-        if words:
-            first.append(words)
-            on_say(words)
+        if words and beat and len(heard) == 1:
+            # The beat said "very well" already; "On it, checking now" goes on with "Checking now".
+            words = phrases.after_beat(words)
+            if not words:
+                tl.note(ack_skipped=line[:120])
+        if not words or capped:
+            return
+        if first and sum(len(w) + 1 for w in first) + len(words) > SPOKEN_CHARS:
+            # As long a reply as he says in one go; the rest stays in the chat.
+            capped.append(words)
+            on_say("The rest is in the chat.")
+            return
+        first.append(words)
+        on_say(words)
 
     try:
-        found = ask(cfg, text, context, shot, desktop, on_say=heard_first if on_say is not None else None)
+        found = ask(cfg, text, context, shot, desktop, on_say=heard_first if on_say is not None else None,
+                    **({"on_brain": heard_brain} if on_say is not None and on_brain is not None else {}))
     except (httpx.HTTPError, ValueError) as error:
         log.warning("hub chat failed: %s", error)
         tl.mark("hub_back")
@@ -1200,6 +1312,8 @@ def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
         return "I can't reach my hub right now."
     tl.mark("hub_back")
     tl.note(hub=found.get("timing"), backend=found.get("backend"))
+    if found.get("reply"):
+        tl.note(written=str(found["reply"])[:4000])
     act = found.get("act")
     if isinstance(act, dict):
         failed = run_act(act, tl, cfg)
@@ -1220,20 +1334,25 @@ def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
         # Cancelled on purpose ("never mind", a new request): nothing to say about it.
         tl.note(outcome="stopped")
         return ""
+    if heard:
+        reply = sentences.unsaid(reply, heard + first)
     tl.note(outcome=f"answered by {found.get('backend') or 'the hub'}")
-    return said_aloud(reply, found.get("say"))
+    left = SPOKEN_CHARS - sum(len(w) + 1 for w in first)
+    return said_aloud("" if capped else reply, found.get("say"), left)
 
 
-def said_aloud(reply, say=None):
+def said_aloud(reply, say=None, limit=SPOKEN_CHARS):
     """The words to speak: the reply cut to a few sentences, then a question Diablo asked with its
-    numbered options in full, so the options are never cut off."""
-    words = spoken(str(reply or "").strip())
+    numbered options in full, so the options are never cut off. limit is what is left of
+    SPOKEN_CHARS after the lines already streamed."""
+    words = spoken(str(reply or "").strip(), limit)
     say = " ".join(str(say or "").split())
     return f"{words} {say}".strip() if say else words
 
 
-def spoken(reply):
-    """The part of a reply worth saying aloud: no code, no links, a few sentences at most."""
+def spoken(reply, limit=SPOKEN_CHARS):
+    """The part of a reply worth saying aloud: no code, no links, a few sentences at most. Under a
+    limit lowered by lines already said, only whole sentences go before "the rest is in the chat"."""
     import re
 
     text = re.sub(r"```.*?```", " ", reply, flags=re.S)
@@ -1242,11 +1361,15 @@ def spoken(reply):
     text = re.sub(r"https?://\S+", "", text)
     text = re.sub(r"[*_#>|]+", "", text)
     text = re.sub(r"\s+", " ", text).strip()
-    if len(text) <= SPOKEN_CHARS:
+    if len(text) <= limit:
         return text
-    cut = text[:SPOKEN_CHARS]
+    cut = text[:max(limit, 0)]
     end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
-    return (cut[: end + 1] if end > 100 else cut) + " The rest is in the chat."
+    if end > min(100, limit // 2):
+        cut = cut[: end + 1]
+    elif limit < SPOKEN_CHARS:
+        cut = ""
+    return f"{cut} The rest is in the chat.".strip()
 
 
 class Settings:
@@ -1349,7 +1472,124 @@ def notify_untrained():
     )
 
 
-def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lead=None, tl=None):
+def dismissed(text, early=None):
+    """He sent Diablo away: a plain goodbye matched here at once, or a line that may be one, which
+    Jev reads first ("I said go away" is, "how would I make someone go away" is not)."""
+    words = " ".join(str(text or "").split())
+    if DISMISS.match(words):
+        return True
+    if not MAYBE_AWAY.search(words):
+        return False
+    try:
+        found = jevfast.ask("Marcus said this line out loud to Diablo, his voice assistant: " + words[:600],
+                            AWAY_QUESTION, origin="jev away")
+    except Exception as error:
+        log.debug("Jev's away read failed: %s", error)
+        return False
+    return bool(found) and found.get("away") == "away" and found.get("away_confidence", 0) >= AWAY_SURE
+
+
+def dismiss(cfg, speaker, tl):
+    """Sent away: whatever he was still working on or about to say is dropped, then a cached
+    goodbye, his reply cards off the screen, and back to sleep."""
+    REPLIED.clear()
+    if PENDING.size():
+        try:
+            cancel_thinking(cfg)
+        except Exception:
+            log.exception("could not stop what he was working on")
+    tl.note(outcome="dismissed")
+    log.info("dismissed")
+    try:
+        presence.clear("reply")
+    except Exception:
+        log.exception("could not clear the reply cards")
+    try:
+        tour.Screen(cfg).clear_marks()
+    except Exception:
+        log.exception("could not clear the marks")
+    cached = phrases.pick(cfg, "bye") if speaker is not None else None
+    if cached:
+        said, wav = cached
+        spoke(tl, said)
+        try:
+            speaker.play_wav(wav)
+        except Exception:
+            log.exception("the goodbye failed")
+    else:
+        chime.play("done")
+    set_state("asleep")
+    return False
+
+
+def tour_line(mic, speaker, cfg, detector, tap, tl, text):
+    """The tour, run here from its script: the cut flag when the line was about it, else None."""
+    reply = tour.answer(text)
+    if tour.wanted(text) or reply == "yes":
+        return run_tour(mic, speaker, cfg, detector, tap, tl)
+    if reply == "no":
+        tl.note(outcome="tour declined")
+        return say_answer(mic, speaker, tour.DECLINED, cfg, detector, tap, tl)
+    if tour.asked(text):
+        tl.note(outcome="tour offered")
+        tour.offer()
+        return say_answer(mic, speaker, tour.OFFER, cfg, detector, tap, tl)
+    return None
+
+
+def run_tour(mic, speaker, cfg, detector, tap, tl):
+    tl.note(outcome="tour")
+    log.info("tour")
+    controls = {}
+    reading = threading.Thread(target=lambda: controls.update(found=tour.find_target()), daemon=True)
+    reading.start()
+
+    def target():
+        reading.join(timeout=8.0)
+        return controls.get("found")
+
+    script = tour.lines(cfg, target, spoken=lambda line: spoke(tl, line))
+    if detector is None:
+        speaker.say_stream(script, cfg)
+        cut = False
+    else:
+        cut = speak_until_named(mic, speaker, script, cfg, detector, tap, tl)
+    if cut:
+        tour.Screen(cfg).clear_marks()
+        from . import panel
+
+        panel.apply("close")
+        return True
+    REPLIED.set()
+    return False
+
+
+def follow_up_s(cfg):
+    try:
+        return max(float(cfg.get("ears.follow_s", FOLLOW_UP_S)), 0.0)
+    except (TypeError, ValueError):
+        return FOLLOW_UP_S
+
+
+def asked_back():
+    """Whether his last spoken line asked Marcus something, so an answer is due."""
+    return LAST_LINE["text"].rstrip().rstrip('"\'”’)').endswith("?")
+
+
+def follow_up(cfg):
+    """Seconds to listen for a follow-up without the name, once an answer has been said to the end
+    and nothing else is on its way; 0 for none."""
+    if not REPLIED.is_set():
+        return 0.0
+    REPLIED.clear()
+    if not asked_back():
+        return 0.0
+    if PENDING.thinking() or PENDING.has_speech() or STICKY.get("loop") or STICKY.get("dictation"):
+        return 0.0
+    return follow_up_s(cfg)
+
+
+def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lead=None, tl=None, window=None):
     """One turn. True when Marcus cut the reply off with the name, so another turn follows,
     LOOP when he asked for the voice loop.
 
@@ -1360,6 +1600,8 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
     tl = tl or timeline.Timeline("follow-up")
     tl.mark("name")
     set_state("listening", holding=False)
+    if window:
+        tl.note(follow_up=True)
     # The chime first, before anything slow, so he hears at once that the name landed.
     chime.play("listen")
     tl.mark("chime")
@@ -1386,9 +1628,14 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
         heard = record(mic, cfg, after, vad, start_audio=lead,
                        probe=lambda clip: transcribe(clip, cfg), hold=set_holding, tl=tl,
                        early=lambda words: early_read(cfg, words, lambda: seen.desktop or commands.desktop_state()),
-                       judge=own_voice(cfg, tap, slack))
+                       judge=own_voice(cfg, tap, slack), **({"no_speech_s": window} if window else {}))
         audio, spoke = heard
     if not spoke:
+        if window:
+            log.info("no follow-up")
+            tl.note(outcome="no follow-up")
+            set_state("asleep")
+            return False
         log.info("woke, heard nothing")
         tl.note(outcome="heard nothing")
         chime.play("never")
@@ -1402,7 +1649,8 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
         # past the wake check is caught here, before anything reaches the hub.
         log.info("request refused, voice %.3f against his talk", voice)
         tl.note(outcome=f"refused, voice {voice:.2f}")
-        chime.play("never")
+        if not window:
+            chime.play("never")
         return False
     if heard.early is None:
         # An early act gets only its own ok sound, not the heard chime as well.
@@ -1424,9 +1672,15 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
     if stt.is_noise(text):
         log.info("woke, transcript empty or noise: %r", text)
         tl.note(outcome="noise")
-        chime.play("never")
+        if not window:
+            chime.play("never")
         return False
     log.info("heard: %s", text)
+    if dismissed(text):
+        return dismiss(cfg, speaker, tl)
+    toured = tour_line(mic, speaker, cfg, detector, tap, tl, text)
+    if toured is not None:
+        return toured
     if commands.loop_intent(text) == "start":
         tl.note(outcome="speech control on")
         return LOOP
@@ -1437,27 +1691,54 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
         note_control(tl, heard.early)
         return say_answer(mic, speaker, run_act(heard.early["act"], tl, cfg), cfg, detector, tap, tl)
     context, shot = seen.get()
-    words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, seen.desktop, tl, say), tl, text)
+    words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, seen.desktop, tl, say,
+                                                          beat_for(speaker, cfg, tl)), tl, text)
     if words is None:
         return False
     return say_answer(mic, speaker, words, cfg, detector, tap, tl)
 
 
 def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
-    """Speaks the answer, or with first his line ahead of the work. True when Marcus cut it
-    off with the name."""
-    log.info("%s: %s", "first" if first else "reply", words[:200])
-    if not words:
-        return False
+    """Speaks the answer, or with first his lines ahead of the work. words is the text, or its
+    sentences as a list or as an iterator still being written: each is fetched while the one
+    before plays. True when Marcus cut it off with the name. An answer said to the end opens the
+    follow-up window (REPLIED)."""
+    cut = _say_answer(mic, speaker, words, cfg, detector, tap, tl, first)
+    if cut is False and _spoke.get("any"):
+        REPLIED.set()
+    return cut
+
+
+_spoke = {"any": False}
+
+
+def _say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
+    _spoke["any"] = False
+    if not isinstance(words, str):
+        words = list(words) if isinstance(words, (list, tuple)) else words
+        if isinstance(words, list):
+            words = [w for w in words if w and w.strip()]
+            if len(words) <= 1:
+                words = words[0] if words else ""
     tl = tl or timeline.Timeline()
     marks = ("ack_ready", "ack_spoken") if first else ("tts_ready", "spoken")
-    if not first:
-        tl.note(reply=words[:300])
-    if not tl.info.get("act", "").startswith("quick"):
-        presence.show_reply(words)
+    shows = not tl.info.get("act", "").startswith("quick")
+    if isinstance(words, str):
+        log.info("%s: %s", "first" if first else "reply", words[:200])
+        if not words:
+            return False
+        spoke(tl, words)
+        if not first:
+            tl.note(reply=words[:300])
+        if shows:
+            presence.show_reply(words)
+    else:
+        words = told(words, tl, first, shows)
     after = "listening" if STICKY.get("loop") else "asleep"
 
     def heard():
+        _spoke["any"] = True
+        tl.mark("first_audio")
         set_state("speaking")
 
     def done():
@@ -1469,7 +1750,11 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
         LIVE.set_state("speaking")
     try:
         if detector is None:
-            speaker.say(words, cfg, interruptible=False, on_heard=heard, on_done=done)
+            if isinstance(words, str):
+                speaker.say(words, cfg, interruptible=False, on_heard=heard, on_done=done)
+            else:
+                speaker.say_stream(words, cfg, interruptible=False, on_heard=heard, on_done=done,
+                                   on_ready=lambda: tl.mark(marks[0]))
             tl.mark(marks[1])
             return False
         return speak_until_named(mic, speaker, words, cfg, detector, tap, tl, marks, on_heard=heard, on_done=done)
@@ -1477,6 +1762,32 @@ def say_answer(mic, speaker, words, cfg, detector, tap, tl=None, first=False):
         with _state_lock:
             if LIVE is not None and _last_state != "speaking":
                 LIVE.set_state(_last_state or "asleep")
+
+
+LAST_LINE = {"text": ""}
+
+
+def spoke(tl, line):
+    """Keeps every line handed to his voice on the turn, in order, for diablo-ears said, and the
+    last one, so the follow-up window opens only after a question."""
+    if str(line or "").strip():
+        LAST_LINE["text"] = str(line)
+    if tl is not None and str(line or "").strip():
+        tl.info.setdefault("spoken", []).append(str(line)[:1000])
+
+
+def told(lines, tl, first, shows):
+    """Hands the lines on as they come, logging each and growing his reply card with them."""
+    said, card = [], None
+    for line in lines:
+        said.append(line)
+        spoke(tl, line)
+        log.info("%s: %s", "first" if first else "reply", line[:200])
+        if shows:
+            card = presence.show_reply(" ".join(said), card_id=card)
+        if not first:
+            tl.note(reply=" ".join(said)[:300])
+        yield line
 
 
 def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=None, after_cut=False):
@@ -1578,7 +1889,8 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
     tl.points.pop("hub_back", None)
     context = surroundings.lines()
     shot = surroundings.screenshot() if surroundings.points_at_screen(text) else None
-    words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, desktop, tl, say), tl, text)
+    words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, desktop, tl, say,
+                                                          beat_for(speaker, cfg, tl)), tl, text)
     if words is not None and say_answer(mic, speaker, words, cfg, detector, tap, tl):
         return CUT
     return True
@@ -1679,11 +1991,19 @@ def speak_until_named(mic, speaker, words, cfg, detector, tap, tl=None, marks=("
 
     def talk():
         try:
+            if not isinstance(words, str):
+                # One line after another, each fetched while the one before plays; a cut drops
+                # the line playing and every one behind it.
+                speaker.say_stream(words, cfg, interruptible=False, on_heard=on_heard, on_done=on_done, cancel=cancel,
+                                   on_ready=lambda: tl.mark(marks[0]) if tl is not None else None)
+                if tl is not None and not cancel.is_set():
+                    tl.mark(marks[1])
+                return
             if vstate.is_deaf():
                 return
             # Fetch, then play, so a cut during the fetch means nothing plays at all.
             speaker.prime()
-            fetched = speaker.fetch_face(words, cfg)
+            fetched = speaker.fetch_face(words, cfg, eyes_wait=0.0)
             if tl is not None:
                 tl.mark(marks[0])
             if fetched and not cancel.is_set():
@@ -1766,6 +2086,8 @@ def run():
         log.exception("direct Jev unavailable, every Jev call goes through the hub")
     vad = SileroVAD(cfg["silero_path"])
     speaker = Speaker(cfg, _Quiet())
+    # The cached lines for the current voice, the beat among them; missing ones are fetched once.
+    phrases.start(settings.get, speaker, log)
     # Every model a wake or a reply uses is loaded and run once before the mic opens, so
     # nothing loads on the wake path, the first wake after a start included.
     warming = time.monotonic()
@@ -1818,10 +2140,10 @@ def run():
 WARM_WAIT_S = 20
 
 
-def timed_turn(tl, *args):
+def timed_turn(tl, *args, **kwargs):
     """turn(), with its timeline saved however it ends."""
     try:
-        return turn(*args, tl=tl)
+        return turn(*args, tl=tl, **kwargs)
     except Exception:
         tl.note(outcome="failed")
         raise
@@ -1879,10 +2201,12 @@ def loop(mic, settings, speaker, vad, controller, ears, reload, live, cfg, dicta
         if PENDING.has_speech():
             try:
                 cut = say_ready(mic, speaker, settings.get(), detector, tap)
-                while cut:
+                while cut or (cut is False and follow_up(settings.get())):
                     mic.drain()
                     detector.reset()
-                    cut = timed_turn(timeline.Timeline("follow-up"), mic, settings, speaker, vad, detector, tap)
+                    window = None if cut else follow_up_s(settings.get())
+                    cut = timed_turn(timeline.Timeline("follow-up"), mic, settings, speaker, vad, detector, tap,
+                                     window=window)
                     if cut == LOOP:
                         cut = voice_loop(mic, settings, speaker, vad, detector, tap, dictation)
             except Exception:
@@ -1956,13 +2280,15 @@ def loop(mic, settings, speaker, vad, controller, ears, reload, live, cfg, dicta
             # A reply cut off with the name goes straight into the next turn.
             woke_at = stamp
             result = timed_turn(tl, mic, settings, speaker, vad, detector, tap, woke_at, lead)
-            while result:
+            while result or (result is False and follow_up(settings.get())):
                 mic.drain()
                 detector.reset()
                 if result == LOOP:
                     result = voice_loop(mic, settings, speaker, vad, detector, tap, dictation)
                 else:
-                    result = timed_turn(timeline.Timeline("follow-up"), mic, settings, speaker, vad, detector, tap)
+                    window = None if result else follow_up_s(settings.get())
+                    result = timed_turn(timeline.Timeline("follow-up"), mic, settings, speaker, vad, detector, tap,
+                                        window=window)
         except Exception:
             log.exception("turn failed")
         mic.drain()
@@ -2065,7 +2391,9 @@ The setup and the meter live in the desktop app: Settings, then Voice.
   diablo-ears retrain     learn again from the takes already saved
   diablo-ears chimes      play every sound he makes, one after another
   diablo-ears mouth       tune his mouth to his voice by eye (show, set MS)
-  diablo-ears timings     where each recent turn's time went (--last N, --html FILE)
+  diablo-ears timings     where each recent turn's time went (--last N, --html FILE, --medians)
+  diablo-ears said        what he heard, said aloud and wrote in each recent turn (--last N, --json)
+  diablo-ears tour        play the "show me what you can do" tour once, here
   diablo-ears recordings  the last turns' recordings and what was heard (a number shows more)
   diablo-ears recheck     run a recording (an id, or the last) through gvoice again
   diablo-ears run         the service itself (diablo-ears.service runs this)
@@ -2096,7 +2424,7 @@ def recheck_cli(clip):
 
 def timings_cli(args):
     """The last turns as a waterfall: in the terminal, or as a page with --html FILE."""
-    last, page = 10, None
+    last, page, medians = None, None, False
     rest = list(args)
     while rest:
         flag = rest.pop(0)
@@ -2104,15 +2432,71 @@ def timings_cli(args):
             last = int(rest.pop(0))
         elif flag == "--html" and rest:
             page = rest.pop(0)
+        elif flag == "--medians":
+            medians = True
         else:
-            print("usage: diablo-ears timings [--last N] [--html FILE]")
+            print("usage: diablo-ears timings [--last N] [--html FILE] [--medians]")
             return 1
-    rows = timeline.load(last=last)
+    rows = timeline.load(last=last or (200 if medians else 10))
+    if medians:
+        print(timeline.latency_report(rows))
+        return 0
     if page:
         Path(page).write_text(timeline.html_report(rows))
         print(f"{len(rows)} turns written to {page}")
         return 0
     print(timeline.text_report(rows))
+    return 0
+
+
+def said_rows(rows):
+    """Per turn: what he heard, what Diablo said aloud (the beat first), what he wrote in the chat,
+    and the sentences only one of the two has."""
+    out = []
+    for row in rows:
+        info = row.get("info") or row
+        heard = info.get("text") or ""
+        spoken = ([info["beat"]] if info.get("beat") else []) + list(info.get("spoken") or [])
+        written = info.get("written") or ""
+        if not (heard or spoken or written):
+            continue
+        said_keys = {sentences.key(s) for line in spoken for s in sentences.split(line)}
+        wrote = sentences.split(written) if written else []
+        wrote_keys = {sentences.key(s) for s in wrote}
+        only_said = [s for line in spoken for s in sentences.split(line) if sentences.key(s) not in wrote_keys]
+        only_wrote = [s for s in wrote if sentences.key(s) not in said_keys] if written else []
+        out.append({"at": row.get("at") or info.get("at"), "heard": heard, "spoken": spoken, "written": written,
+                    "only_said": only_said, "only_wrote": only_wrote, "cut": bool(info.get("cut_off"))})
+    return out
+
+
+def said_cli(args):
+    """Each recent turn: what he heard, what Diablo said aloud, what he wrote, and where they differ."""
+    last, as_json = 10, False
+    rest = list(args)
+    while rest:
+        flag = rest.pop(0)
+        if flag == "--last" and rest and rest[0].isdigit():
+            last = int(rest.pop(0))
+        elif flag == "--json":
+            as_json = True
+        else:
+            print("usage: diablo-ears said [--last N] [--json]")
+            return 1
+    rows = said_rows(timeline.load(last=last))
+    if as_json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return 0
+    for row in rows:
+        stamp = time.strftime("%H:%M:%S", time.localtime(row["at"])) if row["at"] else "?"
+        print(f"{stamp}  heard:  {row['heard'] or '(nothing)'}")
+        print(f"          said:   {' | '.join(row['spoken']) or '(nothing)'}" + ("  [cut off]" if row["cut"] else ""))
+        print(f"          wrote:  {' '.join(row['written'].split()) or '(nothing)'}")
+        for line in row["only_said"]:
+            print(f"          only said:  {line}")
+        for line in row["only_wrote"]:
+            print(f"          only wrote: {line}")
+        print()
     return 0
 
 
@@ -2135,6 +2519,14 @@ def main(argv=None):
         return status()
     if command == "timings":
         return timings_cli(argv[1:])
+    if command == "said":
+        return said_cli(argv[1:])
+    if command == "tour":
+        from .tts import Speaker
+
+        cfg = Settings(load_config()).get()
+        tour.run(cfg, Speaker(cfg, _Quiet()), on_line=lambda line: print(time.strftime("%H:%M:%S"), line, flush=True))
+        return 0
     if command == "recordings":
         for row in recordings.listed(int(argv[1]) if len(argv) > 1 and argv[1].isdigit() else 10):
             stamp = time.strftime("%H:%M:%S", time.localtime(row.get("at", 0)))

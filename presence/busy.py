@@ -18,7 +18,9 @@ Standard library only: the system python runs it, no venv.
 It also carries what the brain shows on screen (`screen` events from POST /v1/screen): a small
 card goes into presence.json beside the ears' own cards, a large one opens the central card
 through panel.json, and an HTML page is saved under pages/ for the web view to load. An `open`
-event (POST /v1/screen/open) opens the central card on Settings at its page.
+event (POST /v1/screen/open) opens the central card on Settings at its page. A `marks` event
+(POST /v1/screen/marks) is one beat of marks over the real screen, or a clear, kept in marks.json
+for the overlay.
 
 A `duck` event (POST /v1/ears/duck, the brain's keep_sound_up) goes to the ears on this machine
 at 127.0.0.1:8758, which keep other sound up for the rest of the conversation or turn it down again.
@@ -172,12 +174,53 @@ def locked():
 
 
 PAGES = ("settings", "voice", "history")
+MARKS_CPS = 15.0
+
+
+def marks_cps():
+    """How many characters a second he speaks, for how long a beat stays: marks_cps in config.toml."""
+    try:
+        with open(CONFIG, "rb") as handle:
+            value = number(tomllib.load(handle).get("marks_cps"), MARKS_CPS)
+    except (OSError, tomllib.TOMLDecodeError):
+        return MARKS_CPS
+    return value if 3 <= value <= 60 else MARKS_CPS
+
+
+def mark(beat, now=None):
+    """One beat into marks.json: a beat of the show already there joins it, a new show replaces
+    it, and clear takes everything down. Returns what happened."""
+    now = time.time() if now is None else now
+    if not isinstance(beat, dict):
+        return None
+    if beat.get("clear"):
+        write_json(STATE / "marks.json", {"show": "", "beats": [], "count": 0, "at": now, "cleared": True})
+        return "cleared"
+    show = str(beat.get("show") or "")
+    if not show or not isinstance(beat.get("n"), int):
+        return None
+    body = read_json(STATE / "marks.json", {})
+    kept = {k: beat[k] for k in ("n", "say", "marks", "wait", "caption", "lazy", "keep") if k in beat}
+    kept["at"] = now
+    if body.get("show") != show:
+        body = {"show": show, "beats": [], "at": now}
+    beats = [b for b in body.get("beats") or [] if isinstance(b, dict) and b.get("n") != kept["n"]]
+    beats.append(kept)
+    out = {"show": show, "at": body.get("at", now), "count": int(beat.get("count") or len(beats)),
+           "cps": marks_cps(), "beats": sorted(beats, key=lambda b: b["n"])}
+    linger = number(beat.get("linger"), 0) or number(body.get("linger"), 0)
+    if linger > 0:
+        out["linger"] = linger
+    write_json(STATE / "marks.json", out)
+    return "marked"
 
 
 def show(event, now=None):
     """A `screen` event onto the desktop: small into presence.json, large into panel.json, an
     `open` one into panel.json as the Settings page it names, or the History tab."""
     now = time.time() if now is None else now
+    if event.get("marks") is not None:
+        return mark(event.get("marks"), now)
     if event.get("open") is not None:
         page = event.get("open")
         if page not in PAGES:

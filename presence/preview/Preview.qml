@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Window
 import ".."
 import "../place.js" as Place
+import "../marks.js" as Mk
 
 // Diablo's pieces drawn offscreen, for scripts/presence-shots.sh: no compositor, no layer
 // shell, no real state. Each scene lays the orb, cards and central card out the way shell.qml
@@ -16,10 +17,13 @@ Window {
     readonly property string faces: args[2] ?? ""
     readonly property string ears: args[3] ?? "http://127.0.0.1:18758"
     readonly property string hub: args[4] ?? "http://127.0.0.1:18755"
+    readonly property var diagram: { try { return JSON.parse(args[5] ?? "[]"); } catch (e) { return []; } }
 
     readonly property bool panelScene: scene.startsWith("panel")
-    width: s.screen?.[0] ?? (panelScene ? 1280 : 760)
-    height: s.screen?.[1] ?? (panelScene ? 860 : 560)
+    readonly property bool marksScene: scene.startsWith("marks") || scene.startsWith("diagram")
+    readonly property bool diagramScene: scene.startsWith("diagram")
+    width: s.screen?.[0] ?? (panelScene || marksScene ? 1280 : 760)
+    height: s.screen?.[1] ?? (panelScene ? 860 : marksScene ? 800 : 560)
     visible: true
     color: "#2a2f36"
 
@@ -70,7 +74,20 @@ Window {
         "panel-list": { mood: "asleep", panel: { view: "now", card: { title: "Packing list", sections: win.packing } } },
         "panel-list-desk": { mood: "asleep", screen: [5120, 1440], panel: { view: "now", card: { title: "Packing list", sections: win.packing } } },
         "panel-list-wide": { mood: "asleep", screen: [5120, 1440], panel: { view: "now", card: { title: "Spring cleaning", sections: win.chores } } },
-        "panel-list-long": { mood: "asleep", panel: { view: "now", card: { title: "Spring cleaning", sections: win.chores } } }
+        "panel-list-long": { mood: "asleep", panel: { view: "now", card: { title: "Spring cleaning", sections: win.chores } } },
+        "marks-all": { mood: "speaking", at: [330, 600], cards: [], marks: d => [
+            { kind: "ring", box: d.boxOf(d.exportButton) }, { kind: "arrow", box: d.boxOf(d.exportButton) },
+            { kind: "label", text: "Then pick PDF", box: d.boxOf(d.exportButton) }, { kind: "num", n: 1, box: d.boxOf(d.fileMenu) },
+            { kind: "underline", box: d.boxOf(d.keyLine) }, { kind: "highlight", box: d.boxOf(d.figure) },
+            { kind: "check", box: d.boxOf(d.outline) }, { kind: "cross", box: d.boxOf(d.history) }] },
+        "marks-spotlight": { mood: "speaking", at: [330, 600], cards: [], marks: d => [
+            { kind: "spotlight", box: d.boxOf(d.exportButton) }, { kind: "ring", box: d.boxOf(d.exportButton) },
+            { kind: "label", text: "Export", box: d.boxOf(d.exportButton) }] },
+        "marks-steps": { mood: "speaking", at: [330, 600], cards: [], beat: d => ({ say: "Open the File menu, then choose Export.", caption: true,
+            marks: [{ kind: "ring", box: d.boxOf(d.fileMenu) }, { kind: "num", n: 1, box: d.boxOf(d.fileMenu) },
+                { kind: "arrow", box: d.boxOf(d.fileMenu) }] }) },
+        "diagram-early": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 2 },
+        "diagram-last": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 99 }
     })
     readonly property var s: scenes[scene] ?? scenes["card-below"]
     readonly property bool cardsUp: (s.cards ?? []).length > 0
@@ -133,9 +150,51 @@ Window {
         }
     }
 
+    MockDesk {
+        id: desk
+
+        anchors.fill: parent
+        z: -2
+        visible: win.marksScene
+    }
+
+    Marks {
+        id: marksLayer
+
+        anchors.fill: parent
+        z: 1
+        style: theme
+        visible: win.marksScene && !win.diagramScene
+    }
+
+    Repeater {
+        model: win.diagramScene ? win.diagram.slice(0, win.s.upTo ?? 99) : []
+
+        Marks {
+            required property var modelData
+
+            anchors.fill: parent
+            z: 1
+            style: theme
+            stagger: 300
+            marks: Mk.toLocal(Mk.cleanMarks(modelData.marks), { x: 0, y: 0, w: win.width, h: win.height })
+        }
+    }
+
+    Timer {
+        interval: 80
+        running: win.marksScene && !win.diagramScene
+        onTriggered: {
+            const beat = win.s.beat ? win.s.beat(desk) : { marks: win.s.marks(desk) };
+            const orb = { x: group.x + 50, y: group.y + 50 };
+            const screens = [{ x: 0, y: 0, w: win.width, h: win.height }];
+            marksLayer.marks = Mk.toLocal(Mk.stage(Mk.withCaption(beat), screens, orb, null), screens[0]);
+        }
+    }
+
     // A cursor mark, so a shot shows where the pointer was.
     Rectangle {
-        visible: !win.panelScene
+        visible: !win.panelScene && !win.marksScene
         x: (win.s.at ?? [0, 0])[0] - 4
         y: (win.s.at ?? [0, 0])[1] - 4
         width: 8
@@ -198,7 +257,7 @@ Window {
     }
 
     Timer {
-        interval: win.panelScene ? 2600 : 1400
+        interval: win.panelScene || win.marksScene ? 2600 : 1400
         running: true
         onTriggered: win.contentItem.grabToImage(result => {
             result.saveToFile(win.out);

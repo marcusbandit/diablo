@@ -7,7 +7,7 @@ import uuid
 
 import httpx
 
-from . import agent, character, db, deliver, devices, lockguard, modules, questions, settings, t3link, tasks, tts
+from . import agent, character, db, deliver, devices, lockguard, modules, questions, settings, skillbook, t3link, tasks, tts
 from .config import get_config
 
 logger = logging.getLogger("diablo.mcp")
@@ -179,7 +179,7 @@ def tools():
                 "description": function.get("description", ""),
                 "inputSchema": function.get("parameters") or {"type": "object", "properties": {}},
             })
-    return listed + EXTRA
+    return listed + EXTRA + skillbook.TOOLS
 
 
 def turn_origin():
@@ -412,25 +412,309 @@ def keep_sound_up(arguments):
 
 
 def window_verb(verb, arguments):
-    """Runs voice/window.py on the desktop box over ssh: the one place focus and stage are done."""
-    import shlex
-    import subprocess
-
-    from . import localenv
+    """Runs voice/window.py on the desktop box: the one place focus and stage are done."""
+    from . import desktop
 
     target = " ".join(str(arguments.get("target") or "").split())
     if verb == "focus" and not target:
         return "say which window to focus"
-    repo = (localenv.get("DIABLO_DESKTOP_REPO") or "Projects/diablo").removeprefix("~/")
-    command = f"cd {shlex.quote(repo)} && .venv-voice/bin/python -m voice.window {verb} {shlex.quote(target)}"
-    host = str(settings.get("desktop.host") or "").strip() or lockguard.host()
     try:
-        done = subprocess.run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", host, command],
-                              capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return f"could not reach {host}: {error}"
+        done = desktop.desktop_run([".venv-voice/bin/python", "-m", "voice.window", verb, target], timeout=30)
+    except desktop.Unreachable as error:
+        return str(error)
     said = (done.stdout or done.stderr).strip().splitlines()
     return (said[-1] if said else f"{verb} said nothing")[:300]
+
+
+HANDS_WINDOW = {"type": "string", "description": "front (the default), a window address, or part of an app class or title"}
+HANDS = [
+    {
+        "name": "desktop_front",
+        "description": "What has the focus on Marcus's desktop right now: the focused window's app class, title, address, pid and box in screen pixels, its monitor and scale, and whether the screen is locked. It takes about 50 ms; use it to see where you are before you act.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "read_window",
+        "description": "Read a window on Marcus's desktop through accessibility: numbered controls (role, name, value, states such as focused or checked, box as [x, y, w, h] in global screen pixels) and the visible text. Use it for the exact controls of a form or a list. To press something whose words you can see, skip this and call act_on_desktop with click_text. Ids stay valid for act_on_desktop's click step while the window does not change. Chromium and Electron apps often show no controls; click_text and find_on_screen then read the screen by OCR.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "window": HANDS_WINDOW,
+                "max": {"type": "integer", "description": "most controls to list, 300 when left out"},
+            },
+        },
+    },
+    {
+        "name": "find_on_screen",
+        "description": "Where some visible words are on Marcus's desktop, in global screen pixels: the window's accessibility names first, OCR of the window when they miss. Returns matches with x, y, w, h and source. Only for positions without acting: to click words, call act_on_desktop with click_text straight away.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "the words to find"},
+                "window": HANDS_WINDOW,
+                "all": {"type": "boolean", "description": "also run OCR when accessibility already found it"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "act_on_desktop",
+        "description": "Do a whole task on Marcus's desktop in one call: steps run in order and stop at the first that fails. Act on the words you can see with click_text; never screenshot or read the window first. Put the whole task in one call, not one call per step. The result already holds the front window and a fresh list of its controls and text, so never read the window again afterwards. Steps: {do: focus} brings the window forward; {do: click_text, text, near?, button?, double?} clicks visible words, near picks the match closest to other words; {do: click, id, name?} a control id from read_window; {do: click_at, x, y}; {do: fill, field?, text} puts text in the field named field (or the focused one) and reads it back; {do: type, text}; {do: key, key} such as ctrl+l, Return or ctrl+shift+t; {do: scroll, direction, amount?}; {do: open, target} an address, file or app, the way to visit a URL (never type it into an address bar); {do: wait, seconds} up to 5. A click on words like delete, remove, pay, buy, send, sign out, uninstall or transfer, or Enter where the window title, the focused control or the default button says one, comes back as needs_confirm: ask Marcus, then run that step again with confirmed true. Nothing runs while the screen is locked.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "window": HANDS_WINDOW,
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "do": {"type": "string", "enum": ["focus", "click_text", "click", "click_at", "fill", "type", "key", "scroll", "open", "wait"]},
+                            "text": {"type": "string"},
+                            "near": {"type": "string"},
+                            "field": {"type": "string"},
+                            "id": {"type": "integer"},
+                            "name": {"type": "string"},
+                            "x": {"type": "integer"},
+                            "y": {"type": "integer"},
+                            "button": {"type": "string", "enum": ["left", "right", "middle"]},
+                            "double": {"type": "boolean"},
+                            "key": {"type": "string"},
+                            "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+                            "amount": {"type": "integer"},
+                            "target": {"type": "string"},
+                            "seconds": {"type": "number"},
+                            "confirmed": {"type": "boolean"},
+                        },
+                        "required": ["do"],
+                    },
+                },
+            },
+            "required": ["steps"],
+        },
+    },
+]
+EXTRA += HANDS
+HANDS_COMMANDS = {"desktop_front": "front", "read_window": "ui", "find_on_screen": "find-text", "act_on_desktop": "act"}
+
+
+def hands_argv(name, arguments):
+    """The diablo-hands command line for one hands tool call."""
+    command = HANDS_COMMANDS[name]
+    target = " ".join(str(arguments.get("window") or "").split())
+    argv = [command] + (["--window", target] if target and command != "front" else [])
+    if command == "ui" and arguments.get("max"):
+        argv += ["--max", str(int(arguments["max"]))]
+    if command == "find-text":
+        text = " ".join(str(arguments.get("text") or "").split())
+        if not text:
+            raise ValueError("say what text to find")
+        argv += (["--all"] if arguments.get("all") else []) + ["--", text]
+    if command == "act":
+        steps = arguments.get("steps")
+        if not steps:
+            raise ValueError("give the steps to run")
+        argv += ["--steps", steps if isinstance(steps, str) else json.dumps(steps, ensure_ascii=False)]
+    return argv
+
+
+def hands(name, arguments):
+    """Runs diablo-hands on the desktop box and hands back its one JSON line as is."""
+    from . import desktop
+
+    try:
+        argv = hands_argv(name, arguments)
+    except (TypeError, ValueError) as error:
+        return json.dumps({"error": str(error)})
+    try:
+        done = desktop.desktop_run(["./deploy/diablo-hands", *argv], timeout=120 if argv[0] == "act" else 40)
+    except desktop.Unreachable as error:
+        return json.dumps({"error": str(error)})
+    line = desktop.last_json(done.stdout)
+    if line:
+        return line[:60000]
+    said = (done.stderr or done.stdout or "").strip().splitlines()
+    return json.dumps({"error": (said[-1] if said else f"diablo-hands exited {done.returncode}")[:300]})
+
+
+POINT_TOOL = {
+    "name": "point_on_screen",
+    "description": (
+        "Point at things on Marcus's real screen while you talk at his desk: a ring round a control, an arrow to it, "
+        "an underline under a sentence, numbered steps. Use it for \"where is the export button\", \"show me how to do X\" "
+        "and \"explain this\" about what he is looking at. One call per answer, made before you say the lines: give beats in "
+        "order, each a short say line (the words you then speak, a few seconds each) and the marks that go with it. Target a "
+        "mark by the words visible on the control or in the text (target {text: \"Export\"}), never by guessing pixels; "
+        "window front is the focused window, or name the app; near disambiguates (\"Export\" near \"File\"). All lookups run "
+        "at once and the first beat shows as soon as its own targets are found. Kinds: ring and arrow to point at a control, "
+        "label for a word or two beside it, num for step n, underline or highlight for text, spotlight to dim all but it, "
+        "check and cross for right and wrong. For a walkthrough give each step wait click: it stays until his pointer has "
+        "been on the thing and left, and the next step is looked up on the screen as it is then. caption true shows the say "
+        "line on screen too, only when he asks for it written. The result says which targets were not found: tell him in a "
+        "few words instead of marking. clear true alone takes every mark down."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "beats": {
+                "type": "array",
+                "description": "in the order you say them; at most 8",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "say": {"type": "string", "description": "the line you speak during this beat, short"},
+                        "marks": {
+                            "type": "array",
+                            "description": "at most 8",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "kind": {"type": "string", "enum": ["ring", "underline", "arrow", "label", "spotlight", "highlight", "num", "check", "cross"]},
+                                    "target": {
+                                        "type": "object",
+                                        "description": "{text, window?, near?}: the visible words to find, preferred; or {box: {x, y, w, h}} in global screen pixels",
+                                        "properties": {
+                                            "text": {"type": "string"},
+                                            "window": {"type": "string", "description": "front (the default) or the app's name"},
+                                            "near": {"type": "string", "description": "other visible words close to it, to pick the right one"},
+                                            "box": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"}}},
+                                        },
+                                    },
+                                    "text": {"type": "string", "description": "label only: the words beside it, at most 40 characters"},
+                                    "n": {"type": "integer", "description": "num only: the step number"},
+                                },
+                                "required": ["kind", "target"],
+                            },
+                        },
+                        "wait": {"type": "string", "enum": ["click"], "description": "a walkthrough step: hold until he has used it"},
+                        "caption": {"type": "boolean", "description": "show the say line on screen as well"},
+                    },
+                },
+            },
+            "clear": {"type": "boolean", "description": "take every mark down"},
+        },
+    },
+}
+EXTRA.append(POINT_TOOL)
+
+
+def point_on_screen(arguments, find=None, send=None):
+    """Looks the targets up on the desktop and sends the beats to presence as each is ready."""
+    from . import desktop, pointing
+
+    if arguments.get("clear") and not arguments.get("beats"):
+        failed = screen_post("/v1/screen/marks", {"clear": True})
+        return failed or "every mark is down"
+    beats = pointing.clean_beats(arguments.get("beats"))
+    if not beats:
+        return "nothing to point at: give beats, each with marks that have a target"
+    if find is None:
+        find = pointing.ssh_runner(desktop.desktop_host(), desktop.desktop_repo())
+    report = pointing.play(beats, find, send or (lambda body: screen_post("/v1/screen/marks", body)))
+    return pointing.summary(report, beats)
+
+
+DIAGRAM_TOOL = {
+    "name": "draw_diagram",
+    "description": (
+        "Draw a diagram on Marcus's real screen piece by piece while you talk, the way a teacher draws on a whiteboard: "
+        "box by box and arrow by arrow, each beat drawn while you say its line. Use it for any flow, process, pipeline, "
+        "architecture, hierarchy or \"how does X work\" with parts, at his desk. Never write an HTML page for these. One call "
+        "per answer, made before you say the lines, and fast: 3 to 6 beats, each a short say line (the words you then speak) "
+        "plus the 1 to 3 pieces that line is about. Pieces add up across beats: a later beat adds boxes and arrows, it never "
+        "replaces them, so give each node once, in the beat that introduces it. Nodes are {id, label, shape?}: a short id you "
+        "reuse in edges, a label of at most 28 characters, shape box (default), round for a start or end, diamond for a "
+        "decision or hub. Edges are {from, to, label?} by node id; an arrow can go in the same beat as its new node. A beat's "
+        "circle lists node ids to ring by hand for emphasis, the way you would circle the key box on a whiteboard. It is all "
+        "drawn by hand, wobbly lines and handwriting, so keep labels short. The "
+        "hub lays it out in rows from the sources down (direction down) or in columns left to right (direction right) and "
+        "scales it to his monitor. At most 8 beats, 14 nodes, 20 edges. It stays up 45 s after the last beat; the next "
+        "drawing, point_on_screen clear, or sending you away takes it down. 3D stays for things that really turn in space."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "a few words, written above the drawing"},
+            "direction": {"type": "string", "enum": ["down", "right"], "description": "down (default) or right"},
+            "beats": {
+                "type": "array",
+                "description": "in the order you say them; 3 to 6, at most 8",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "say": {"type": "string", "description": "the line you speak while this beat draws, short"},
+                        "nodes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "label": {"type": "string", "description": "at most 28 characters"},
+                                    "shape": {"type": "string", "enum": ["box", "round", "diamond"]},
+                                },
+                                "required": ["id", "label"],
+                            },
+                        },
+                        "edges": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "from": {"type": "string", "description": "a node id"},
+                                    "to": {"type": "string", "description": "a node id"},
+                                    "label": {"type": "string", "description": "a word or two, at most 28 characters"},
+                                },
+                                "required": ["from", "to"],
+                            },
+                        },
+                        "circle": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "node ids to circle by hand on this beat: the one piece the line is really about; "
+                                           "use it on one or two beats, not every one",
+                        },
+                    },
+                    "required": ["say"],
+                },
+            },
+        },
+        "required": ["title", "beats"],
+    },
+}
+EXTRA.append(DIAGRAM_TOOL)
+
+
+def desktop_screen(run=None):
+    """The focused monitor in global logical pixels, from the hands' front on the desktop, or None."""
+    from . import desktop, pointing
+
+    try:
+        done = desktop.desktop_run([pointing.HANDS, "front"], 8, connect=5, run=run)
+    except desktop.Unreachable:
+        return None
+    try:
+        body = json.loads(desktop.last_json(done.stdout) or "{}")
+    except ValueError:
+        return None
+    return body.get("screen") if isinstance(body, dict) else None
+
+
+def draw_diagram(arguments, screen=None, send=None):
+    """Lays the diagram out on the focused monitor and sends every beat at once; presence paces them."""
+    from . import diagram
+
+    planned = diagram.plan(arguments, screen if screen is not None else desktop_screen())
+    if isinstance(planned, str):
+        return planned
+    beats, notes = planned
+    send = send or (lambda body: screen_post("/v1/screen/marks", body))
+    sent, failed = [], None
+    for beat in beats:
+        failed = send(beat)
+        if failed:
+            break
+        sent.append(beat["n"])
+    return diagram.summary(sent, beats, notes, failed)
 
 
 def restart(arguments):
@@ -520,6 +804,12 @@ def call(name, arguments):
         return keep_sound_up(arguments)
     if name in ("focus_window", "stage_window"):
         return window_verb(name.split("_")[0], arguments)
+    if name in HANDS_COMMANDS:
+        return hands(name, arguments)
+    if name == "point_on_screen":
+        return point_on_screen(arguments)
+    if name == "draw_diagram":
+        return draw_diagram(arguments)
     if name == "send_voice":
         return send_voice(arguments.get("text"), arguments.get("language"))
     if name == "watch_t3_thread":
@@ -531,6 +821,8 @@ def call(name, arguments):
         return threads.history(arguments.get("query"))
     if name == "restart_self":
         return restart(arguments)
+    if name in skillbook.TOOL_NAMES:
+        return skillbook.call(name, arguments)
     if name in ("ask_user", "cancel_question"):
         return ask_through_hub(name, arguments, os.environ.get("DIABLO_CONVERSATION") or "main")
     if modules.owner(name) is not None:

@@ -52,6 +52,8 @@ FastAPI, uvicorn, binds the Pi's Tailscale address (`DIABLO_HUB_BIND` in local.e
 - POST /v1/chat/completions -> OpenAI chat.completion shape, and it is always Diablo: the hub agent runs on the last user message, both sides stored with source "api". Auth: X-Diablo-Token or Authorization Bearer with hub_token. The rank field picks his brain, a rank name (imp, baron, marquis, duke, lord) or a "provider|model-id" brain string; the model field is honored the same way when rank is absent, empty or missing means the llm_* default. The response echoes rank and the brain model id. Stream true is a 400 for now. Unknown provider or agent failure is 502 or 400 as fits.
 - POST /v1/proxy/completions -> the dumb pipe, nothing Diablo: body proxied verbatim to the default provider (missing or empty model becomes llm_model), stream true forwarded as SSE, nothing stored. Provider failure is 502.
 
+Learning settings (docs/learning.md): learn.skills (on: a skill is learned after a turn of five or more tools that all worked), learn.facts (on: facts are kept after a conversation goes quiet), learn.skills.quiet_s (180), learn.facts.quiet_s (900), learn.facts.batch (30), and learn.facts.upto, the last message id the fact pass read. The brain's MCP tools save_skill(name, description, steps), forget_skill(name) and list_skills(name?) manage the skills he writes himself in the brain home's .claude/skills.
+
 Tables: messages(id, ts, source, role, text, meta), facts(id, ts, text, tags), settings(key, value), profile(id=1, name, embedding, threshold), devices(id, name, token_hash, created, last_seen, revoked), pair_codes(code_hash, created, expires, used, device_id).
 
 ## Hub agent behavior
@@ -106,7 +108,7 @@ Interactive, idempotent, safe to rerun: python -m onboarding.onboard. Flags: --s
 6. Mic: shows the system default source, accepts a substring override.
 7. Write ~/.config/diablo/config.toml, chmod 600.
 8. Unless --skip-hub: run deploy/hub-install.sh, then push all settings to the hub via the API.
-9. Piper download if missing. 10. Install the diablo-voice user unit and enable it.
+9. Piper download if missing. 10. Install the ears with deploy/ears-install.sh.
 11. Install the diablo-pool, diablo-fast and diablo-stagehand user units and enable them; the closing print lists where to talk to him (voice, diablo talk, telegram).
 
 On rerun, existing values are the defaults; api keys are re-entered.
@@ -129,7 +131,7 @@ User tools: every pool agent (repl, panel, workers) also loads ~/.config/diablo/
 
 - deploy/hub-install.sh: run from banditbox, remote work over ssh homehub. rsync code, uv-based venv (the Pi has no ensurepip), unit installed with sudo install (allowlisted), enabled via systemctl (allowlisted once the sudoers file below is in place), process started, health curl over Tailscale. Idempotent.
 - deploy/diablo-hub.service: system unit, a template rendered by deploy/hub-install.sh: User and home filled in for the box, EnvironmentFile ~/.config/diablo/local.env, ExecStart ~/diablo-hub/venv/bin/uvicorn hub.server:app --host ${DIABLO_HUB_BIND} --port 8755, Restart=always.
-- deploy/diablo-voice.service: user unit on banditbox, ExecStart=%h/Projects/diablo/.venv-voice/bin/python -m voice, WorkingDirectory=%h/Projects/diablo, Restart=always, After=pipewire.service.
+- deploy/diablo-ears.service: user unit on the desktop box, the ears (voice/ears.py), installed by deploy/ears-install.sh. The old diablo-voice loop is retired (#97).
 - deploy/backup-hub.sh plus diablo-backup.service and diablo-backup.timer: nightly user timer on banditbox pulls a VACUUM INTO snapshot of the hub db over ssh homehub, verifies integrity and row counts with python3, keeps the newest 14 in ~/.local/share/diablo/hub-backups.
 
 ## Sudo model

@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: "22"
       - name: card placement
-        run: node --test tests/presence/place.test.mjs tests/presence/busy.test.mjs
+        run: node --test tests/presence/place.test.mjs tests/presence/busy.test.mjs tests/presence/marks.test.mjs
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

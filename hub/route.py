@@ -19,8 +19,14 @@ Precedence in route():
 3. The tree tier, capped at route.max_tier (default chat) and floored at
    route.min_tier (default none).
 
+A line said aloud at his desk then always runs on route.spoken (default
+"claude-haiku-5-5|xhigh", off keeps the tier's model), so the spoken answer stays
+fast. When he asked aloud for the big brain ("think hard", "use opus"), that model
+gets the work as a background run instead (brains.run_deep), and its outcome lands
+in the app. Typed lines, voice notes and machine turns keep the tier's model.
+
 Settings: route.enabled (on/off; off still computes and logs the decision),
-route.max_tier, route.min_tier, route.tier.<tier>. Log: ~/.local/state/diablo/route.jsonl.
+route.max_tier, route.min_tier, route.tier.<tier>, route.spoken. Log: ~/.local/state/diablo/route.jsonl.
 Trees are data at the bottom of this file; `python -m hub.route show` prints them,
 `python -m hub.route classify TEXT` explains one line.
 """
@@ -43,6 +49,7 @@ TIER_DEFAULTS = {
     "chat": "claude-opus-5-5|medium",
     "deep": "claude-opus-5-5|high",
 }
+SPOKEN_DEFAULT = "claude-haiku-5-5|xhigh"
 STICKY_SECONDS = 900
 LOG = Path.home() / ".local" / "state" / "diablo" / "route.jsonl"
 
@@ -65,6 +72,16 @@ def model_effort(tier):
     raw = str(settings.get(f"route.tier.{tier}") or TIER_DEFAULTS[tier])
     model, _, effort = raw.partition("|")
     default_model, _, default_effort = TIER_DEFAULTS[tier].partition("|")
+    return model.strip() or default_model, effort.strip() or default_effort
+
+
+def spoken_brain():
+    """(model, effort) for a line spoken aloud at his desk, from route.spoken, or None when it is off."""
+    raw = str(settings.get("route.spoken") or SPOKEN_DEFAULT).strip()
+    if raw.lower() in ("0", "off", "false", "no", "tier"):
+        return None
+    model, _, effort = raw.partition("|")
+    default_model, _, default_effort = SPOKEN_DEFAULT.partition("|")
     return model.strip() or default_model, effort.strip() or default_effort
 
 
@@ -483,6 +500,7 @@ class Decision:
     explicit: bool = False
     applied: bool = False
     elapsed_us: int = 0
+    background: tuple = ()
     id: str = ""
     adjusted: list = field(default_factory=list)
     features: dict = field(default_factory=dict)

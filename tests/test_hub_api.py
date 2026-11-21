@@ -371,7 +371,7 @@ class TestVoiceContext(ApiCase):
 
         text = charter.CHARTER
         self.assertIn("Whisper transcript", text)
-        self.assertIn("Diablo desktop app", text)
+        self.assertIn("your orb beside his cursor", text)
         self.assertIn("Never tell him you only get text", text)
         self.assertNotIn(chr(0x2014), text)
         self.assertNotIn(chr(0x2013), text)

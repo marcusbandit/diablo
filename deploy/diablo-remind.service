@@ -1,6 +1,6 @@
 [Unit]
 Description=Diablo reminder scheduler
-After=diablo-voice.service
+After=network-online.target
 
 [Service]
 WorkingDirectory=%h/Projects/diablo

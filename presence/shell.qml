@@ -97,7 +97,7 @@ ShellRoot {
         printErrors: false
         onFileChanged: cursorFile.reload()
         onLoaded: {
-            if (root.up)
+            if (root.up || pointing.wantsCursor)
                 root.fixCursor(cursorFile.text());
         }
     }
@@ -278,8 +278,12 @@ ShellRoot {
         for (let i = 0; i < cardModel.count; i++)
             have.push(cardModel.get(i).cid);
         for (const c of root.shown) {
-            if (!have.includes(c.id))
-                cardModel.append({ cid: c.id, json: JSON.stringify(c) });
+            const json = JSON.stringify(c);
+            const at = have.indexOf(c.id);
+            if (at < 0)
+                cardModel.append({ cid: c.id, json: json });
+            else if (cardModel.get(at).json !== json)
+                cardModel.setProperty(at, "json", json);
         }
     }
 
@@ -547,10 +551,10 @@ ShellRoot {
     // Following asks 30 times a second; the corner only needs the monitor and asks twice. Stepped
     // aside, ten times a second is enough to notice the pointer moving again.
     Timer {
-        interval: root.tucked ? 100 : !root.followCursor ? 500 : root.rest !== "follow" ? 100 : 33
+        interval: !root.up || root.tucked ? 100 : !root.followCursor ? (pointing.wantsCursor ? 100 : 500) : root.rest !== "follow" ? 100 : 33
         repeat: true
         triggeredOnStart: true
-        running: root.up
+        running: root.up || pointing.wantsCursor
         onTriggered: {
             if (root.cursorFromFile) {
                 cursorFile.reload();
@@ -562,6 +566,19 @@ ShellRoot {
             }
             if (!hypr.connected)
                 hypr.connected = true;
+        }
+    }
+
+    Pointing {
+        id: pointing
+
+        stateDir: root.stateDir
+        style: theme
+        cursor: root.cursor
+        locateOrb: function () {
+            if (!follow.visible || group.opacity < 0.5)
+                return null;
+            return { x: (follow.screen?.x ?? 0) + group.x + orbBox.x + orbBox.width / 2, y: (follow.screen?.y ?? 0) + group.y + orbBox.y + orbBox.height / 2 };
         }
     }
 

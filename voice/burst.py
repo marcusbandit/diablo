@@ -66,12 +66,13 @@ class Burst:
         ahead of the answer only while the job is alone in its burst."""
         now = self.clock()
         job = {"done": threading.Event(), "words": "", "tl": tl, "said": said, "dropped": False, "early": [],
-               "started": now, "finished": None, "n": next(self._serial)}
+               "started": now, "finished": None, "n": next(self._serial), "stirred": threading.Event()}
 
         def say(words):
             with self.lock:
                 if not job["dropped"]:
                     job["early"].append(words)
+            job["stirred"].set()
 
         def go():
             try:
@@ -102,6 +103,42 @@ class Burst:
             job["finished"] = self.clock()
             self.last = max(self.last, job["finished"])
         job["done"].set()
+        job["stirred"].set()
+
+    def _wait_stir(self, job, seconds):
+        job["stirred"].wait(max(seconds, 0.0))
+        job["stirred"].clear()
+
+    def settle(self, job, wait, grace):
+        """True once job is done within wait. False when wait runs out, or as soon as a first
+        line of it has waited grace without the job finishing: that line is then said at once
+        instead of after the whole wait."""
+        deadline = time.monotonic() + wait
+        while not job["done"].is_set():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return False
+            with self.lock:
+                stirred = bool(job["early"])
+            if stirred:
+                return job["done"].wait(min(grace, left))
+            self._wait_stir(job, left)
+        return True
+
+    def pull_early(self, job, wait):
+        """The next first line of a lone job, waiting up to wait seconds for one to come. None
+        when none came, the job finished with none left, or it was dropped or joined a burst."""
+        deadline = time.monotonic() + wait
+        while True:
+            with self.lock:
+                if job["dropped"] or job.get("grouped"):
+                    return None
+                if job["early"]:
+                    return job["early"].pop(0)
+            left = deadline - time.monotonic()
+            if job["done"].is_set() or left <= 0:
+                return None
+            self._wait_stir(job, left)
 
     def alone(self, job):
         with self.lock:
@@ -124,11 +161,18 @@ class Burst:
             early, job["early"] = job["early"], []
             return [(job, early)]
 
-    def keep_early(self, job, lines):
-        """Puts back the first lines a cut took but never said."""
+    def drop(self, job):
+        """He cut the reply off with the name: nothing more of this job is said, not the lines
+        queued behind the cut and not what it writes after it."""
         with self.lock:
-            if not job["dropped"] and job in self.jobs:
-                job["early"] = list(lines) + job["early"]
+            job["dropped"] = True
+            job["early"] = []
+
+    def drop_early(self, job):
+        """Drops the first lines waiting their turn: he cut the reply off with the name, and
+        what was queued behind the cut is never said. Lines written after the cut still count."""
+        with self.lock:
+            job["early"] = []
 
     def keep(self, jobs):
         """Puts back a lone job whose first line he cut off with the name, so its answer is not

@@ -185,10 +185,40 @@ the newest order first and the rest briefly. The merge runs while the ears liste
 starts meanwhile puts the burst back and joins it. When the hub cannot merge, the ears say the
 newest answer whole and the first sentence of each earlier one.
 
-A turn alone is as before: a quick answer is spoken at once, a slow one says its first line while
-it works and its answer when it lands. A reply he cuts off with the name stops and is never said
-again; only an answer still waiting behind a cut first line joins the next burst. A turn of the
+A turn alone is as before: a quick answer is spoken at once, a slow one says its sentences while
+it works and the rest when it lands. A reply he cuts off with the name stops and is never said
+again, the lines queued behind it included; only what Claude writes after the cut joins the next
+burst. A turn of the
 burst still thinking once nothing started or landed for 6 s is left behind: the answers that are in are spoken, and it speaks alone when it lands.
+
+## He speaks as he writes
+
+Claude's text reaches the hub token by token, and every sentence comes to the ears as its own
+`{"say"}` line the moment it ends (docs/api.md, Talking). A first line that arrives while the ears
+still wait on a quick answer is said after 0.15 s instead of after the whole 1.5 s wait, and without
+the thinking chime, since his voice says enough. The ears speak the lines as one reply: each is
+fetched from Cartesia while the one before plays, one line ahead and no more, so a cut wastes at
+most one fetch, and a quarter second of breath sits between them. The first line takes the eyes Jev
+has ready and never waits on them; the mouth is measured for every line. The reply stays open while
+the next line comes within 1.5 s (`FOLLOW_S`); a longer pause, usually a tool at work, ends it, and
+the lines written after it are the next reply. Saying his name stops the line playing and drops
+every line behind it. A reply streamed past 700 characters ends with "the rest is in the chat", and
+the final answer never says a sentence a line already said. The lines streamed and the rest of the
+answer share the 700 characters: the rest gets what the lines left, in whole sentences, and "the
+rest is in the chat" when not even one fits. List items are said one by one, without their bullets.
+
+## A beat while Claude starts
+
+When a spoken line goes to Claude, and not to a plain command, a direct answer or a desktop act, the
+hub's stream says so with `{"brain": "claude"}` and the ears play a short line from the phrase bank
+at once: "Very well.", "At once.", "Allow me.", "Certainly." or "But of course." (`voice/phrases.py`
+`BEAT`). The clips are cached per voice id under `~/.local/share/diablo/phrases`, and the ears fetch
+any missing one for the current voice themselves, so no beat costs a speech call. It plays on its
+own thread, so his sentences keep streaming in behind it, and only for a turn alone: not in a burst,
+not over something he is already saying, and not with `ears.beat` set to 0. When his first sentence
+then opens with an acknowledgement of its own ("On it", "Right away, sir"), that part is not said
+again: "On it, checking now." comes out as "Checking now.", and a line that was nothing else is
+skipped. The charter tells him the beat already plays, so a spoken turn opens with substance.
 
 ## Where the time goes
 
@@ -198,6 +228,13 @@ listening chime, his first and last word, the quiet wait, the voice check, speec
 and the speaking. Loop lines count from his first word. Turns go to
 `~/.local/state/diablo/turns.jsonl`, newest 2000 kept. `diablo-ears timings` draws the last ten as a
 waterfall; `--last N` shows more, `--html FILE` writes a page.
+
+A streamed turn adds its own points: `brain_back` when the hub said Claude has it, `beat_audio`
+when the beat was first heard, `first_sentence` when his first sentence came in and `first_audio`
+when the first sample of any reply reached the speakers. `diablo-ears timings --medians` prints the
+median from his last word (`speech_end`) to each of them and to the end of the spoken answer, over
+the last 200 turns or `--last N`, counting only the turns that reached that point. Turns logged
+before these points existed show up as not measured.
 
 ## Letting him breathe
 

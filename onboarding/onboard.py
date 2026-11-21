@@ -293,12 +293,8 @@ def install_piper():
 
 def install_service():
     heading("Voice service")
-    unit_dir = pathlib.Path.home() / ".config/systemd/user"
-    unit_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2("deploy/diablo-voice.service", unit_dir / "diablo-voice.service")
-    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    subprocess.run(["systemctl", "--user", "enable", "diablo-voice.service"], check=True)
-    print("enabled diablo-voice.service, start it with: systemctl --user start diablo-voice")
+    subprocess.run(["bash", "deploy/ears-install.sh"], check=True)
+    print("installed diablo-ears, it starts with the desktop session")
 
 
 FAST_UNIT = """[Unit]
@@ -394,7 +390,7 @@ def main():
     print("  out loud:       just say his name, diablo, ...")
     print("  this terminal:  diablo agent in any repo, diablo talk for the tongue")
     print("  telegram:       your bot, any chat")
-    print("Start everything: systemctl --user start diablo-voice diablo-fast diablo-pool")
+    print("Start everything: systemctl --user start diablo-ears diablo-fast diablo-pool")
     print("Change the brain anytime: /model <name> on telegram, or the settings api.")
 
 

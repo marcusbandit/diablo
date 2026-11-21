@@ -8,7 +8,7 @@ STATE="$HOME/.local/state/diablo"
 mkdir -p "$STATE"
 exec > >(tee -a "$STATE/stagehand-color.log") 2>&1
 
-UNITS=(diablo-fast.service diablo-pool.service diablo-voice.service)
+UNITS=(diablo-fast.service diablo-pool.service diablo-ears.service)
 
 ensure_unit() {
   # A disabled unit was switched off on purpose; leave it down.

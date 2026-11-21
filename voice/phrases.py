@@ -9,6 +9,7 @@ folder, so switching voices regenerates the set instead of playing the old one.
 import json
 import os
 import random
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -79,8 +80,26 @@ OPEN = [
     "There, before you.",
 ]
 
+# Said the moment a spoken line goes to Claude, before his first word is back.
+BEAT = [
+    "Very well.",
+    "At once.",
+    "Allow me.",
+    "Certainly.",
+    "But of course.",
+]
+
+BYE = [
+    "Very well, sir.",
+    "I'll be here.",
+    "Until later, sir.",
+    "As you wish.",
+]
+
 BANKS = {
     "ack": ACKS,
+    "beat": BEAT,
+    "bye": BYE,
     "countdown": COUNTDOWN,
     "sample": SAMPLE,
     "done": DONE,
@@ -177,6 +196,27 @@ def get(cfg, bank, index=0):
         return lines[index], path.read_bytes()
     except OSError:
         return None
+
+
+# An acknowledgement at the start of a line: "On it,", "Right away, sir.", "One moment."
+OPENER = re.compile(
+    r"^\s*(?:on it|right away|at once|one moment|a moment|just a moment|very well|certainly|of course|"
+    r"but of course|naturally|understood|allow me|with pleasure|as you wish|gladly|will do|"
+    r"consider it done|leave it with me|right|okay|ok|sure)(?:,?\s*sir)?\s*(?:[.,!:;]+|$)\s*", re.I)
+
+
+def after_beat(line):
+    """A first line once the beat has said the acknowledgement for it: "On it, checking now."
+    gives "Checking now.", and a line that was nothing but one gives ""."""
+    rest = str(line or "").strip()
+    while True:
+        found = OPENER.match(rest)
+        if not found or not found.group(0).strip():
+            break
+        rest = rest[found.end():]
+    if not re.search(r"\w", rest):
+        return ""
+    return rest[0].upper() + rest[1:]
 
 
 def watch(live_settings_fn, speaker, log, sleep=time.sleep, stop=None):

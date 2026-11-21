@@ -6,8 +6,8 @@ the phone app, that keeps working when the desktop is off. This repository holds
 | Path | What it is | Runs on |
 |---|---|---|
 | `hub/` | The brain's home: FastAPI service, Telegram bot, memory, routing (Jev first, word tree as backup), T3 Code orchestration, sections | diablo-pi, always on; standby on nemurenai |
-| `phone/` | The phone app: Kotlin and Compose over a Rust core | Android |
-| `phone/core/` | Rust: Markdown parser, offline store and outbox, host choice | inside the app |
+| `app/` | Diablo's app being rebuilt (#91): one Expo codebase for the phone and the browser | Android, browser |
+| `phone/` | The current phone app (Expo), replaced by `app/` at the cutover | Android |
 | `presence/` | Diablo on the screen: the orb beside the cursor and his answer cards (Quickshell, QML) | banditbox |
 | `voice/` | Microphone, wake word, speech to text, speech. `diablo-ears` (docs/ears.md) is the voice turn that boots at login | banditbox |
 | `core/`, `tui/`, `pool/` | The desktop agent and its terminal front end | banditbox |
