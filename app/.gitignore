@@ -1,4 +1,5 @@
-android/
+/android/
 captures/
 .expo/
 dist/
+modules/*/android/build/

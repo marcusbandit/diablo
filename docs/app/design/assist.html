@@ -1,0 +1,165 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0 auto;max-width:780px;font:13px/1.35 system-ui,sans-serif}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px 14px}
+@media(max-width:600px){.grid{grid-template-columns:minmax(0,1fr)}}
+.opt{min-width:0}
+h3{margin:0 0 8px;font-size:14px;color:var(--foreground);font-weight:600}
+h3 b{color:var(--primary);margin-right:6px}
+
+.s{border-radius:26px;overflow:hidden;height:470px;max-width:240px;margin:0 auto;position:relative;background:#f6f4ef;font-family:'Bricolage Grotesque',sans-serif}
+.listen{--mc:#7fb3d4}.think{--mc:#e0915a}.speak{--mc:#6fc49a}.idle{--mc:#8d96a0}
+
+/* the app underneath */
+.app{position:absolute;inset:0;color:#222;font-family:Georgia,serif;padding:34px 16px 0}
+.app .bar{height:22px;border-radius:11px;background:#e4e1da;margin-bottom:12px;font:11px/22px system-ui;color:#777;padding-left:10px}
+.app h1{font-size:19px;line-height:1.1;margin:0 0 8px}
+.app p{font-size:11px;line-height:1.45;margin:0 0 8px;color:#444}
+.app .fig{height:92px;border-radius:8px;margin:8px 0;background:linear-gradient(135deg,#2f6f8f,#7cc0b0 45%,#f0c27a 75%,#d9644a)}
+
+/* glass */
+.glass{background:rgba(18,20,24,.6);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);border:1px solid rgba(255,255,255,.16);color:#f2f4f6;box-shadow:0 8px 28px rgba(0,0,0,.22)}
+.orb{position:absolute;width:58px;height:58px;border-radius:29px;display:grid;place-items:center}
+.orb:before{content:"";position:absolute;inset:-4px;border-radius:33px;box-shadow:0 0 0 2px var(--mc),0 0 22px 2px var(--mc);opacity:.85}
+.orb img{width:40px;height:40px;filter:brightness(0) invert(1) opacity(.95)}
+.tx{position:absolute;width:38px;height:38px;border-radius:19px;display:grid;place-items:center}
+.card{position:absolute;border-radius:20px;padding:11px 14px;font-size:15px;line-height:1.22}
+.heard{position:absolute;border-radius:16px;padding:8px 12px;font-size:14px;color:#f2f4f6}
+.heard i{display:inline-block;width:2px;height:15px;background:var(--mc);vertical-align:-2px;margin-left:2px}
+.pill{position:absolute;border-radius:28px;display:flex;align-items:center;gap:8px;padding:6px 6px 6px 8px}
+.pill .f{width:34px;height:34px;border-radius:17px;display:grid;place-items:center;flex:none;box-shadow:0 0 0 2px var(--mc)}
+.pill .f img{width:24px;height:24px;filter:brightness(0) invert(1)}
+.pill .ph{flex:1;font-size:15px;color:rgba(242,244,246,.75)}
+.pill .ph b{color:#f2f4f6;font-weight:400}
+.pill .mic{width:34px;height:34px;border-radius:17px;background:rgba(255,255,255,.14);display:grid;place-items:center;flex:none}
+.kb{position:absolute;left:0;right:0;bottom:0;height:150px;background:#2a2c30;padding:8px 5px;display:grid;grid-template-columns:repeat(10,1fr);gap:5px 4px;align-content:start}
+.kb i{height:28px;border-radius:6px;background:#3d4045}
+.peek{position:absolute;font-size:12px;color:rgba(242,244,246,.8);border-radius:12px;padding:4px 9px}
+.sweep{position:absolute;height:3px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--mc) 45%,transparent)}
+
+/* drawing marks, glass */
+.node{position:absolute;font-weight:800;font-size:13px;border-radius:10px;padding:5px 10px}
+.node.c{box-shadow:inset 0 0 0 1.5px #6fc49a}
+.node.v{box-shadow:inset 0 0 0 1.5px #e0915a}
+.ttl{position:absolute;font-weight:800;font-size:18px;letter-spacing:-.02em;line-height:1.02;border-radius:12px;padding:8px 11px}
+.ink{position:absolute;inset:0}
+
+/* onboarding (in the app's own look) */
+.ob{--bg:#202326;--mi:#0d1a22;background:var(--bg);color:#eef0f2;display:flex;flex-direction:column}
+.mood{background:var(--mc);color:var(--mi);padding:12px 14px 14px;position:relative;overflow:hidden;flex:none;min-height:150px}
+.mood .face{position:absolute;width:74px;height:74px;right:6px;top:18px;filter:brightness(0) opacity(.85)}
+.dots{display:flex;gap:5px}.dots i{width:6px;height:6px;border-radius:3px;background:var(--mi);opacity:.3}.dots i.on{opacity:1;width:16px}
+.head{font-weight:800;letter-spacing:-.02em;line-height:.98;font-size:26px;margin-top:52px;position:relative}
+.body{padding:12px 14px;display:flex;flex-direction:column;gap:9px;flex:1}
+.primary{text-align:center;font-weight:800;padding:11px 0;border-radius:10px;background:var(--mc);color:var(--mi);margin-top:auto}
+.second{text-align:center;font-weight:500;padding:6px 0;color:#b9bec4}
+.wave{display:flex;gap:4px;align-items:center;justify-content:center;height:90px;margin-top:20px}
+.wave i{width:6px;border-radius:3px;background:var(--mc)}
+.said{font-size:17px;text-align:center;color:#eef0f2}
+
+/* folds */
+.seamh{position:absolute;left:0;right:0;height:14px;background:repeating-linear-gradient(90deg,rgba(0,0,0,.18) 0 6px,transparent 6px 12px)}
+.seamv{position:absolute;top:0;bottom:0;width:14px;background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0 6px,transparent 6px 12px)}
+</style><style>:root{--foreground:#e8e8ea;--primary:#8ab4ff}body{background:#141618;padding:16px}</style></head><body>
+<div class="grid">
+
+<!-- 1 -->
+<div class="opt"><h3><b>1</b>Hold power: he listens first</h3>
+<div class="s listen">
+  <div class="app"><div class="bar">example.com</div><h1>How the TCP handshake works</h1><div class="fig"></div>
+    <p>Before two machines send data, they agree on where each side starts counting. The client opens with SYN, the server answers SYN-ACK, and the client confirms with ACK.</p>
+    <p>Only then does the connection carry data.</p></div>
+  <div class="heard glass" style="left:14px;right:14px;bottom:92px">Explain this to me<i></i></div>
+  <div class="orb glass" style="left:91px;bottom:20px"><img src="../../../assets/faces/listening/1.png"></div>
+  <div class="tx glass" style="right:22px;bottom:30px"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#f2f4f6" stroke-width="2" stroke-linecap="round"><path d="M2 3h10M7 3v12"/><path d="M14 9v7"/></svg></div>
+</div></div>
+
+<!-- 2 -->
+<div class="opt"><h3><b>2</b>He answers, out of his face</h3>
+<div class="s speak">
+  <div class="app"><div class="bar">example.com</div><h1>How the TCP handshake works</h1><div class="fig"></div>
+    <p>Before two machines send data, they agree on where each side starts counting. The client opens with SYN, the server answers SYN-ACK, and the client confirms with ACK.</p>
+    <p>Only then does the connection carry data.</p></div>
+  <div class="card glass" style="left:14px;right:14px;bottom:92px">Three messages, sir. Each side says where it starts counting and confirms the other's number. Shall I draw it?</div>
+  <div class="orb glass" style="left:91px;bottom:20px"><img src="../../../assets/faces/talking/1.png"></div>
+  <div class="tx glass" style="right:22px;bottom:30px"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#f2f4f6" stroke-width="2" stroke-linecap="round"><path d="M2 3h10M7 3v12"/><path d="M14 9v7"/></svg></div>
+</div></div>
+
+<!-- 3 -->
+<div class="opt"><h3><b>3</b>Tap his face: type instead</h3>
+<div class="s idle">
+  <div class="app"><div class="bar">example.com</div><h1>How the TCP handshake works</h1><div class="fig"></div>
+    <p>Before two machines send data, they agree on where each side starts counting. The client opens with SYN, the server answers SYN-ACK.</p></div>
+  <div class="card glass" style="left:14px;right:14px;bottom:218px;font-size:14px">Three messages, sir. Shall I draw it?</div>
+  <div class="pill glass" style="left:10px;right:10px;bottom:158px">
+    <div class="f"><img src="../../../assets/faces/listening/1.png"></div>
+    <div class="ph"><b>Why three and not two</b><span style="display:inline-block;width:2px;height:16px;background:#7fb3d4;vertical-align:-3px"></span></div>
+    <div class="mic"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#f2f4f6" stroke-width="1.8" stroke-linecap="round"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5"/><path d="M3 8a5 5 0 0 0 10 0M8 13v2"/></svg></div>
+  </div>
+  <div class="kb"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i style="grid-column:span 2"></i><i></i><i></i><i></i><i></i><i></i><i></i><i style="grid-column:span 2"></i><i style="grid-column:span 2"></i><i style="grid-column:span 6"></i><i style="grid-column:span 2"></i></div>
+</div></div>
+
+<!-- 4 -->
+<div class="opt"><h3><b>4</b>Drawn over the app, in glass</h3>
+<div class="s speak">
+  <div class="app"><div class="bar">example.com</div><h1>How the TCP handshake works</h1><div class="fig"></div>
+    <p>Before two machines send data, they agree on where each side starts counting. The client opens with SYN, the server answers SYN-ACK, and the client confirms with ACK.</p>
+    <p>Only then does the connection carry data.</p></div>
+  <svg class="ink" viewBox="0 0 240 470">
+    <defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10z" fill="#2a2d31"/></marker></defs>
+    <g stroke="#2a2d31" stroke-width="2.4" fill="none" stroke-linecap="round" marker-end="url(#a)" opacity=".85">
+      <path d="M74 200 C112 204 140 222 164 236"/><path d="M164 262 C130 272 104 286 76 296"/><path d="M74 318 C112 326 140 340 164 352"/>
+    </g>
+    <g font-family="Bricolage Grotesque" font-weight="800" font-size="11" fill="#2a2d31">
+      <text x="104" y="206">SYN</text><text x="96" y="268">SYN-ACK</text><text x="104" y="324">ACK</text>
+    </g>
+  </svg>
+  <div class="ttl glass" style="left:14px;top:118px">Three messages, then data</div>
+  <div class="node glass c" style="left:14px;top:186px">Client</div>
+  <div class="node glass v" style="right:14px;top:236px">Server</div>
+  <div class="node glass c" style="left:14px;top:290px">Client</div>
+  <div class="node glass v" style="right:14px;top:352px">Server</div>
+  <div class="orb glass" style="left:91px;bottom:20px"><img src="../../../assets/faces/talking/1.png"></div>
+</div></div>
+
+<!-- 5 -->
+<div class="opt"><h3><b>5</b>Half folded: he sits below the seam</h3>
+<div class="s speak">
+  <div class="app" style="padding-top:20px"><div class="bar">example.com</div><h1>How the TCP handshake works</h1><div class="fig" style="height:70px"></div>
+    <p>Before two machines send data, they agree on where each side starts counting. The client opens with SYN, the server answers SYN-ACK.</p>
+    <p>Only then does the connection carry data. A lost SYN is sent again after a timeout, and the client gives up after a few tries.</p>
+    <p>Each side keeps its own sequence numbers.</p></div>
+  <div class="seamh" style="top:228px"></div>
+  <div class="card glass" style="left:14px;right:14px;top:258px">Three messages, sir. Each side confirms the other's number.</div>
+  <div class="orb glass" style="left:91px;bottom:20px"><img src="../../../assets/faces/talking/1.png"></div>
+  <div class="tx glass" style="right:22px;bottom:30px"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#f2f4f6" stroke-width="2" stroke-linecap="round"><path d="M2 3h10M7 3v12"/><path d="M14 9v7"/></svg></div>
+</div></div>
+
+<!-- 6 -->
+<div class="opt"><h3><b>6</b>Onboarding: his ears</h3>
+<div class="s ob listen">
+  <div class="mood"><div class="dots"><i></i><i class="on"></i><i></i><i></i><i></i></div><img class="face" src="../../../assets/faces/listening/1.png"><div class="head">Just talk. I listen first.</div></div>
+  <div class="body">
+    <div class="wave"><i style="height:20%"></i><i style="height:45%"></i><i style="height:80%"></i><i style="height:60%"></i><i style="height:95%"></i><i style="height:50%"></i><i style="height:70%"></i><i style="height:30%"></i><i style="height:55%"></i><i style="height:22%"></i></div>
+    <div class="said">"Turn the lamp blue"</div>
+    <div class="primary">Let me hear you</div>
+    <div class="second">Later</div>
+  </div>
+</div></div>
+
+<!-- 7 -->
+<div class="opt" style="grid-column:1/-1"><h3><b>7</b>Unfolded: he floats on the right half</h3>
+<div class="s speak" style="max-width:none;height:300px">
+  <div class="app" style="padding:22px 16px 0;right:auto;width:48%"><div class="bar">example.com</div><h1>How the TCP handshake works</h1><div class="fig" style="height:70px"></div>
+    <p>Before two machines send data, they agree on where each side starts counting. The client opens with SYN, the server answers SYN-ACK, and the client confirms with ACK.</p></div>
+  <div class="app" style="padding:22px 16px 0;left:52%"><p>Only then does the connection carry data. A lost SYN is sent again after a timeout, and the client gives up after a few tries.</p><p>Each side keeps its own sequence numbers, picked at random so an old packet from an earlier connection is not mistaken for a new one.</p><p>Closing takes four messages: each side says FIN and the other confirms it.</p></div>
+  <div class="seamv" style="left:calc(50% - 7px)"></div>
+  <div class="card glass" style="left:calc(52% + 10px);right:16px;bottom:96px">Three messages, sir. Each side says where it starts counting and confirms the other's number. Shall I draw it?</div>
+  <div class="orb glass" style="left:calc(76% - 29px);bottom:22px"><img src="../../../assets/faces/talking/1.png"></div>
+  <div class="tx glass" style="right:22px;bottom:32px"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#f2f4f6" stroke-width="2" stroke-linecap="round"><path d="M2 3h10M7 3v12"/><path d="M14 9v7"/></svg></div>
+</div></div>
+
+</div></body></html>

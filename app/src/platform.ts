@@ -59,3 +59,15 @@ export function platform(): EngineOptions {
     source: "phone",
   };
 }
+
+/** The hubs and this device's token, for the assistant, which talks to the hub on its own. */
+export async function assistLink(current: string | null): Promise<{ hubs: string[]; token: string | null }> {
+  const all = [current, ...hubs()].filter((h): h is string => !!h);
+  return { hubs: [...new Set(all)], token: await SecureStore.getItemAsync(TOKEN) };
+}
+
+/** Whether the assistant introduction has been through once. */
+export const assistIntro = {
+  seen: async () => (await SecureStore.getItemAsync("assist-intro-seen")) === "1",
+  mark: () => SecureStore.setItemAsync("assist-intro-seen", "1"),
+};
