@@ -44,7 +44,7 @@ LIBRARY = (
     ("negative pull-ups", "Negative pull-ups", "pull", False, ("pull-up negatives",)),
     ("scapular pull-ups", "Scapular pull-ups", "pull", False, ("scap pulls", "scapula pull-ups")),
     ("dead hang", "Dead hang", "pull", True, ("hang", "bar hang")),
-    ("body rows", "Body rows", "pull", False, ("rows", "inverted rows", "australian pull-ups", "table rows")),
+    ("inverted rows", "Inverted rows", "pull", False, ("body rows", "rows", "supine rows", "australian pull-ups", "table rows")),
     ("barbell rows", "Barbell rows", "pull", False, ("bent-over rows", "bent over rows")),
     ("dumbbell rows", "Dumbbell rows", "pull", False, ("one-arm rows", "db rows")),
     ("lat pulldowns", "Lat pulldowns", "pull", False, ("pulldowns",)),
@@ -106,7 +106,7 @@ LIBRARY = (
 # pushup's own key for a move it knows under another spelling.
 PUSHUP_KEY = {"l-sit": "L-sit"}
 
-DEFAULTS = ("push-ups", "squats", "body rows", "plank", "lunges", "sit-ups", "glute bridges", "burpees")
+DEFAULTS = ("push-ups", "squats", "inverted rows", "plank", "lunges", "sit-ups", "glute bridges", "burpees")
 
 BY_ID = {row[0]: {"id": row[0], "name": row[1], "group": row[2], "timed": row[3]} for row in LIBRARY}
 DEICTIC = {"these", "this", "those", "that", "them", "it", "same", "the same", "same again", "again", "more", "more of these"}

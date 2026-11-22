@@ -102,7 +102,7 @@ overlay layer, so it lands on top of fullscreen video and games.
 `pushup challenge start` swaps the mixed cards for a 30 day push-up challenge, after the video of
 someone doing 100 a day for a month, at a slightly kinder pace.
 
-- Push-ups, Bulgarian split squats, body rows and David's stretches. Feet-up (decline) push-ups join
+- Push-ups, Bulgarian split squats, inverted rows and David's stretches. Feet-up (decline) push-ups join
   when you switch them on yourself: `pushup challenge feet-up on`, or the launcher. Nothing nags
   you about it. Once on, the card offers them first and plain push-ups one Tab away; both count.
 - Push-ups have a daily target: 50 on day one, climbing to 100 over two weeks, then holding. It
@@ -126,7 +126,7 @@ someone doing 100 a day for a month, at a slightly kinder pace.
 - Bulgarians are taken slowly: two sets a day the first week, three the second, four after.
   A set starts at 5 each leg and grows by one each leg for every day you hit it, up to 15. A leg
   number on a card is always per leg, and the card says the total under it.
-- Body rows are the pull to all those push-ups: lie under a sturdy table, heels on the floor, and
+- Inverted rows are the pull to all those push-ups: lie under a sturdy table, heels on the floor, and
   pull your chest to its edge. Three sets a day, four from the third week, with the goal learned
   from your sets. Rows and Bulgarians each come round every third card, never two of them in a row,
   so a push-up card always sits between. `pushup challenge rows off` leaves them out.
@@ -143,7 +143,7 @@ someone doing 100 a day for a month, at a slightly kinder pace.
     pushup challenge                 day, count, target, Bulgarians, feet up
     pushup challenge start [--over]  start, or with --over begin again from day 1
     pushup challenge feet-up on|off
-    pushup challenge rows on|off     body rows at the table edge, on unless you say otherwise
+    pushup challenge rows on|off     inverted rows at the table edge, on unless you say otherwise
     pushup challenge off             back to the mixed cards
 
 ### In the banditshell launcher
@@ -152,7 +152,7 @@ someone doing 100 a day for a month, at a slightly kinder pace.
 host is banditshell PR #423). Type `pu` in the launcher: today's count and the next set (Enter
 opens the month), a set now, logging, the day's Bulgarians and rows, feet up on and off, pause. Typing a
 number logs it: `pu 15` is 15 push-ups, `pu 8 d` feet-up push-ups, `pu 6 b` Bulgarians, 6 each leg,
-`pu 3x10 rows` three sets of body rows. Pull-ups, dips and pike ups work the same way. A plain
+`pu 3x10 rows` three sets of inverted rows. Pull-ups, dips and pike ups work the same way. A plain
 search for overview, status, stats, progress or muscles, no `pu` needed, offers the training
 overview and the muscle groups over time.
 `pushup status --json` is what it reads.

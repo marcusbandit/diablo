@@ -43,7 +43,7 @@ _pushup() {
         challenge)
             case $CURRENT in
                 3) _values 'action' 'start[day 1 today, or carry on where it was]' 'off[back to the mixed cards]' \
-                       'feet-up[decline push-ups, your call]' 'rows[body rows at the table edge]' ;;
+                       'feet-up[decline push-ups, your call]' 'rows[inverted rows at the table edge]' ;;
                 4) [[ $words[3] == feet-up ]] && _values 'feet up' 'on[decline push-ups first]' 'off[plain push-ups]'
                    [[ $words[3] == rows ]] && _values 'rows' 'on[a few sets a day]' 'off[push-ups and Bulgarians only]'
                    [[ $words[3] == start ]] && _values 'option' '--over[begin again from day 1]' ;;

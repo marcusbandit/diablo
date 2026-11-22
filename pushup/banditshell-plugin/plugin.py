@@ -22,7 +22,7 @@ NAMES = (
     (r"b|bs|bss|bulg\w*|split\w*|squat\w*|legs?", "bulgarian split squats"),
     (r"d|dec\w*|feet\w*|incl\w*", "decline push-ups"),
     (r"p|pu|push\w*", "push-ups"),
-    (r"r|rows?|bodyrows?|invertedrows?", "body rows"),
+    (r"r|rows?|bodyrows?|invertedrows?|supinerows?|australianpull\w*", "inverted rows"),
     (r"pull\w*|chin\w*|assistedpull\w*", "assisted pull-ups"),
     (r"dips?|assisteddips?", "assisted dips"),
     (r"pikeups?|seatedpike\w*", "seated pike ups"),
@@ -30,7 +30,7 @@ NAMES = (
     (r"pikepush\w*|pikes", "pike push-ups"),
     (r"lsits?", "L-sit"),
 )
-ONE = {"push-ups": "push-up", "decline push-ups": "decline push-up", "body rows": "body row",
+ONE = {"push-ups": "push-up", "decline push-ups": "decline push-up", "inverted rows": "inverted row",
        "assisted pull-ups": "assisted pull-up", "assisted dips": "assisted dip", "seated pike ups": "seated pike up",
        "pike push-ups": "pike push-up"}
 

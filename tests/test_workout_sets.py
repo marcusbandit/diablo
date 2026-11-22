@@ -48,7 +48,7 @@ class TestNames(unittest.TestCase):
 
     def test_pushups_own_keys_are_what_lands_in_the_inbox(self):
         self.assertEqual(exercises.stored("l-sit"), "L-sit")
-        self.assertEqual(exercises.stored("body rows"), "body rows")
+        self.assertEqual(exercises.stored("inverted rows"), "inverted rows")
 
     def test_old_names_still_show(self):
         self.assertEqual(exercises.name_of("pushups"), "Push-ups")
@@ -65,7 +65,9 @@ class TestSearch(unittest.TestCase):
 
     def test_an_exact_name_comes_first(self):
         self.assertEqual(self.names("pull-ups")[0], "Pull-ups")
-        self.assertEqual(self.names("rows")[0], "Body rows")
+        self.assertEqual(self.names("rows")[0], "Inverted rows")
+        self.assertEqual(exercises.resolve("body rows"), "inverted rows")
+        self.assertEqual(exercises.name_of("body rows"), "Inverted rows")
         self.assertEqual(self.names("pul")[0], "Pull-ups")
 
     def test_a_start_of_a_word_finds_every_move_it_begins(self):
@@ -190,11 +192,11 @@ class TestSetsAndReps(SetsCase):
 
 class TestTheseOnes(SetsCase):
     def test_i_did_ten_of_these_goes_on_the_open_session(self):
-        workout.log({"kind": "set", "exercise": "body rows", "did": 8}, now=NOW)
+        workout.log({"kind": "set", "exercise": "inverted rows", "did": 8}, now=NOW)
         for exercise in (None, "these", "THESE", "the same"):
             args = {"kind": "set", "did": 10, **({"exercise": exercise} if exercise else {})}
             [entry] = workout.log(args, now=NOW + 60)
-            self.assertEqual(entry["exercise"], "body rows")
+            self.assertEqual(entry["exercise"], "inverted rows")
         [session] = workout.sessions(self.lines())
         self.assertEqual(session["sets"], [8, 10, 10, 10, 10])
 

@@ -40,9 +40,9 @@ export class FakeHub {
   /** The workout room's sessions, newest last: invented sets and reps. */
   workout: { id: string; exercise: string; sets: number[]; at: string; open: boolean }[] = [
     { id: "s-1", exercise: "squats", sets: [15, 15, 12], at: "10:40", open: false },
-    { id: "s-2", exercise: "body rows", sets: [8, 8, 7], at: "13:05", open: false },
+    { id: "s-2", exercise: "inverted rows", sets: [8, 8, 7], at: "13:05", open: false },
   ];
-  workoutRecent = ["push-ups", "squats", "body rows", "plank"];
+  workoutRecent = ["push-ups", "squats", "inverted rows", "plank"];
   private nextId = 1;
   private nextDevice = 1;
   private streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
@@ -200,7 +200,7 @@ export function workoutLogger(sessions: FakeHub["workout"], recentIds: string[])
   };
   const open = sessions.find((w) => w.open);
   const recent = recentIds.map((id) => byId.get(id)!).filter(Boolean);
-  const defaults = ["push-ups", "squats", "body rows", "plank", "lunges", "sit-ups", "glute bridges", "burpees"]
+  const defaults = ["push-ups", "squats", "inverted rows", "plank", "lunges", "sit-ups", "glute bridges", "burpees"]
     .filter((id) => !recentIds.includes(id))
     .map((id) => byId.get(id)!);
   const last = sessions[sessions.length - 1];

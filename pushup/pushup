@@ -70,7 +70,7 @@ DEFAULTS = {
     "feet_up": False,  # decline push-ups, switched on by you and nobody else
     "day_ends": 3,  # the hour the push-ups should be done by; short of the target, sets keep coming after it
     "bss_every": 3,  # every third card can be Bulgarians
-    "rows": True,  # body rows at the table edge, the pull to the push-ups
+    "rows": True,  # inverted rows at the table edge, the pull to the push-ups
     "rows_every": 3,  # and every third card can be rows
     "challenge_stretch_every": 5,  # once the target is in, every fifth card is one of David's hard stretches
 }
@@ -90,7 +90,7 @@ FATIGUE_START = 0.06  # share a set's worth of recent reps takes off, until it h
 SESSION_GAP = 3 * 3600  # sets closer together than this are one session
 PUSH_UPS = catalog.PUSH_UPS
 BSS = "bulgarian split squats"
-ROWS = "body rows"
+ROWS = "inverted rows"
 SIDES = ((BSS, "bss"), (ROWS, "rows"))  # the challenge's moves besides push-ups, each on its own turn, by key
 RAMP_DAYS = 14  # the target climbs from target_start to target over this many days, then holds
 DAY_ROLL = 7  # sets before this hour count for the evening before: the day is over when you sleep, not at midnight
@@ -123,7 +123,7 @@ def load_config():
     cfg["reps_min"], cfg["reps_max"] = sorted((cfg["reps_min"], cfg["reps_max"]))
     # Names the catalog doesn't know (pull-ups, once there's a bar) stay: they get a plain figure
     # and push-up sized goals.
-    cfg["exercises"] = [e for e in cfg["exercises"] if isinstance(e, str) and e] or ["push-ups"]
+    cfg["exercises"] = [catalog.current(e) for e in cfg["exercises"] if isinstance(e, str) and e] or ["push-ups"]
     cfg["stretches"] = [e for e in cfg["stretches"] if e in STRETCHES] or list(catalog.MIXED_STRETCHES)
     if "gear" not in raw:
         # From before gear was asked: someone who switched on a move that needs some has the everyday
@@ -173,14 +173,18 @@ def log_event(refresh=True, **fields):
 
 
 def read_local():
-    """This box's own log, as written."""
+    """This box's own log, with moves read under the names they have now (catalog.RENAMED). The file
+    itself is never rewritten."""
     out = []
     if LOG.exists():
         for line in LOG.read_text().splitlines():
             try:
-                out.append(json.loads(line))
+                e = json.loads(line)
             except json.JSONDecodeError:
-                pass
+                continue
+            if isinstance(e, dict) and isinstance(e.get("exercise"), str):
+                e["exercise"] = catalog.current(e["exercise"])
+            out.append(e)
     return out
 
 
@@ -198,7 +202,7 @@ INBOX_MAX = {"minutes": 24 * 60, "did": 1000}  # a day of training, a thousand r
 def inbox_entry(e, now):
     """One inbox line as a log entry, or None when it isn't one: a training session or a set done
     away from the desk, at a real time that has already happened, with sane numbers. Names go
-    through the catalog's aliases ('rows' is body rows); an activity this box doesn't know counts
+    through the catalog's aliases ('rows' is inverted rows); an activity this box doesn't know counts
     as other under its own name."""
     if not isinstance(e, dict):
         return None
@@ -993,7 +997,7 @@ def bss_plan(cfg, entries, n, day):
 
 
 def rows_plan(cfg, entries, n, day, now):
-    """Body rows at the table edge, the pull the push-ups were missing: three sets a day, four from
+    """Inverted rows at the table edge, the pull the push-ups were missing: three sets a day, four from
     the third week. The goal is learned from your sets like any other move's; `goal` is the top of
     what the next card can ask, recovery trim included, for logging one from the launcher."""
     today_sets = [e for e in entries if exercise_of(e) == ROWS and did(e) > 0 and day_of(e["ts"]) == day]
@@ -1564,7 +1568,7 @@ def cmd_challenge(args):
         if args.value:
             cfg["rows"] = args.value == "on"
             save_config(cfg)
-        print("Rows: " + ("on. Body rows at the table edge get their own turn, a few sets a day." if cfg["rows"]
+        print("Rows: " + ("on. Inverted rows at the table edge get their own turn, a few sets a day." if cfg["rows"]
                           else "off. Push-ups and Bulgarians only. pushup challenge rows on brings them back."))
         return
     if not challenge_on(cfg):

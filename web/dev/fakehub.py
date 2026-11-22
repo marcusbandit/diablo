@@ -227,7 +227,7 @@ def seed_workout():
     (data / "pushup-inbox").mkdir(exist_ok=True)
     first = (dt.date.fromisoformat(day) - dt.timedelta(days=27)).isoformat()
     recent = [{"date": (dt.date.fromisoformat(day) - dt.timedelta(days=i)).isoformat(), "sets": n, "lines": [line] if line else []}
-              for i, (n, line) in enumerate([(4, "squats in 3 sets, body rows"), (6, "push-ups in 3 sets, plank in 3 sets"), (0, ""),
+              for i, (n, line) in enumerate([(4, "squats in 3 sets, inverted rows"), (6, "push-ups in 3 sets, plank in 3 sets"), (0, ""),
                                              (5, "lunges in 3 sets, chin-ups in 2 sets"), (3, "push-ups in 3 sets")])]
     overview = {"schema": 1, "generated": now - 120, "day": day, "mode": "mixed",
                 "today": {"sets": 3, "line": "36 squats in 3 sets", "trained": []}, "streak": 4,
@@ -239,7 +239,7 @@ def seed_workout():
     (data / "pushup" / "overview.json").write_text(_json.dumps(overview))
     lines = []
     for sid, exercise, sets, end, closed in (("s-demo1", "squats", [15, 12, 12], now - 5400, True),
-                                             ("s-demo2", "body rows", [8, 8], now - 300, False)):
+                                             ("s-demo2", "inverted rows", [8, 8], now - 300, False)):
         for i, did in enumerate(sets):
             ts = end - 90 * (len(sets) - 1 - i)
             lines.append({"id": f"demo-{sid}-{i}", "ts": ts, "logged": ts, "result": "manual", "exercise": exercise,

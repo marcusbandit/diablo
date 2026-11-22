@@ -1704,7 +1704,7 @@ class Card:
         if self.exercise == "bulgarian split squats":
             b = c["bss"]
             return f"Bulgarians: set {b['sets'] + 1} of {b['cap']} today"
-        if self.exercise == "body rows" and c.get("rows", {}).get("cap"):
+        if self.exercise == "inverted rows" and c.get("rows", {}).get("cap"):
             r = c["rows"]
             return f"Rows: set {r['sets'] + 1} of {r['cap']} today, chest to the edge"
         if self.exercise not in ("push-ups", "decline push-ups"):
@@ -2640,7 +2640,7 @@ class Card:
             ("bulgarian split squats", "Bulgarians, each leg",
              f"Taken easy: {c['bss']['cap']} sets a day to start, {c['bss']['goal']} on each leg. A leg number is always "
              "per leg, and the card says the total."),
-            *([("body rows", "Rows at the table edge, the pull",
+            *([("inverted rows", "Rows at the table edge, the pull",
                 f"{c['rows']['cap']} sets a day: lie under a sturdy table, knees bent and head past the edge, and pull your chest up to it. "
                 "Push-ups all month need a pull to match.")] if (c.get("rows") or {}).get("cap") else []),
             *([("PNF pancake", "David's stretches, once the push-ups are in",
