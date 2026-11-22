@@ -1563,14 +1563,14 @@ async def screen(body: ScreenIn, caller: dict = Depends(require_token)):
     return {"ok": True, "id": card["id"]}
 
 
-SCREEN_PAGES = ("settings", "voice", "history")
+SCREEN_PAGES = ("settings", "voice", "history", "tasks")
 
 
 @app.post("/v1/screen/open")
 async def screen_open(body: ScreenOpenIn, caller: dict = Depends(require_token)):
     """Opens the central card on Marcus's desktop at one of its pages: "settings", the Settings
-    tab from the top, "voice", Settings at Your voice where he teaches him his voice, or "history",
-    everything said between them. It goes
+    tab from the top, "voice", Settings at Your voice where he teaches him his voice, "history",
+    everything said between them, or "tasks", every task card with the ones waiting on him first. It goes
     out as a `screen` event with `open`, which presence/busy.py writes into panel.json."""
     if not caller.get("master"):
         raise HTTPException(status_code=403, detail="only the hub token may open things on screen")

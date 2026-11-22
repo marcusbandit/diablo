@@ -454,6 +454,19 @@ class TestMcpTools(DbCase):
         kind = [t for t in mcp_server.tools() if t["name"] == "watch_t3_thread"][0]["inputSchema"]["properties"]["kind"]
         self.assertEqual(kind["enum"], ["self_improvement", "partner"])
 
+    def test_list_tasks_reads_the_cards_waiting_first(self):
+        now = time.time()
+        tasks.save("w", {"title": "Ship the card", "state": "working", "step": "Running tests", "machine": "desk", "started_at": now - 125}, now)
+        tasks.save("q", {"title": "Book a table", "state": "waiting", "started_at": now - 30}, now)
+        reply = agent._call_tool("list_tasks", {})
+        lines = reply.splitlines()
+        self.assertEqual(lines[0], "1 waiting on Marcus")
+        self.assertTrue(lines[1].startswith("waiting: Book a table, waits on Marcus, for "), lines[1])
+        self.assertIn("working: Ship the card, Running tests, for 2 min, on desk [w]", lines[2])
+        self.assertEqual(agent._call_tool("list_tasks", {"state": "failed"}), "no failed tasks")
+        self.assertIn("state is one of", agent._call_tool("list_tasks", {"state": "nope"}))
+        self.assertIn("list_tasks", [t["name"] for t in mcp_server.tools()])
+
     def test_agent_writes_straight_to_the_database(self):
         reply = agent._call_tool("update_task", {"title": "Api brain task"})
         self.assertIn("saved", reply)

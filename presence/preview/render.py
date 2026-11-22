@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCENES = ["orb-listening", "orb-thinking", "orb-speaking", "act-speaking", "act-surprised", "act-sorry", "act-delighted", "moons-0", "moons-1", "moons-3", "moons-9", "card-below", "card-above", "card-right-edge",
-          "two-cards", "card-long-reply", "panel-settings", "panel-voice", "panel-training", "panel-now", "panel-list", "panel-list-desk", "panel-list-wide", "panel-list-long", "panel-history", "panel-history-search",
+          "two-cards", "card-long-reply", "panel-settings", "panel-voice", "panel-training", "panel-now", "panel-tasks", "panel-tasks-calm", "panel-tasks-empty", "panel-list", "panel-list-desk", "panel-list-wide", "panel-list-long", "panel-history", "panel-history-search",
           "marks-all", "marks-spotlight", "marks-steps", "diagram-early", "diagram-last"]
 EARS = {"panel-settings": "trained", "panel-voice": "trained", "panel-training": "speech", "panel-now": "trained"}
 PORT = 18758

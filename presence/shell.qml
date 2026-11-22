@@ -119,10 +119,10 @@ ShellRoot {
     property real clock: Date.now()
     readonly property int hubStaleMs: 35000
     readonly property bool hubBusy: root.hubTurns.length > 0
-    // The hub's live task cards that are not finished, oldest first: watched T3 threads and
-    // update_task work. They are not him: a card never makes him busy, raises him or puts its
-    // title in his words. While a turn of his own runs, each one rides along as a moon, one
-    // waiting on Marcus in its own colour.
+    // The hub's task cards, oldest first: watched T3 threads and update_task work, the finished
+    // ones only for a short while. They are not him: a card never makes him busy, raises him or
+    // puts its title in his words. While a turn of his own runs, each unfinished one rides along
+    // as a moon, one waiting on Marcus in its own colour. Tasks in the central card lists them all.
     property var hubTasks: []
     // An answer the ears hold in the background keeps him busy only while the hub was busy a
     // moment ago, so a count left behind (#215) can never hold the orb up on its own.
@@ -916,6 +916,7 @@ ShellRoot {
             earsUrl: Quickshell.env("DIABLO_EARS_URL") || "http://127.0.0.1:8758"
             hubUrl: root.hubUrl
             hubToken: root.hubToken
+            tasks: root.hubTasks
             focus: root.panelOpen
             Keys.onEscapePressed: root.setPanel({ open: false, page: "" })
             onCloseRequested: root.setPanel({ open: false, page: "" })

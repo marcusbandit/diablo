@@ -1,16 +1,17 @@
 import QtQuick
 import QtQuick.Layouts
 import "place.js" as Place
+import "tasks.js" as TaskRows
 
 // The central card: Diablo opened up in the middle of the screen. Three pages: Now, a card he was
-// asked to show big; History, everything said to him and everything he answered (History.qml,
-// from the hub); and Settings, the few things worth changing about him, the voice setup among
+// asked to show big, and beside it Tasks, every task card the hub holds (Tasks.qml); History,
+// everything said to him and everything he answered (History.qml, from the hub); and Settings, the few things worth changing about him, the voice setup among
 // them. Settings talks to the ears' control panel (voice/ears_api.py) on this machine only.
 Rectangle {
     id: panel
 
     required property var style
-    property string view: "settings"       // "now", "history" or "settings"
+    property string view: "settings"       // "now", "tasks" (part of Now), "history" or "settings"
     property var card: null                // what "Now" shows: {title, big, lines, page?, sections?}
     // A Settings page asked for from outside: "settings" scrolls to the top, "voice" to Your
     // voice. pageAt is when it was asked (panel.json's page_at), so asking twice moves it again.
@@ -20,6 +21,15 @@ Rectangle {
     property string earsUrl: "http://127.0.0.1:8758"
     property string hubUrl: ""
     property string hubToken: ""
+    // The task cards from busy.py, the feed the moons read too.
+    property var tasks: []
+    readonly property int waiting: TaskRows.waiting(panel.tasks)
+    readonly property var words: ({
+        waitingChip: "{n} waiting for you", nothingWaitingChip: "Nothing waiting", shownTab: "Shown", tasksTab: "Tasks",
+        queued: "Queued", working: "Working", waiting: "Waiting", done: "Done", failed: "Failed",
+        waitingFallback: "Waiting for you", emptyList: "No tasks yet.",
+        seconds: "{s} s", minutes: "{m} min", hoursMinutes: "{h} h {m} min",
+        onMachine: "On {machine}", startedAt: "Started at {time}", finishedAt: "Finished at {time}" })
     // Where an HTML page goes: shell.qml hands this rect to the web view so it sits over it.
     readonly property alias pageArea: pageArea
     // Its usual size and the most of the screen it may take (Place.panelRect, Place.panelRoom).
@@ -52,6 +62,8 @@ Rectangle {
     function pageKey(event: var) {
         if (panel.view === "history")
             historyPage.key(event);
+        else if (panel.view === "tasks")
+            tasksPage.key(event);
         else if (panel.view === "now" && panel.listing)
             panel.listKey(event);
     }
@@ -181,7 +193,7 @@ Rectangle {
         easing.type: Easing.OutCubic
     }
 
-    // Header: his name, the two pages, and a way out.
+    // Header: his name, how many tasks wait on Marcus, the pages, and a way out.
     RowLayout {
         id: header
 
@@ -198,6 +210,40 @@ Rectangle {
             font.weight: Font.DemiBold
         }
 
+        // How many tasks wait on Marcus; a click opens Tasks.
+        Rectangle {
+            id: waitingChip
+
+            Layout.leftMargin: 6
+            implicitWidth: waitingText.implicitWidth + 26
+            implicitHeight: 28
+            radius: 14
+            color: panel.waiting > 0 ? Qt.rgba(panel.style.listening.r, panel.style.listening.g, panel.style.listening.b, waitingMouse.containsMouse ? 0.3 : 0.18)
+                : (waitingMouse.containsMouse ? panel.style.raised : "transparent")
+            border.width: 1
+            border.color: panel.waiting > 0 ? panel.style.listening : panel.style.line
+
+            Text {
+                id: waitingText
+
+                anchors.centerIn: parent
+                text: panel.waiting > 0 ? panel.words.waitingChip.replace("{n}", panel.waiting) : panel.words.nothingWaitingChip
+                color: panel.waiting > 0 ? panel.style.strong : panel.style.quiet
+                font.family: panel.style.family
+                font.pixelSize: panel.style.normal - 1
+                font.weight: panel.waiting > 0 ? Font.DemiBold : Font.Normal
+            }
+
+            MouseArea {
+                id: waitingMouse
+
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: panel.viewRequested("tasks")
+            }
+        }
+
         Item { Layout.fillWidth: true }
 
         Repeater {
@@ -205,11 +251,12 @@ Rectangle {
 
             Rectangle {
                 required property var modelData
+                readonly property bool lit: panel.view === modelData.id || (modelData.id === "now" && panel.view === "tasks")
 
                 implicitWidth: tabText.implicitWidth + 28
                 implicitHeight: 32
                 radius: 16
-                color: panel.view === modelData.id ? panel.style.line : (tabMouse.containsMouse ? panel.style.raised : "transparent")
+                color: lit ? panel.style.line : (tabMouse.containsMouse ? panel.style.raised : "transparent")
                 border.width: 1
                 border.color: panel.style.line
 
@@ -218,7 +265,7 @@ Rectangle {
 
                     anchors.centerIn: parent
                     text: modelData.label
-                    color: panel.view === modelData.id ? panel.style.strong : panel.style.text
+                    color: parent.lit ? panel.style.strong : panel.style.text
                     font.family: panel.style.family
                     font.pixelSize: panel.style.normal
                 }
@@ -229,7 +276,7 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: panel.viewRequested(modelData.id)
+                    onClicked: panel.viewRequested(modelData.id === "now" && panel.card === null ? "tasks" : modelData.id)
                 }
             }
         }
@@ -256,6 +303,72 @@ Rectangle {
                 onClicked: panel.closeRequested()
             }
         }
+    }
+
+    // Now holds two things: the card shown big, and Tasks.
+    Row {
+        x: 136
+        y: 62
+        spacing: 18
+        visible: panel.view === "now" || panel.view === "tasks"
+
+        Repeater {
+            model: [{ id: "now", label: panel.words.shownTab }, { id: "tasks", label: panel.words.tasksTab }]
+
+            Item {
+                id: subTab
+
+                required property var modelData
+                readonly property bool lit: panel.view === modelData.id
+
+                visible: modelData.id !== "now" || panel.card !== null
+                implicitWidth: subText.implicitWidth
+                implicitHeight: 24
+
+                Text {
+                    id: subText
+
+                    text: subTab.modelData.label
+                    color: subTab.lit ? panel.style.strong : (subMouse.containsMouse ? panel.style.text : panel.style.quiet)
+                    font.family: panel.style.family
+                    font.pixelSize: panel.style.normal
+                    font.weight: subTab.lit ? Font.DemiBold : Font.Normal
+                }
+
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    width: parent.width
+                    height: 2
+                    radius: 1
+                    color: subTab.lit ? panel.style.strong : "transparent"
+                }
+
+                MouseArea {
+                    id: subMouse
+
+                    anchors.fill: parent
+                    anchors.margins: -6
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: panel.viewRequested(subTab.modelData.id)
+                }
+            }
+        }
+    }
+
+    // ---- Tasks: every task card, waiting ones first -------------------------------------------
+    Tasks {
+        id: tasksPage
+
+        x: 32
+        y: 96
+        width: parent.width - 64
+        height: parent.height - y - 20
+        visible: panel.view === "tasks"
+        active: panel.visible && panel.view === "tasks"
+        style: panel.style
+        words: panel.words
+        tasks: panel.tasks
     }
 
     // ---- Now: a card shown big --------------------------------------------------------------

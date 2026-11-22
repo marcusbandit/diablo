@@ -27,6 +27,15 @@ class TestIntent(unittest.TestCase):
         for line in ("Show my browser history", "open the history of Rome", "clear my history", "show the history tab in Firefox"):
             self.assertIsNone(panel.intent(line, SHUT, []), line)
 
+    def test_opening_the_tasks(self):
+        for line in ("Show my tasks", "Diablo, open the task list.", "show me the running tasks please", "pull up your tasks",
+                     "go to tasks", "Can you show me the background jobs?", "let me see the tasks"):
+            self.assertEqual(panel.intent(line, SHUT, []), "tasks", line)
+            self.assertEqual(panel.intent(line, OPEN, [CARD]), "tasks", line)
+        for line in ("What is waiting for me?", "show my tasks in Todoist", "add a task", "what tasks are running",
+                     "show me open jobs", "show me the jobs"):
+            self.assertIsNone(panel.intent(line, SHUT, []), line)
+
     def test_asking_for_his_settings(self):
         for line in ("Show me your settings", "open your settings please", "Go to your settings.", "Diablo, go to your settings",
                      "I want to go to your settings", "take me to your settings", "open the settings", "pull up your settings", "open settings",

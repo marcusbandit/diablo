@@ -1,7 +1,8 @@
 """The central card: Diablo opened up in the middle of the screen (presence/Panel.qml).
 
 Quick actions, no model turn: "open up" or "go to your settings" opens it on Settings, "train
-your voice" on Settings at Your voice, "show my history" on History, "enlarge this" moves the
+your voice" on Settings at Your voice, "show my history" on History, "show my tasks" on Tasks
+(the task cards, a part of Now), "enlarge this" moves the
 newest card into it, "close" or "make it small again" puts him back by the cursor.
 presence/shell.qml reads panel.json and writes it back when the card is closed there. `page` in
 panel.json asks the card to scroll Settings to the top ("settings") or to Your voice ("voice");
@@ -44,6 +45,11 @@ HISTORY = re.compile(
     r"(?:\s+(?:with\s+you|with\s+diablo|to\s+you))?" + _TAIL,
     re.I,
 )
+TASKS = re.compile(
+    _LEAD + r"(?:(?:open|show|bring\s+up|pull\s+up|go\s+to|let\s+me\s+see)\s+(?:me\s+)?(?:up\s+)?(?:my|our|the|your|diablo'?s)?\s*"
+    r"(?:(?:(?:running|background|open|live)\s+)?(?:tasks|task\s+list|task\s+cards)|background\s+jobs))" + _TAIL,
+    re.I,
+)
 ENLARGE = re.compile(
     _LEAD + r"(?:enlarge|expand|zoom\s+in\s+on|blow\s+up|make\s+(?:it|this|that)\s+(?:big|bigger|larger)"
     r"|show\s+(?:it|this|that)\s+(?:big|bigger|larger))(?:\s+(?:it|this|that|the\s+card))?" + _TAIL,
@@ -57,7 +63,7 @@ CLOSE = re.compile(
 
 
 def intent(text, state=None, cards=None):
-    """open, settings, voice, history, enlarge or close for a line that asks for one, else None.
+    """open, settings, voice, history, tasks, enlarge or close for a line that asks for one, else None.
     "Close it" and "make it bigger" mean the window to every other command, so they only count
     here while the central card is open or a card is on screen. "Expand" alone opens him up;
     "expand it" enlarges."""
@@ -66,6 +72,8 @@ def intent(text, state=None, cards=None):
     cards = presence._read() if cards is None else cards
     if HISTORY.match(text):
         return "history"
+    if TASKS.match(text):
+        return "tasks"
     if ENLARGE.match(text) and not re.search(r"\bexpand(?:\s+yourself)?\W*$", text, re.I):
         return "enlarge" if cards or state.get("card") else None
     if TRAIN.match(text):
@@ -114,6 +122,9 @@ def apply(kind):
         return ""
     if kind == "history":
         write(open=True, view="history", page="")
+        return ""
+    if kind == "tasks":
+        write(open=True, view="tasks", page="")
         return ""
     if kind == "enlarge":
         card = newest_card()

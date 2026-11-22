@@ -7,8 +7,11 @@ so the orb can tell a quiet hub from a lost one. When the hub cannot be reached 
 {"turns": [], "tasks": [], "lost": true} and tries again, so a dropped link never leaves the orb busy.
 
 The live task cards ride along the same way: GET /v1/tasks at the start and with every recheck,
-then each `task` event, printed as {"tasks": [{"id", "state", "title"}]} with only the active ones
-(queued, working, waiting), so the orb can carry one moon for each.
+asking for the active ones and the freshly finished ones apart, so finished cards can never
+crowd a live one out of the hub's cap, then each `task` event, printed as {"tasks": [{"id", "state", "title", "step", "machine", "link",
+"started_at", "finished_at"}]}. The active ones (queued, working, waiting) give the orb one moon
+each; the Tasks section of the central card lists them all, finished ones too until they are
+DONE_KEPT_S (FAILED_KEPT_S for a failure) old, so the list and the moons read one feed.
 
 Before each connection it prints {"hub": {"url", "token"}} from config.toml, so History in the
 central card reads the hub with the same pair.
@@ -71,30 +74,72 @@ def shown(event):
 
 
 ACTIVE = ("queued", "working", "waiting")
+FINISHED = ("done", "failed")
+DONE_KEPT_S = 120
+FAILED_KEPT_S = 600
 TASKS = {}
 TASKS_LOCK = threading.Lock()
 # Bumped by every task event, so a listing asked for before one never undoes it.
 TASK_EVENTS = [0]
 LAST_TASKS = [None]
+# How far this machine's clock runs ahead of the hub's, from the `now` of each listing, so the
+# stamps and the keep times are on this clock.
+SKEW = [0.0]
 
 
-def entry(task):
-    """What the orb keeps of one active task, or None for a finished or malformed one."""
-    if not isinstance(task, dict) or not task.get("id") or task.get("state") not in ACTIVE:
+def kept_for(state):
+    return FAILED_KEPT_S if state == "failed" else DONE_KEPT_S
+
+
+def entry(task, now=None):
+    """What the presence keeps of one task, with the hub's stamps moved onto this clock: every
+    active one, and a finished one while it is newer than its keep time. None for an older or
+    malformed one."""
+    if not isinstance(task, dict) or not task.get("id") or task.get("state") not in ACTIVE + FINISHED:
         return None
+    started = number(task.get("started_at"), 0.0)
+    finished = number(task.get("finished_at"), 0.0)
+    row = {"state": task["state"], "finished_at": finished + SKEW[0] if finished else None}
+    if stale(row, now):
+        return None
+    links = task.get("links") if isinstance(task.get("links"), dict) else {}
+    link = str(links.get("thread") or links.get("pr") or "")
     return {"id": str(task["id"]), "state": task["state"],
             "title": " ".join(str(task.get("title") or "").split())[:60],
-            "started_at": number(task.get("started_at"), 0.0)}
+            "step": " ".join(str(task.get("step") or "").split())[:120],
+            "machine": " ".join(str(task.get("machine") or "").split())[:40],
+            "link": link if link.startswith(("https://", "http://", "t3code://")) else "",
+            "started_at": started + SKEW[0] if started else 0.0,
+            "finished_at": row["finished_at"]}
+
+
+def stale(row, now=None):
+    """A finished row past its keep time, or one with no finish time."""
+    now = time.time() if now is None else now
+    if row["state"] not in FINISHED:
+        return False
+    return not row.get("finished_at") or now - row["finished_at"] > kept_for(row["state"])
+
+
+def expire(now=None):
+    """Drops the finished tasks past their keep time. True when any went."""
+    now = time.time() if now is None else now
+    gone = [key for key, row in TASKS.items() if stale(row, now)]
+    for key in gone:
+        TASKS.pop(key, None)
+    return bool(gone)
 
 
 def tasks_line():
     with TASKS_LOCK:
         rows = sorted(TASKS.values(), key=lambda t: (t["started_at"], t["id"]))
-    return {"tasks": [{k: v for k, v in row.items() if k != "started_at"} for row in rows]}
+    return {"tasks": rows}
 
 
 def say_tasks():
     """Prints the tasks line, only when it differs from the last one printed."""
+    with TASKS_LOCK:
+        expire()
     line = tasks_line()
     with TASKS_LOCK:
         if line == LAST_TASKS[0]:
@@ -173,7 +218,7 @@ def locked():
     return handle
 
 
-PAGES = ("settings", "voice", "history")
+PAGES = ("settings", "voice", "history", "tasks")
 MARKS_CPS = 15.0
 
 
@@ -217,7 +262,7 @@ def mark(beat, now=None):
 
 def show(event, now=None):
     """A `screen` event onto the desktop: small into presence.json, large into panel.json, an
-    `open` one into panel.json as the Settings page it names, or the History tab."""
+    `open` one into panel.json as the Settings page it names, the History tab or Tasks."""
     now = time.time() if now is None else now
     if event.get("marks") is not None:
         return mark(event.get("marks"), now)
@@ -226,8 +271,8 @@ def show(event, now=None):
         if page not in PAGES:
             return None
         panel = read_json(STATE / "panel.json", {})
-        if page == "history":
-            write_json(STATE / "panel.json", {**panel, "open": True, "view": "history", "page": "", "at": now})
+        if page in ("history", "tasks"):
+            write_json(STATE / "panel.json", {**panel, "open": True, "view": page, "page": "", "at": now})
         else:
             write_json(STATE / "panel.json", {**panel, "open": True, "view": "settings", "page": page, "page_at": now, "at": now})
         return page
@@ -262,12 +307,18 @@ def duck(event, opener=urllib.request.urlopen):
 def ask(base, headers):
     with urllib.request.urlopen(urllib.request.Request(f"{base}/v1/busy", headers=headers), timeout=10) as reply:
         say(shown(json.loads(reply.read())))
-    url = f"{base}/v1/tasks?state={','.join(ACTIVE)}"
     with TASKS_LOCK:
         before = TASK_EVENTS[0]
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=10) as reply:
-            replace_tasks(json.loads(reply.read()).get("tasks") or [], before)
+        listing = []
+        for query in (f"state={','.join(ACTIVE)}",
+                      f"state={','.join(FINISHED)}&since={time.time() - SKEW[0] - FAILED_KEPT_S:.0f}"):
+            with urllib.request.urlopen(urllib.request.Request(f"{base}/v1/tasks?{query}", headers=headers), timeout=10) as reply:
+                body = json.loads(reply.read())
+            if number(body.get("now"), 0):
+                SKEW[0] = time.time() - number(body["now"], 0)
+            listing += body.get("tasks") or []
+        replace_tasks(listing, before)
     except Exception as error:  # the turns still count when the task list can not be read
         sys.stderr.write(f"tasks feed: {error}\n")
         return
