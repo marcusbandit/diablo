@@ -45,7 +45,13 @@ overlay layer, so it lands on top of fullscreen video and games.
   day only a little less, and from the fourth the card stops easing further and says to rest it or
   have it looked at. `pushup hurt off arms` when it's better.
 
-- Every 45 to 70 minutes a card asks for a number of reps. The first sets are random within your
+- A card is a session: three sets of the same move. The card says which set it is ("SET 1 OF 3")
+  and how many. Log the set and a rest screen counts down 90 seconds, then the next set comes with
+  its goal worked out again, since a tired arm does fewer. Enter on the rest starts the next set
+  early, Esc ends the session there, and a short or skipped set later in a session is a pass, never
+  a skip. Sessions come every two to three hours. `sets`, `rest_seconds`, `session_every_min` and
+  `session_every_max` in the config change it; `sets = 1` brings back one set a card.
+- Every 45 to 70 minutes a card asks for a number of reps (one set a card). The first sets are random within your
   level (10 to 20 on normal). After that the goal follows what you log. Fresh, it's what you can
   do plus one or two, never far past your best recent set. Tired, it's what you can still do, or
   one more. Recent reps count as fatigue that halves every two hours, and how hard it hits you is
@@ -113,10 +119,11 @@ someone doing 100 a day for a month, at a slightly kinder pace.
   still brings a card if you want one.
 - The sets are paced to finish by 03:00 (`day_ends`), counted from when you're back at the
   desk: what's left of the target, spread over what's left of the evening up to an hour before
-  03:00, a set every 10 to 25 minutes. Each set is counted at the low end of its goal, so a skip
-  or a short set doesn't leave you cramming at 02:59. Inside that last hour and still short, they
-  come every 10 minutes.
-- Past the target every card is a bonus set, every 40 to 55 minutes until you go to bed. It still
+  03:00, a session of three sets every 30 to 75 minutes (a set every 10 to 25 with `sets = 1`). Each set is counted at the low end of its goal, so a skip
+  or a short set doesn't leave you cramming at 02:59. Inside that last hour and still short, a
+  session comes every 30 minutes (a set every 10 with `sets = 1`).
+- Past the target every card is a bonus session, every 80 to 110 minutes until you go to bed (a
+  bonus set every 40 to 55 with `sets = 1`). It still
   asks, in green ("DAY 7 OF 30: BONUS SET"), but it doesn't press: a short hold passes it, a pass
   never counts as a skip, and the coach says so. Each one passed in a row pushes the next one 20
   minutes further out, up to 40. Coming up short on a bonus set gets a kind word, not a lecture.

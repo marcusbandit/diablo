@@ -190,9 +190,26 @@ def pending(since, lines=None):
     return out
 
 
+_tail_cache = {"key": None, "lines": []}
+
+
 def log_tail():
-    """The newest part of pushup's own log, for recent exercises and set sizes. Read only."""
+    """The newest part of pushup's own log, for recent exercises, set sizes and the desktop's
+    sessions. Read only, and read again only when the file changed."""
     path = state_dir() / "log.jsonl"
+    try:
+        stat = path.stat()
+    except OSError:
+        return []
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    if _tail_cache["key"] == key:
+        return list(_tail_cache["lines"])
+    lines = _read_tail(path)
+    _tail_cache.update(key=key, lines=lines)
+    return list(lines)
+
+
+def _read_tail(path):
     try:
         with open(path, "rb") as handle:
             handle.seek(0, os.SEEK_END)
@@ -229,19 +246,24 @@ def done_sets(lines=None, tail=None):
     return sorted(out, key=lambda e: e["ts"])
 
 
-def sessions(lines):
-    """The sets logged here grouped into sessions, oldest first. A line with no session is its own."""
+def sessions(lines, tail=None):
+    """The sets grouped into sessions, oldest first: the ones logged here, and the desktop card's
+    sessions from pushup's own log (its sets carry a session_id too). A line with no session is its own.
+    The desktop runs its own sessions to the end, so the hub never treats one of them as open."""
+    desk = [e for e in (log_tail() if tail is None else tail) if e.get("session_id") and e.get("result") == "done"]
+    lines = sorted([*lines, *desk], key=lambda e: e["ts"]) if desk else lines
     closed = {e.get("session_id") for e in lines if e.get("result") == "close"}
     out, by_id = [], {}
     for entry in lines:
-        if entry.get("result") != "manual" or not _did(entry):
+        if entry.get("result") not in ("manual", "done") or not _did(entry):
             continue
         sid = entry.get("session_id") or entry.get("id") or f"line-{entry['ts']}"
         if sid not in by_id:
             ident = exercises.resolve(entry.get("exercise"))
             by_id[sid] = {"id": sid, "exercise": ident or str(entry.get("exercise") or ""), "name": exercises.name_of(entry.get("exercise")),
                           "timed": exercises.timed(entry.get("exercise")), "sets": [], "start": entry["ts"], "end": entry["ts"],
-                          "closed": sid in closed or not entry.get("session_id"), "source": entry.get("source") or "diablo"}
+                          "closed": sid in closed or not entry.get("session_id") or entry.get("result") == "done",
+                          "source": "desktop" if entry.get("result") == "done" else entry.get("source") or "diablo"}
             out.append(by_id[sid])
         session = by_id[sid]
         session["sets"].append(entry["did"])

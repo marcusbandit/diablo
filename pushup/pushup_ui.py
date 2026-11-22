@@ -1190,7 +1190,8 @@ class Card:
         self.closing = False
         self.level = None
         self.spice = args.spice if args.spice in INSULTS else "spicy"
-        self.reminder_mode = not (args.intro or args.graph or args.add or args.challenge_intro)
+        self.resting = bool(getattr(args, "rest_for", 0))
+        self.reminder_mode = not (args.intro or args.graph or args.add or args.challenge_intro or self.resting)
         self.challenge = json.loads(args.challenge) if getattr(args, "challenge", "") else None
         self.offer = json.loads(args.options) if self.reminder_mode and args.options else []
         for o in self.offer:
@@ -1249,6 +1250,8 @@ class Card:
             card = self.graph()
         elif self.args.add:
             card = self.add_card()
+        elif self.resting:
+            card = self.rest_view()
         else:
             card = self.reminder()
         self.card = card
@@ -1346,6 +1349,12 @@ class Card:
             return True
         if not self.ready:
             return True
+        if self.resting:
+            if name in ("Return", "KP_Enter", "space"):
+                self.finish(json.dumps({"result": "rested", "early": True}))
+            elif name == "Escape":
+                self.finish(json.dumps({"result": "end"}))
+            return True
         if self.args.challenge_intro:
             if name in ("Return", "KP_Enter", "space"):
                 self.finish("start")
@@ -1414,6 +1423,38 @@ class Card:
         if (Gdk.keyval_name(keyval) or "") == "Escape":
             self.hold_stop()
 
+    # The rest between two sets of a session: a countdown, what comes next, and a way to go early.
+
+    def rest_view(self):
+        a = self.args
+        self.rest_ends = time.time() + float(a.rest_for)
+        self.eyebrow = PixelText("REST", 18, STRETCHED, spacing=4)
+        self.rest_count = PixelText(str(int(round(float(a.rest_for)))), 144, SLATE["fg10"])
+        self.rest_count.set_margin_top(24)
+        unit = PixelText("SECONDS", 27, SLATE["fg9"])
+        unit.set_margin_top(10)
+        nxt = headline(a.next or "")
+        nxt.set_margin_top(28)
+        go = keyed("Start next set", "Enter", "primary huge", lambda: self.finish(json.dumps({"result": "rested", "early": True})))
+        end = keyed("End session", "Esc", "pill", lambda: self.finish(json.dumps({"result": "end"})))
+        self.armed += [go, end]
+        actions = hbox(16, go, end)
+        actions.set_halign(Gtk.Align.CENTER)
+        actions.set_margin_top(32)
+        card = vbox(0, self.eyebrow, self.rest_count, unit, nxt, actions)
+        card.set_size_request(900, -1)
+
+        def tick():
+            left = self.rest_ends - time.time()
+            if left <= 0:
+                self.finish(json.dumps({"result": "rested"}))
+                return False
+            self.rest_count.set_text(str(int(math.ceil(left))))
+            return True
+
+        GLib.timeout_add(200, tick)
+        return card
+
     # The reminder: the number, the slider, log. Nothing else while you should be on the floor.
 
     def reminder(self):
@@ -1449,6 +1490,10 @@ class Card:
                 brow_color = WIN
         if self.said:
             text = self.said[0].format(**self.said[1], **self.words(n))
+        # A session: the same move a few times with a rest between. The eyebrow says which set,
+        # after whatever it said already (the day, a bonus, the skips).
+        self.base_brow = brow
+        brow = self.session_brow(first)
 
         self.eyebrow = PixelText(brow, 18, brow_color, spacing=4)
         # The headline always gets room for two lines, so every card is the same height.
@@ -1568,11 +1613,23 @@ class Card:
         self.show_offer()
         return card
 
+    def session_brow(self, o):
+        """The eyebrow with the session's set on the end: TIME TO MOVE: SET 1 OF 3."""
+        a = self.args
+        of = int(o.get("set_of") or a.set_of or 1)
+        if of <= 1 or self.calm or self.stretching:
+            return self.base_brow
+        if self.base_brow == EYEBROWS[0]:
+            return f"SET {a.set_no} OF {of}"
+        return f"{self.base_brow}: SET {a.set_no} OF {of}"
+
     def show_offer(self):
         """Point the card at the current exercise: goal, unit, figure, slider and the why pill."""
         self.timer_stop()
         o = self.offer[self.at]
         self.exercise, self.goal = o["exercise"], o["goal"]
+        if not self.stretching and getattr(self, "base_brow", None) is not None:
+            self.eyebrow.set_text(self.session_brow(o))
         self.figure.set_move(move_for(self.exercise))
         self.muscles.show(*muscles_of(self.exercise))
         if self.stretching:
