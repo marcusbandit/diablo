@@ -118,7 +118,9 @@ function SessionRow({ s }: { s: Session }) {
 
 export default function Workout() {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  // The room's own width, not the window's: the window size can lag a fold, the layout never does.
+  const { width: windowWidth } = useWindowDimensions();
+  const [width, setWidth] = useState(windowWidth);
   const wide = width >= WIDE;
   const s = useEngine((x) => x);
   const now = doing(s, false);
@@ -342,7 +344,7 @@ export default function Workout() {
   );
 
   return (
-    <Animated.View style={[{ flex: 1, backgroundColor: color.bg }, lift]}>
+    <Animated.View style={[{ flex: 1, backgroundColor: color.bg }, lift]} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <StatusBar style={m.fill === color.attention ? "dark" : "light"} />
       <MoodBlock
         mood={{ ...m, headline: T.title }}
