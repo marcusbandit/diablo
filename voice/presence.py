@@ -43,7 +43,7 @@ def show(title="", big="", lines=(), kind="text", ttl=TTL_S, video=None, card_id
     it once and offers copy, save and open. With card_id of a card still up, that card grows
     in place instead of a new one joining it."""
     card = {"id": card_id or uuid.uuid4().hex[:10], "kind": kind, "title": str(title or "")[:60], "big": str(big or "")[:24],
-            "lines": [str(line)[:240] for line in lines if str(line).strip()][:6], "at": time.time(), "ttl": float(ttl)}
+            "lines": [str(line) for line in lines if str(line).strip()][:6], "at": time.time(), "ttl": float(ttl)}
     if video:
         card["video"] = str(video)
     with _lock, _file_lock():
@@ -83,4 +83,4 @@ def show_reply(words, ttl=None, card_id=None):
     if not words:
         return None
     seconds = ttl if ttl is not None else max(TTL_S, min(40.0, len(words) / 14 + 6))
-    return show("Diablo", "", [words[:600]], kind="reply", ttl=seconds, card_id=card_id)
+    return show("Diablo", "", [words], kind="reply", ttl=seconds, card_id=card_id)
