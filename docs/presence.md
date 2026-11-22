@@ -122,7 +122,7 @@ the horns, his eyes (`assets/faces/eyes/<look>`) and his mouth, with blinks ever
 small glances (`Orb.acts`, one entry per face: the eyes and mouth it rests on, the glances it
 makes). Listening has wide eyes, thinking a thinking look that glances side to side, holding out
 a card he looks at it, and the moments (delighted, sorry, relieved, surprised, confused) get
-their own eyes and mouth. Speech with no measured track still moves the mouth, a shape every
+their own eyes and mouth. When he glances left or right the mouth drifts a little the same way, about half as far as the pupils, the way a head turns after its eyes; while he speaks it stays where the speech puts it. Speech with no measured track still moves the mouth, a shape every
 tenth of a second. Asleep, resting and the wink keep their whole hand-drawn mood.
 
 While he speaks, the talking face is assembled from three of Marcus's drawings: the horns

@@ -100,6 +100,8 @@ Item {
         : orb.lipSync ? orb.eyeLook
         : orb.glance !== "" ? orb.glance
         : (orb.act?.eyes ?? "neutral")
+    readonly property real gazeX: orb.glance === "glance-left" ? -1 : orb.glance === "glance-right" ? 1 : 0
+    readonly property bool mouthFollows: !orb.lipSync && !orb.babbling
     readonly property string shownMouth: orb.lipSync || orb.babbling ? orb.mouthShape : (orb.act?.mouth ?? "rest")
 
     readonly property bool awake: mood !== "asleep" || control || dictating || thinkingBehind || moment !== "" || presenting
@@ -246,6 +248,14 @@ Item {
                 smooth: true
                 mipmap: true
                 asynchronous: false
+                transform: Translate {
+                    x: orb.mouthFollows ? orb.gazeX * face.width * 0.025 : 0
+
+                    Behavior on x {
+                        enabled: orb.mouthFollows
+                        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+                    }
+                }
             }
 
             // Plays the track against the wall clock, the same clock the voice stamped it with,
