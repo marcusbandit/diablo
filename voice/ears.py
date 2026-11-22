@@ -1921,7 +1921,6 @@ def bare_name(text):
     return all(word in NAME_CALLS for word in re.findall(r"[a-z']+", rest))
 
 
-# Words that only call him, around the name.
 NAME_CALLS = ("hey", "hi", "oi", "ok", "okay", "yo")
 
 
@@ -1999,7 +1998,6 @@ def voice_loop(mic, settings, speaker, vad, detector=None, tap=None, dictation=N
             last = time.monotonic()
         try:
             if cut:
-                # He cut the answer off with the name: the same break as the name said alone.
                 result = name_in_loop(mic, settings, speaker, vad, detector, tap)
             else:
                 result = loop_turn(mic, settings, speaker, vad, detector, tap, dictation)
