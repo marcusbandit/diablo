@@ -173,7 +173,9 @@ export default function Workout() {
       const sub = BackHandler.addEventListener("hardwareBackPress", () => {
         if (query) return setQuery(""), true;
         if (picked || changing) return setPicked(null), setChanging(false), true;
-        return false;
+        if (router.canGoBack()) return false;
+        router.replace("/");
+        return true;
       });
       return () => sub.remove();
     }, [query, picked, changing]),
