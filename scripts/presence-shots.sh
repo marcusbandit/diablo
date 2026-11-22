@@ -61,11 +61,10 @@ for scene in "${SCENES[@]}"; do
     qs -p "$PWD/presence" >"$state/qs.log" 2>&1 &
   qs_pid=$!
   sleep 2.2
-  # A box around the cursor, kept on the monitor; the whole monitor for the central card.
+  # A box around the cursor down to the monitor's bottom, so a tall card fits; the whole monitor for the central card.
   bx=$(( cx - 380 < mx ? mx : cx - 380 )); by=$(( cy - 300 < my ? my : cy - 300 ))
-  bw=760; bh=600
+  bw=760; bh=$((my + mh - by))
   (( bx + bw > mx + mw )) && bx=$((mx + mw - bw))
-  (( by + bh > my + mh )) && by=$((my + mh - bh))
   if [[ -n "$panel" ]]; then grim -g "$mx,$my ${mw}x$mh" -s 0.5 "$out/$name.png"; else grim -g "$bx,$by ${bw}x$bh" "$out/$name.png"; fi
   kill "$qs_pid" ${ears_pid:-} 2>/dev/null || true
   wait "$qs_pid" ${ears_pid:-} 2>/dev/null || true
