@@ -1598,7 +1598,8 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
          in_loop=False):
     """One turn. True when Marcus cut the reply off with the name, so another turn follows,
     LOOP when he asked for the voice loop. in_loop: the turn is a break inside speech control,
-    so ending speech control or sending him away returns STOP.
+    so it takes speech control's caps and mode words, ending it or sending him away returns
+    STOP, and the name alone again returns True, for another break.
 
     The request is recorded from woke_at, the moment the name was heard, with lead, the
     talk between the end of the name and the fire, in front: "Diablo, turn the lights off"
@@ -1616,6 +1617,9 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
         log.info("chime %d ms after the name, %d ms after the fire",
                  tl.points["chime"], tl.points["chime"] - tl.points["fired"])
     cfg = settings.get()
+    if in_loop:
+        cfg = dict(cfg)
+        cfg["ears.turn_max_s"] = cfg.get("ears.loop_turn_max_s") or cfg.get("ears.turn_max_s") or LOOP_TURN_MAX_S
     # The screen as it was when he said the name, before anything here changes it.
     seen = surroundings.Snapshot()
     # Measured before the name, so the listen chime never counts as music; a follow-up turn
@@ -1634,7 +1638,8 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
             after = time.monotonic() + chime.seconds("listen") * 0.6
         heard = record(mic, cfg, after, vad, start_audio=lead,
                        probe=lambda clip: transcribe(clip, cfg), hold=set_holding, tl=tl,
-                       early=lambda words: early_read(cfg, words, lambda: seen.desktop or commands.desktop_state()),
+                       early=lambda words: early_read(cfg, words, lambda: seen.desktop or commands.desktop_state(),
+                                                      loop=in_loop),
                        judge=own_voice(cfg, tap, slack), **({"no_speech_s": window} if window else {}))
         audio, spoke = heard
     if not spoke:
@@ -1692,6 +1697,9 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
     if in_loop and commands.loop_intent(text, active=True) == "stop":
         tl.note(outcome="speech control off")
         return STOP
+    if in_loop and bare_name(text):
+        tl.note(outcome="name again")
+        return True
     if commands.loop_intent(text) == "start":
         tl.note(outcome="speech control on")
         return LOOP
@@ -1842,8 +1850,8 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
         tl.note(outcome=f"refused, voice {voice:.2f}")
         return None
     if heard.local == "name":
-        tl.note(text=heard.text, outcome="name, listening for the request")
-        return name_in_loop(mic, settings, speaker, vad, detector, tap, since=heard.until)
+        tl.note(text=heard.text)
+        return name_break(mic, settings, speaker, vad, detector, tap, heard, tl)
     if heard.early is None:
         chime.play("done")
     set_state("thinking", loop=True, **({} if heard.text is not None else {"step": "transcribing"}))
@@ -1865,8 +1873,7 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
         return None
     log.info("loop heard: %s", text)
     if bare_name(text):
-        tl.note(outcome="name, listening for the request")
-        return name_in_loop(mic, settings, speaker, vad, detector, tap, since=heard.until)
+        return name_break(mic, settings, speaker, vad, detector, tap, heard, tl)
     if commands.loop_intent(text, active=True) == "stop":
         tl.note(outcome="speech control off")
         return STOP
@@ -1912,16 +1919,26 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
 
 
 def bare_name(text):
-    """Whether a line is his name and nothing else, as Whisper spells it: "Diablo.", "Hey Diablo?"."""
+    """Whether a line is his name and nothing else, as Whisper spells it: "Diablo.", "Hey Diablo?",
+    "Diablo, Diablo."."""
     text = str(text or "")
-    found = SAID_NAME.search(text)
-    if not found:
+    if not SAID_NAME.search(text):
         return False
-    rest = (text[:found.start()] + " " + text[found.end():]).lower()
-    return all(word in NAME_CALLS for word in re.findall(r"[a-z']+", rest))
+    rest = SAID_NAME.sub(" ", text).lower().replace("'", "")
+    return all(word in NAME_CALLS for word in re.findall(r"\w+", rest))
 
 
-NAME_CALLS = ("hey", "hi", "oi", "ok", "okay", "yo")
+NAME_CALLS = ("hey", "hi", "hello", "oi", "ok", "okay", "yo", "um", "uh", "hm", "hmm", "so")
+
+
+def name_break(mic, settings, speaker, vad, detector, tap, heard, tl):
+    """A speech control line that was only the name: its own timeline ends here, so it does not
+    take in the request and the answer that follow, then the break."""
+    tl.note(outcome="name, listening for the request")
+    tl.mark("end")
+    tl.save()
+    tl.info["background"] = True
+    return name_in_loop(mic, settings, speaker, vad, detector, tap, since=heard.until)
 
 
 def name_in_loop(mic, settings, speaker, vad, detector=None, tap=None, since=None):
@@ -1933,9 +1950,9 @@ def name_in_loop(mic, settings, speaker, vad, detector=None, tap=None, since=Non
     log.info("loop: the name, listening for the request")
     result = timed_turn(timeline.Timeline("loop-name"), mic, settings, speaker, vad, detector, tap,
                         woke_at=since, in_loop=True)
-    set_state("listening", loop=True)
     if result == STOP:
         return STOP
+    set_state("listening", loop=True)
     return CUT if result is True else True
 
 

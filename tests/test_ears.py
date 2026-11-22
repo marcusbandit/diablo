@@ -278,9 +278,11 @@ class TestNameInSpeechControl(unittest.TestCase):
         ears.PENDING.jobs.clear()
 
     def test_the_name_alone_is_told_apart_from_a_request(self):
-        for line in ("Diablo.", "Diablo?", "Hey Diablo.", "diablo", "Diavolo!"):
+        for line in ("Diablo.", "Diablo?", "Hey Diablo.", "diablo", "Diavolo!", "Diablo? Diablo.",
+                     "Hello, Diablo.", "Um, Diablo's"):
             self.assertTrue(ears.bare_name(line), line)
-        for line in ("Diablo, what is the time?", "close it", "", "Diablo stop", "Diablo lights off"):
+        for line in ("Diablo, what is the time?", "close it", "", "Diablo stop", "Diablo lights off",
+                     "Diablo, 50.", "Diablo, más alto"):
             self.assertFalse(ears.bare_name(line), line)
 
     def test_the_name_ends_a_loop_line_at_once_without_jev_and_nowhere_else(self):
@@ -301,7 +303,54 @@ class TestNameInSpeechControl(unittest.TestCase):
                 self.assertEqual(ears.name_in_loop(None, None, None, None, since=12.5), want)
             self.assertTrue(turn.call_args.kwargs["in_loop"])
             self.assertEqual(turn.call_args.kwargs["woke_at"], 12.5)
-            state.assert_called_with("listening", loop=True)
+            if want == ears.STOP:
+                state.assert_not_called()
+            else:
+                state.assert_called_with("listening", loop=True)
+
+    def turn_on(self, text, in_loop):
+        from unittest import mock
+
+        heard = ears.Heard(np.full(1600, 0.5, dtype=np.float32), True, text)
+        seen = {}
+
+        def record(*args, **kwargs):
+            seen["early"] = kwargs["early"]
+            return heard
+
+        cfg = {"ears.turn_max_s": 20, "ears.loop_turn_max_s": 90}
+        with mock.patch.object(ears, "record", side_effect=record) as rec, \
+                mock.patch.object(ears, "talk_ok", return_value=(True, 1.0)), \
+                mock.patch.object(ears, "set_state"), mock.patch.object(ears, "chime"), \
+                mock.patch.object(ears, "recordings"), mock.patch.object(ears, "surroundings") as around, \
+                mock.patch.object(ears.speakers, "Hold"), mock.patch.object(ears, "tour_line", return_value=None), \
+                mock.patch.object(ears, "dismissed", return_value=False), \
+                mock.patch.object(ears, "local_line", return_value=None), \
+                mock.patch.object(ears, "answer_or_background", return_value=None) as answer:
+            around.Snapshot.return_value.get.return_value = ([], None)
+            got = ears.turn(None, mock.Mock(get=lambda: cfg), None, LevelVAD(), in_loop=in_loop)
+        return got, answer, rec.call_args.args[1], seen["early"]
+
+    def test_inside_the_break_the_name_again_is_another_break_and_stop_ends_speech_control(self):
+        got, answer, cfg, _ = self.turn_on("Diablo?", True)
+        self.assertIs(got, True)
+        answer.assert_not_called()
+        self.assertEqual(cfg["ears.turn_max_s"], 90)
+        got, answer, _, early = self.turn_on("Stop.", True)
+        self.assertEqual(got, ears.STOP)
+        answer.assert_not_called()
+        self.assertEqual(early("stop"), {"local": "stop"})
+
+    def test_a_woken_turn_outside_speech_control_is_unchanged(self):
+        from unittest import mock
+
+        got, answer, cfg, early = self.turn_on("Diablo?", False)
+        self.assertIs(got, False)
+        answer.assert_called_once()
+        self.assertEqual(cfg["ears.turn_max_s"], 20)
+        with mock.patch.object(ears, "control", return_value={}) as jev:
+            early("Diablo")
+        jev.assert_called_once()
 
     def test_name_then_request_then_speech_control_goes_on(self):
         import time
