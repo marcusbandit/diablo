@@ -48,7 +48,7 @@ PLAIN = {
     "revoke_device": "devices", "save_fact": "memory", "recall_facts": "memory", "brain_log": "the vault",
     "brain_read": "the vault", "brain_search": "the vault", "add_reminder": "reminders",
     "list_reminders": "reminders", "cancel_reminder": "reminders", "workout_log": "the workout log",
-    "workout_stats": "the workout log", "emit_object": "a card", "watch_t3_thread": "T3", "update_task": "a task card",
+    "workout_stats": "the workout log", "workout_exercises": "the workout log", "workout_plan": "the workout log", "emit_object": "a card", "watch_t3_thread": "T3", "update_task": "a task card",
     "WebSearch": "the web", "WebFetch": "the web", "Read": "files", "Write": "files", "Edit": "files",
     "Glob": "files", "Grep": "files", "Task": "a helper", "Agent": "a helper", "ToolSearch": "his tools",
     "run_shell": "the shell", "Bash": "the shell", "send_voice": "his voice", "now": "the clock",

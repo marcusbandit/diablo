@@ -80,3 +80,19 @@ session tired, a heavy session makes a rest day, and the receipts and the overvi
 - An `activity` pushup doesn't know counts as `other` and keeps its own name for display, so map
   Health Connect's types to the `ACTIVITIES` keys where one fits. A missing or unknown `effort` is `normal`.
 - `source` defaults to the file's name.
+
+### Sets in sessions, from Diablo
+
+The hub's `workout_log` tool and the app's Workout room write one `manual` line per set, so every
+set counts as a set here with no change to pushup. Two more fields group them into a session, a
+few sets of one exercise:
+
+    {"id": "diablo-1a2b3c4d5e6f", "ts": 1793903600, "logged": 1793903600, "result": "manual", "exercise": "push-ups", "did": 12, "session_id": "s-0a1b2c3d4e", "set_no": 1, "source": "app"}
+    {"id": "diablo-6f5e4d3c2b1a", "ts": 1793903690, "logged": 1793903690, "result": "manual", "exercise": "push-ups", "did": 10, "session_id": "s-0a1b2c3d4e", "set_no": 2, "source": "app"}
+    {"id": "diablo-0f0e0d0c0b0a", "ts": 1793903800, "logged": 1793903800, "result": "close", "session_id": "s-0a1b2c3d4e", "source": "diablo"}
+
+- `exercise` is always one id from `hub/modules/exercises.py`, which uses the `EXERCISES` keys
+  where pushup knows the move, so there are no near duplicates.
+- A session stays open until a `close` line names it or `workout.session_gap_min` (20) minutes
+  pass without a set. pushup ignores `close` lines, since only `session` and `manual` count.
+- Older lines without `session_id` still count and still show, each as a session of one set.

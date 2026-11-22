@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { type LayoutChangeEvent, View } from "react-native";
+import { type LayoutChangeEvent, Pressable, View } from "react-native";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -23,7 +23,15 @@ const INK_EASE = Easing.bezier(0.3, 0.6, 0.2, 1);
  * works and turns orange when something needs you. A new colour spreads out from his face like
  * ink; what he is doing runs as a thin line along the bottom edge.
  */
-export function MoodBlock({ mood, label, height = 150, inset = 0 }: { mood: Mood; label: string; height?: number; inset?: number }) {
+export function MoodBlock({ mood, label, height = 150, inset = 0, onBack, backLabel }: {
+  mood: Mood;
+  label: string;
+  height?: number;
+  inset?: number;
+  /** A room's way back to the den: a chevron before the label. */
+  onBack?: () => void;
+  backLabel?: string;
+}) {
   const reduce = useReducedMotion();
   const [size, setSize] = useState({ w: 0, h: height + inset });
   const [base, setBase] = useState(mood.fill);
@@ -78,7 +86,20 @@ export function MoodBlock({ mood, label, height = 150, inset = 0 }: { mood: Mood
         style={[{ position: "absolute", right: space(2), top: inset + space(2), width: FACE, height: FACE }, inkFace]}
         accessibilityIgnoresInvertColors
       />
-      <Animated.Text style={[{ fontFamily: font.medium, ...type.small }, inkText]}>{label}</Animated.Text>
+      {onBack ? (
+        <Pressable
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel={backLabel}
+          hitSlop={space(3)}
+          style={{ flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: space(1.5) }}
+        >
+          <View style={{ width: 9, height: 9, borderLeftWidth: 2.5, borderBottomWidth: 2.5, borderColor: mood.ink, transform: [{ rotate: "45deg" }], marginLeft: 2 }} />
+          <Animated.Text style={[{ fontFamily: font.medium, ...type.small }, inkText]}>{label}</Animated.Text>
+        </Pressable>
+      ) : (
+        <Animated.Text style={[{ fontFamily: font.medium, ...type.small }, inkText]}>{label}</Animated.Text>
+      )}
       <Animated.Text style={[{ fontFamily: font.heavy, ...type.head, letterSpacing: -0.6, marginTop: "auto", maxWidth: "80%" }, inkText]}>
         {mood.headline}
       </Animated.Text>

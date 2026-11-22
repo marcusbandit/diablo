@@ -41,6 +41,8 @@ os.environ.update({
     "DIABLO_AUTOSHIP": "0",
     "DIABLO_MAIL": "0",
     "DIABLO_TAILNET": "tailnet.example.ts.net",
+    "WORKOUT_DIR": str(data / "pushup"),
+    "WORKOUT_INBOX": str(data / "pushup-inbox"),
 })
 os.environ.setdefault("DIABLO_WEB", str(REPO / "web" / "dist"))
 sys.path.insert(0, str(REPO))
@@ -138,6 +140,8 @@ def panel(module_id, section):
             {"label": "Unread mail", "value": "3", "icon": "mail"},
         ]}]
     if module_id == "workout":
+        return real_panel(module_id, section)
+    if module_id == "workout-canned":
         return [
             {"kind": "goal", "module": "workout", "title": "Push-ups today", "icon": "dumbbell", "value": 62, "max": 100,
              "caption": "On pace for 100 by 21:00",
@@ -181,6 +185,8 @@ def panel(module_id, section):
 
 
 def act(module_id, action, args):
+    if module_id == "workout":
+        return real_act(module_id, action, args)
     if module_id != "lights":
         if action == "retry":
             return "Checked again"
@@ -210,6 +216,42 @@ def act(module_id, action, args):
     raise ValueError(f"unknown action {action}")
 
 
+def seed_workout():
+    """The real workout module over invented training: two sessions today and one still open."""
+    import datetime as dt
+    import json as _json
+    from hub.modules import workout
+    now = time.time()
+    day = workout.day_of(now)
+    (data / "pushup").mkdir(exist_ok=True)
+    (data / "pushup-inbox").mkdir(exist_ok=True)
+    first = (dt.date.fromisoformat(day) - dt.timedelta(days=27)).isoformat()
+    recent = [{"date": (dt.date.fromisoformat(day) - dt.timedelta(days=i)).isoformat(), "sets": n, "lines": [line] if line else []}
+              for i, (n, line) in enumerate([(4, "squats in 3 sets, body rows"), (6, "push-ups in 3 sets, plank in 3 sets"), (0, ""),
+                                             (5, "lunges in 3 sets, chin-ups in 2 sets"), (3, "push-ups in 3 sets")])]
+    overview = {"schema": 1, "generated": now - 120, "day": day, "mode": "mixed",
+                "today": {"sets": 3, "line": "36 squats in 3 sets", "trained": []}, "streak": 4,
+                "last": {"ts": now - 5400, "exercise": "squats", "did": 12},
+                "week": {"neglected": ["calves", "obliques", "biceps"], "work": {"chest": 0.8, "quads": 1.0, "lats": 0.5, "abs": 0.6}, "stretch": {}},
+                "timeline": {"first": first, "days": 28, "recent": recent,
+                             "sets": {"push": [0] * 24 + [3, 0, 6, 0], "pull": [0] * 24 + [2, 0, 0, 1], "legs": [0] * 24 + [0, 3, 0, 3], "core": [0] * 24 + [0, 0, 3, 0]}},
+                "challenge": None}
+    (data / "pushup" / "overview.json").write_text(_json.dumps(overview))
+    lines = []
+    for sid, exercise, sets, end, closed in (("s-demo1", "squats", [15, 12, 12], now - 5400, True),
+                                             ("s-demo2", "body rows", [8, 8], now - 300, False)):
+        for i, did in enumerate(sets):
+            ts = end - 90 * (len(sets) - 1 - i)
+            lines.append({"id": f"demo-{sid}-{i}", "ts": ts, "logged": ts, "result": "manual", "exercise": exercise,
+                          "did": did, "session_id": sid, "set_no": i + 1, "source": "app"})
+        if closed:
+            lines.append({"id": f"demo-{sid}-close", "ts": end + 60, "logged": end + 60, "result": "close", "session_id": sid, "source": "app"})
+    (data / "pushup-inbox" / "diablo-demo.jsonl").write_text("".join(_json.dumps(l) + "\n" for l in lines))
+
+
+real_panel = modules.panel
+real_act = modules.act
+seed_workout()
 modules.panel = panel
 modules.act = act
 

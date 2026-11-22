@@ -54,6 +54,10 @@ DEFAULTS = {
     "ears.own_voice_end": "1",
     "learn.skills": "on",
     "learn.facts": "on",
+    "workout.session_gap_min": "20",
+    "workout.per_day": "3",
+    "workout.window": "10:00-20:00",
+    "workout.rest_day": "sun",
 }
 
 
