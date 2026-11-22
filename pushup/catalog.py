@@ -72,9 +72,11 @@ EXERCISES = {
                                       "abs": 0.2}},
     "assisted dips": {"one": "assisted dip", "scale": 0.8,
                       "muscles": {"triceps": 1, "chest": 0.9, "shoulders": 0.7, "abs": 0.2}},
-    "body rows": {"one": "body row", "scale": 0.8,
-                  "muscles": {"lats": 1, "traps": 0.8, "biceps": 0.7, "forearms": 0.5, "shoulders": 0.4,
-                              "lower back": 0.2, "glutes": 0.2}},
+    # The inverted row (supine row, Australian pull-up): under a table or a low bar, heels down, chest
+    # pulled up to it. Not the chest-supported row, which is a bench exercise.
+    "inverted rows": {"one": "inverted row", "scale": 0.8,
+                      "muscles": {"lats": 1, "traps": 0.8, "biceps": 0.7, "forearms": 0.5, "shoulders": 0.4,
+                                  "lower back": 0.2, "glutes": 0.2}},
     "seated pike ups": {"one": "seated pike up", "scale": 0.8,
                         "muscles": {"hip flexors": 1, "abs": 0.9, "quads": 0.4, "obliques": 0.3, "triceps": 0.3}},
     # The L-sit's floor version: sitting, hands on the floor by the knees, the straight legs lifted
@@ -87,9 +89,21 @@ EXERCISES = {
               "muscles": {"abs": 1, "hip flexors": 1, "triceps": 0.6, "quads": 0.5, "shoulders": 0.4, "traps": 0.3,
                           "obliques": 0.3}},
 }
+# Old names still in the log, read under the name the move has now. The log itself is never rewritten.
+RENAMED = {"body rows": "inverted rows"}
+
+
+def current(name):
+    """The name a move has now, for a name that may be written in the log under an older one."""
+    return RENAMED.get(name, name)
+
+
 # Names people type for these: 'rows', 'pullups', 'dips'. Matched with spaces and hyphens taken out.
 ALIASES = {"pushups": "push-ups", "pushup": "push-ups", "pullups": "assisted pull-ups", "pullup": "assisted pull-ups",
-           "rows": "body rows", "row": "body rows", "invertedrows": "body rows", "dips": "assisted dips",
+           "rows": "inverted rows", "row": "inverted rows", "bodyrows": "inverted rows", "bodyrow": "inverted rows",
+           "invertedrow": "inverted rows", "supinerows": "inverted rows", "supinerow": "inverted rows",
+           "australianpullups": "inverted rows", "australianpullup": "inverted rows", "tablerows": "inverted rows",
+           "tablerow": "inverted rows", "dips": "assisted dips",
            "pikeups": "seated pike ups", "pikes": "pike push-ups",
            "bulgarians": "bulgarian split squats", "bss": "bulgarian split squats", "lsits": "L-sit", "lsit": "L-sit",
            "compression": "compression hold", "compressions": "compression hold", "legliftholds": "compression hold"}
@@ -144,7 +158,7 @@ MIXED_EXERCISES = tuple(e for e in EXERCISES if e not in CHALLENGE_ONLY)
 # tools will do. You say what you have, and a move whose gear you lack never comes up.
 TOOLS = {"bar": "a pull-up bar", "table": "a sturdy table", "chairs": "two sturdy chairs",
          "parallettes": "parallettes or dip bars"}
-GEAR = {"assisted pull-ups": ("bar",), "assisted dips": ("parallettes", "chairs"), "body rows": ("table",),
+GEAR = {"assisted pull-ups": ("bar",), "assisted dips": ("parallettes", "chairs"), "inverted rows": ("table",),
         "L-sit": ("parallettes",)}
 DEFAULT_EXERCISES = tuple(e for e in MIXED_EXERCISES if e not in GEAR)
 
@@ -158,7 +172,7 @@ PLACES = {"floor": ("Floor.", "get on the floor"), "feet": ("Up.", "get on your 
 PLACE = {
     "squats": "feet", "lunges": "feet", "squat jumps": "feet", "calf raises": "feet", "jumping jacks": "feet",
     "cossack squats": "feet", "bulgarian split squats": "chair", "step-ups": "chair", "chair dips": "chair",
-    "wall sit": "wall", "body rows": "table", "assisted pull-ups": "bar", "assisted dips": "chairs",
+    "wall sit": "wall", "inverted rows": "table", "assisted pull-ups": "bar", "assisted dips": "chairs",
     "L-sit": "parallettes",
 }
 
@@ -381,7 +395,7 @@ def candidates(text, known=None):
 
 
 def find(text, known=None):
-    """The exercise or stretch a typed name means: 'rows', 'Body Rows', 'pullups', 'pike ups'.
+    """The exercise or stretch a typed name means: 'rows', 'Inverted Rows', 'pullups', 'pike ups'.
     None when it means nothing or more than one thing."""
     hits = candidates(text, known)
     return hits[0] if len(hits) == 1 else None

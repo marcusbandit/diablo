@@ -37,7 +37,7 @@ MAX_SETS = 20
 SET_SPACING_S = 90
 LOG_TAIL = 256 * 1024
 PLAN_GROUPS = ("push", "legs", "pull", "core")
-PLAN_DEFAULT = {"push": "push-ups", "legs": "squats", "pull": "body rows", "core": "plank"}
+PLAN_DEFAULT = {"push": "push-ups", "legs": "squats", "pull": "inverted rows", "core": "plank"}
 PLAN_TASK = "Plan Marcus's next"
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 

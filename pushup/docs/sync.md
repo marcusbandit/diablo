@@ -67,7 +67,7 @@ appends to it. pushup reads every file there as part of its log: the cards steer
 session tired, a heavy session makes a rest day, and the receipts and the overview count it all.
 
     {"id": "hc-7f3a", "ts": 1793900000, "result": "session", "activity": "climbing", "minutes": 90, "effort": "hard", "source": "health-connect"}
-    {"id": "ph-0912", "ts": 1793903600, "result": "manual", "exercise": "body rows", "did": 10, "source": "phone"}
+    {"id": "ph-0912", "ts": 1793903600, "result": "manual", "exercise": "inverted rows", "did": 10, "source": "phone"}
 
 - Only `session` and `manual` lines count. A `ts` in the future or before 2020, more than a day of
   `minutes`, or a `did` that isn't a whole number from 1 to 1000 makes the line count for nothing.
@@ -75,7 +75,7 @@ session tired, a heavy session makes a rest day, and the receipts and the overvi
   on its time, result and name.
 - A session of an activity this box already logged that day, with `pushup train`, counts once: the
   one logged here wins.
-- `exercise` goes through the catalog's names and aliases, so `rows` is body rows. Use the
+- `exercise` goes through the catalog's names and aliases, so `rows` is inverted rows; `catalog.RENAMED` maps old names such as `body rows` on read. Use the
   `EXERCISES` and `STRETCHES` keys where you can.
 - An `activity` pushup doesn't know counts as `other` and keeps its own name for display, so map
   Health Connect's types to the `ACTIVITIES` keys where one fits. A missing or unknown `effort` is `normal`.

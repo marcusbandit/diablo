@@ -13,7 +13,8 @@ describe("exercise search", () => {
   test("a whole name comes first, however it is typed", () => {
     expect(names("pushup")[0]).toBe("Push-ups");
     expect(names("Push-ups")[0]).toBe("Push-ups");
-    expect(names("rows")[0]).toBe("Body rows");
+    expect(names("rows")[0]).toBe("Inverted rows");
+    expect(names("body rows")[0]).toBe("Inverted rows");
     expect(names("pul")[0]).toBe("Pull-ups");
   });
 
@@ -50,7 +51,7 @@ describe("logging", () => {
     try {
       const logger = readLogger(hub.workoutPanel())!;
       expect(logger.setsToday).toBe(6);
-      expect(logger.today.map((s) => s.name)).toEqual(["Body rows", "Squats"]);
+      expect(logger.today.map((s) => s.name)).toEqual(["Inverted rows", "Squats"]);
       expect(logger.library.length).toBe(all.length);
       expect(logger.defaults.map((e) => e.id)).not.toContain("squats");
       expect(readLogger([{ kind: "goal" }])).toBeNull();

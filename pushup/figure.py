@@ -447,7 +447,7 @@ class Swing(Move):
         return self.at_u(1 - ease((t - top) / down))
 
 
-# A body row: lying on the back under a table, knees bent and feet flat on the floor, the torso
+# An inverted row: lying on the back under a table, knees bent and feet flat on the floor, the torso
 # under the top and the head out past the edge the hands hold. The body stays a straight line from
 # knees to shoulders and swings about the knees, from arms long up to the chest at the edge.
 # Lying face up, the elbows drop toward the floor and the hips: supine.
@@ -572,7 +572,7 @@ MOVES = {
     ], work=("arms",), props=(("bar", 36, 60, 27), ("box", 56, 72, 14))),
     # Under a table, feet flat and knees bent, the body straight from knees to shoulders and the head
     # out past the edge; the chest comes up to it.
-    "body rows": Swing(row, 0.3, 0.8, 0.25, 0.8, work=("arms",), props=(("table", 22, 61, 25),)),
+    "inverted rows": Swing(row, 0.3, 0.8, 0.25, 0.8, work=("arms",), props=(("table", 22, 61, 25),)),
     # Sitting with straight legs, hands planted beside the knees: lift the legs off the floor.
     "seated pike ups": Move([
         (pose(hip=(36, 3), torso=84, head=80, hands=((44, 1), (44, 1)), feet=(("leg", -4, LEG), ("leg", -4, LEG)),
@@ -758,7 +758,7 @@ for _alias, _base in (("front split practice", "front split"), ("middle split pr
                       ("PNF pancake", "pancake"), ("deep pigeon", "pigeon")):
     STRETCHES[_alias] = STRETCHES[_base]
 
-SUPINE_MOVES = {"body rows", "sit-ups", "hollow hold", "glute bridges", "lying hamstring"}
+SUPINE_MOVES = {"inverted rows", "sit-ups", "hollow hold", "glute bridges", "lying hamstring"}
 
 
 def every():

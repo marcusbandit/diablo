@@ -279,13 +279,14 @@
 ]
 },
 {
-"id": "body rows",
-"name": "Body rows",
+"id": "inverted rows",
+"name": "Inverted rows",
 "group": "pull",
 "timed": false,
 "aliases": [
+"body rows",
 "rows",
-"inverted rows",
+"supine rows",
 "australian pull-ups",
 "table rows"
 ]
