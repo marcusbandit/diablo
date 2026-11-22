@@ -1490,10 +1490,10 @@ class Card:
                 brow_color = WIN
         if self.said:
             text = self.said[0].format(**self.said[1], **self.words(n))
-        if a.set_of > 1 and not (self.calm or self.stretching):
-            # A session: the same move a few times with a rest between. The eyebrow says which set.
-            day = f"DAY {self.challenge['day']} OF {self.challenge['days']}: " if self.challenge else ""
-            brow = f"{day}SET {a.set_no} OF {a.set_of}"
+        # A session: the same move a few times with a rest between. The eyebrow says which set,
+        # after whatever it said already (the day, a bonus, the skips).
+        self.base_brow = brow
+        brow = self.session_brow(first)
 
         self.eyebrow = PixelText(brow, 18, brow_color, spacing=4)
         # The headline always gets room for two lines, so every card is the same height.
@@ -1613,11 +1613,23 @@ class Card:
         self.show_offer()
         return card
 
+    def session_brow(self, o):
+        """The eyebrow with the session's set on the end: TIME TO MOVE: SET 1 OF 3."""
+        a = self.args
+        of = int(o.get("set_of") or a.set_of or 1)
+        if of <= 1 or self.calm or self.stretching:
+            return self.base_brow
+        if self.base_brow == EYEBROWS[0]:
+            return f"SET {a.set_no} OF {of}"
+        return f"{self.base_brow}: SET {a.set_no} OF {of}"
+
     def show_offer(self):
         """Point the card at the current exercise: goal, unit, figure, slider and the why pill."""
         self.timer_stop()
         o = self.offer[self.at]
         self.exercise, self.goal = o["exercise"], o["goal"]
+        if not self.stretching and getattr(self, "base_brow", None) is not None:
+            self.eyebrow.set_text(self.session_brow(o))
         self.figure.set_move(move_for(self.exercise))
         self.muscles.show(*muscles_of(self.exercise))
         if self.stretching:

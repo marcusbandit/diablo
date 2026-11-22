@@ -1118,6 +1118,8 @@ def challenge_args(c):
 def challenge_interval(cfg, entries=None, now=None):
     """How long until the next set: what's left of the target, spread over what's left of the day
     up to SLACK before day_ends, with a set at least every GAP_MAX and never closer than GAP_MIN.
+    With sets > 1 a card is a session, so the count is in sessions and both gaps, and the bonus
+    gap, scale with it: 30 to 75 minutes, and 80 to 110 past the target, for three sets.
     A set is counted at the low end of its goal, so the plan doesn't lean on good sets. Past the
     target every card is a bonus, every 40 to 55 minutes, and 20 more for each one passed in a row,
     up to 40: it still asks, it just stops pressing. Inside the slack and still short, it's
@@ -1238,7 +1240,11 @@ def remind(cfg, env=None, rest=None, held=None):
     if rest:
         args += ["--calm"]
     elif int(cfg.get("sets") or 1) > 1:
-        args += ["--set-no", "1", "--set-of", str(session_sets(cfg, first["exercise"], entries, now, logged=False))]
+        for o in offer:
+            if not o.get("stretch"):
+                o["set_of"] = session_sets(cfg, o["exercise"], entries, now, logged=False)
+        args[1] = json.dumps(offer)
+        args += ["--set-no", "1", "--set-of", str(first.get("set_of") or 1)]
     if not cfg.get("sound"):
         args += ["--quiet"]
     if paused:
@@ -1281,11 +1287,13 @@ def remind(cfg, env=None, rest=None, held=None):
     sid = f"desk-{uuid.uuid4().hex[:10]}" if session else None
     logged = log_answer(answer, offered, {"session_id": sid, "set_no": 1} if sid else None)
     if sid:
-        rest_of = run_session(cfg, env, offered["exercise"], sid, week)
+        SESSION_RAN[0] = True
+        rest_of, wants_receipts = run_session(cfg, env, offered["exercise"], sid, week, paused)
         logged = f"{logged}, {rest_of}"
         if rest_of == "locked":
             HELD_PLAYERS.extend(paused)
             return logged
+        answer["receipts"] = wants_receipts
     if logged and answer.get("receipts"):
         # Asked for the full stats from the ending: they open once the set is in them.
         if after_receipts(receipts(env, stop=session_locked), env, stop=session_locked) == "stopped":
@@ -1322,35 +1330,40 @@ def next_offer(cfg, entries, exercise, now):
     return option(cfg, entries, exercise, catalog.loads(entries, now), now)
 
 
-def run_session(cfg, env, exercise, sid, week):
+def run_session(cfg, env, exercise, sid, week, paused=()):
     """Sets 2 and on of a session: a counted rest, then the same move again, until its sets are done.
-    Esc on the rest, a skip, a hurt or a lock ends it early. Returns a line for the daemon log."""
+    Esc on the rest, a skip, a hurt or a lock ends it early. Returns a line for the daemon log, and
+    whether the last card asked for the receipts."""
+    wants = False
     total = session_sets(cfg, exercise, read_log(), time.time())  # the first set is in the log by now
     for k in range(2, total + 1):
         entries = read_log()
         now = time.time()
-        nxt = next_offer(cfg, entries, exercise, now)
+        # Worked out once: the rest screen promises the same number the card then asks for.
+        nxt = {**next_offer(cfg, entries, exercise, now), "set_of": total}
         line = f"Next: set {k} of {total}, {nxt['goal']} {catalog.unit(exercise, nxt['goal'])}"
         text = overlay(["--rest-for", str(cfg["rest_seconds"]), "--next", line, "--spice", cfg["spice"], "--arm-delay", "0.5"],
                        env, stop=session_locked)
         if text == "stopped":
-            return "locked"
+            return "locked", False
         if parse_answer(text).get("result") != "rested":
-            return f"ended after set {k - 1} of {total}"
+            return f"ended after set {k - 1} of {total}", wants
         play_sound(cfg)
         entries = read_log()
         now = time.time()
-        nxt = next_offer(cfg, entries, exercise, now)
         args = ["--options", json.dumps([nxt]), "--spice", cfg["spice"], *record_args(entries, week=week),
                 "--set-no", str(k), "--set-of", str(total)]
+        if paused:
+            args += ["--paused", ", ".join(dict.fromkeys(pretty_player(p) for p in paused))]
         if challenge_on(cfg):
             args += challenge_args(challenge(cfg, entries, now))
         if not cfg.get("sound"):
             args += ["--quiet"]
         text = overlay(args, env, stop=session_locked)
         if text == "stopped":
-            return "locked"
+            return "locked", False
         answer = parse_answer(text)
+        wants = bool(answer.get("receipts"))
         if answer.get("result") == "hurt" and isinstance(answer.get("exercise"), str):
             spots = catalog.spots_by_part(answer.get("spots") or [])
             for part, where in spots.items():
@@ -1358,26 +1371,42 @@ def run_session(cfg, env, exercise, sid, week):
             part = answer.get("part") if answer.get("part") in HURT_PARTS else hurt_part(answer["exercise"])
             if not spots and part:
                 log_hurt(part)
-            return f"ended at set {k} of {total}: it hurts"
+            return f"ended at set {k} of {total}: it hurts", False
         if answer.get("result") == "skip" or (answer.get("result") == "done" and answer.get("did") == 0):
             answer["result"] = "pass"  # tired at set three is not a skipped card
         if answer.get("result") not in ("done", "pass"):
-            return f"ended at set {k} of {total}"
+            return f"ended at set {k} of {total}", False
         answer["goal"] = nxt["goal"]
         answer.setdefault("exercise", exercise)
         log_answer(answer, nxt, {"session_id": sid, "set_no": k})
         if answer["result"] != "done":
-            return f"ended at set {k} of {total}"
-    return f"all {total} sets"
+            return f"ended at set {k} of {total}", wants
+    return f"all {total} sets", wants
 
 
 slider_top = catalog.slider_top
 
 
-def next_interval(cfg):
+SESSION_RAN = [False]  # the card that just closed ran as a session of several sets
+
+
+def longest_gap(cfg):
+    """The most next_interval can ever return, for the daemon's checks on a due time."""
+    sets = max(1, min(10, int(cfg.get("sets") or 1)))
+    gaps = [cfg["interval_max"] * 60]
+    if sets > 1:
+        gaps.append(cfg["session_every_max"] * 60)
+    if challenge_on(cfg):
+        gaps += [GAP_MAX * sets * 1.1, (2 if sets > 1 else 1) * BONUS_GAP[1] + BONUS_BACKOFF * BONUS_BACKOFF_MAX]
+    return max(gaps)
+
+
+def next_interval(cfg, session=False):
+    """How long until the next card. A session of several sets earns the longer session gap; a
+    single card, such as a rest day's stretch, keeps the old one."""
     if challenge_on(cfg):
         return challenge_interval(cfg)
-    if int(cfg.get("sets") or 1) > 1:
+    if session and int(cfg.get("sets") or 1) > 1:
         return random.uniform(cfg["session_every_min"], cfg["session_every_max"]) * 60
     return random.uniform(cfg["interval_min"], cfg["interval_max"]) * 60
 
@@ -1392,8 +1421,8 @@ def cmd_daemon(_):
         run_intro(page=5)
         cfg = load_config()
     due = read_float(NEXT_DUE)
-    if due < time.time() or due - time.time() > cfg["interval_max"] * 60:
-        due = time.time() + next_interval(cfg)
+    if due < time.time() or due - time.time() > longest_gap(cfg):
+        due = time.time() + next_interval(cfg, session=True)
         write_text(NEXT_DUE, str(due))
     print(f"pushup: next set at {fmt_clock(due)}", flush=True)
     last_tick = time.time()
@@ -1409,14 +1438,14 @@ def cmd_daemon(_):
             exported = now
         locked = session_locked()
         if now - last_tick > 600:
-            due = now + next_interval(cfg)
+            due = now + next_interval(cfg, session=True)
             write_text(NEXT_DUE, str(due))
             print(f"pushup: woke from a {fmt_left(now - last_tick)} sleep, next set at {fmt_clock(due)}", flush=True)
         elif locked:
             # The countdown stands still behind the lock screen.
             due += now - last_tick
             if not was_locked:
-                due = min(max(due, now) + LOCK_CREDIT, now + cfg["interval_max"] * 60)
+                due = min(max(due, now) + LOCK_CREDIT, now + longest_gap(cfg))
                 WAITING.unlink(missing_ok=True)
                 print(f"pushup: locked, holding {fmt_left(due - now)} until after the unlock", flush=True)
             write_text(NEXT_DUE, str(due))
@@ -1468,16 +1497,17 @@ def cmd_daemon(_):
             continue
         if rest:
             print(f"pushup: rest day after {rest}, a stretch instead", flush=True)
+        SESSION_RAN[0] = False
         result = remind(cfg, rest=rest)
         last_tick = time.time()
         quiet_at = 0.0
         if result == "locked":
             # Still owed, a few minutes after the unlock.
-            due, was_locked = last_tick + min(LOCK_CREDIT, cfg["interval_max"] * 60), True
+            due, was_locked = last_tick + min(LOCK_CREDIT, longest_gap(cfg)), True
             write_text(NEXT_DUE, str(due))
             print("pushup: locked with the card up, closed it", flush=True)
             continue
-        due = last_tick + next_interval(cfg)
+        due = last_tick + next_interval(cfg, session=SESSION_RAN[0])
         write_text(NEXT_DUE, str(due))
         print(f"pushup: {result}, next set at {fmt_clock(due)}", flush=True)
 

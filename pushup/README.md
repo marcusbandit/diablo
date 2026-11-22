@@ -120,9 +120,10 @@ someone doing 100 a day for a month, at a slightly kinder pace.
 - The sets are paced to finish by 03:00 (`day_ends`), counted from when you're back at the
   desk: what's left of the target, spread over what's left of the evening up to an hour before
   03:00, a session of three sets every 30 to 75 minutes (a set every 10 to 25 with `sets = 1`). Each set is counted at the low end of its goal, so a skip
-  or a short set doesn't leave you cramming at 02:59. Inside that last hour and still short, they
-  come every 10 minutes.
-- Past the target every card is a bonus set, every 40 to 55 minutes until you go to bed. It still
+  or a short set doesn't leave you cramming at 02:59. Inside that last hour and still short, a
+  session comes every 30 minutes (a set every 10 with `sets = 1`).
+- Past the target every card is a bonus session, every 80 to 110 minutes until you go to bed (a
+  bonus set every 40 to 55 with `sets = 1`). It still
   asks, in green ("DAY 7 OF 30: BONUS SET"), but it doesn't press: a short hold passes it, a pass
   never counts as a skip, and the coach says so. Each one passed in a row pushes the next one 20
   minutes further out, up to 40. Coming up short on a bonus set gets a kind word, not a lecture.

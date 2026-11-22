@@ -248,7 +248,8 @@ def done_sets(lines=None, tail=None):
 
 def sessions(lines, tail=None):
     """The sets grouped into sessions, oldest first: the ones logged here, and the desktop card's
-    sessions from pushup's own log (its sets carry a session_id too). A line with no session is its own."""
+    sessions from pushup's own log (its sets carry a session_id too). A line with no session is its own.
+    The desktop runs its own sessions to the end, so the hub never treats one of them as open."""
     desk = [e for e in (log_tail() if tail is None else tail) if e.get("session_id") and e.get("result") == "done"]
     lines = sorted([*lines, *desk], key=lambda e: e["ts"]) if desk else lines
     closed = {e.get("session_id") for e in lines if e.get("result") == "close"}
@@ -261,7 +262,8 @@ def sessions(lines, tail=None):
             ident = exercises.resolve(entry.get("exercise"))
             by_id[sid] = {"id": sid, "exercise": ident or str(entry.get("exercise") or ""), "name": exercises.name_of(entry.get("exercise")),
                           "timed": exercises.timed(entry.get("exercise")), "sets": [], "start": entry["ts"], "end": entry["ts"],
-                          "closed": sid in closed or not entry.get("session_id"), "source": entry.get("source") or "diablo"}
+                          "closed": sid in closed or not entry.get("session_id") or entry.get("result") == "done",
+                          "source": "desktop" if entry.get("result") == "done" else entry.get("source") or "diablo"}
             out.append(by_id[sid])
         session = by_id[sid]
         session["sets"].append(entry["did"])
