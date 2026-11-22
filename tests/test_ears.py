@@ -217,8 +217,8 @@ class TestReadyAnswerEndsTheWait(unittest.TestCase):
 
 
 class TestCutInLineComesFirst(unittest.TestCase):
-    """He cuts an answer off with the name in speech control: say_ready puts the rest back, so
-    an answer is ready again, and it must not be spoken over the line he cut in to say."""
+    """He cuts an answer off with the name in speech control: the next line is the request, and an
+    answer that is ready meanwhile must not be spoken over it."""
 
     def tearDown(self):
         ears.PENDING.jobs.clear()
@@ -231,55 +231,157 @@ class TestCutInLineComesFirst(unittest.TestCase):
         ears.PENDING.jobs.append({"done": done, "words": "The rest.", "tl": None, "said": "x",
                                   "dropped": False, "early": []})
 
-    def test_after_a_cut_a_ready_answer_waits_for_the_line_he_cut_in_to_say(self):
-        self.ready_answer()
-        level = lambda at: 0.9 if 1.2 <= at < 2.0 else 0.0
-        audio, spoke = ears.record(TimedMic(level), QUIET_CFG, 0.0, LevelVAD(), no_speech_s=30,
-                                   interrupt=ears.PENDING.has_speech, interrupt_quiet_s=ears.CUT_QUIET_S)
-        self.assertTrue(spoke)
-        self.assertGreater(len(audio) / wake.RATE, 2.0)
-
-    def test_without_the_cut_the_same_answer_would_have_talked_over_him(self):
+    def test_a_ready_answer_cuts_a_plain_loop_listen_short(self):
         self.ready_answer()
         level = lambda at: 0.9 if 1.2 <= at < 2.0 else 0.0
         _, spoke = ears.record(TimedMic(level), QUIET_CFG, 0.0, LevelVAD(), no_speech_s=30,
                                interrupt=ears.PENDING.has_speech)
         self.assertFalse(spoke)
 
-    def test_a_bare_name_lets_the_rest_out_after_the_cut_quiet(self):
-        import time
-
-        self.ready_answer()
-        started = time.monotonic()
-        _, spoke = ears.record(TimedMic(lambda at: 0.0), QUIET_CFG, 0.0, LevelVAD(), no_speech_s=30,
-                               interrupt=ears.PENDING.has_speech, interrupt_quiet_s=ears.CUT_QUIET_S)
-        self.assertFalse(spoke)
-        self.assertLess(time.monotonic() - started, ears.CUT_QUIET_S + 2.0)
-
-    def test_voice_loop_carries_a_cut_from_either_side_into_the_next_line(self):
+    def test_voice_loop_takes_the_request_after_a_cut_from_either_side(self):
         from unittest import mock
 
         cuts = iter([True, False])
-        results = iter([ears.CUT, None, ears.STOP])
+        results = iter([ears.CUT, True, ears.STOP])
         turns, readies = [], []
 
         def fake_ready(*args):
             readies.append(len(turns))
             return next(cuts)
 
-        def fake_turn(*args, **kwargs):
-            turns.append(kwargs["after_cut"])
+        def fake_named(*args, **kwargs):
+            turns.append("name")
+            return next(results)
+
+        def fake_line(*args, **kwargs):
+            turns.append("line")
             return next(results)
 
         settings = mock.Mock(get=lambda: {})
         with mock.patch.object(ears, "say_ready", side_effect=fake_ready), \
-                mock.patch.object(ears, "loop_turn", side_effect=fake_turn), \
+                mock.patch.object(ears, "name_in_loop", side_effect=fake_named), \
+                mock.patch.object(ears, "loop_turn", side_effect=fake_line), \
                 mock.patch.object(ears, "listening", return_value=True), \
                 mock.patch.object(ears, "set_state"), mock.patch.object(ears.feedback, "mode"), \
                 mock.patch.object(ears.speakers, "Hold"):
             ears.voice_loop(mock.Mock(), settings, None, LevelVAD())
-        self.assertEqual(turns, [True, True, False])
+        self.assertEqual(turns, ["name", "name", "line"])
         self.assertEqual(readies, [0, 2])
+
+
+class TestNameInSpeechControl(unittest.TestCase):
+    """2026-11-22: "Diablo" said alone inside speech control went to Claude as the request itself.
+    The name is a break from speech control: the listening chime, the next line is the request,
+    then speech control goes on."""
+
+    def tearDown(self):
+        ears.PENDING.jobs.clear()
+
+    def test_the_name_alone_is_told_apart_from_a_request(self):
+        for line in ("Diablo.", "Diablo?", "Hey Diablo.", "diablo", "Diavolo!"):
+            self.assertTrue(ears.bare_name(line), line)
+        for line in ("Diablo, what is the time?", "close it", "", "Diablo stop", "Diablo lights off"):
+            self.assertFalse(ears.bare_name(line), line)
+
+    def test_the_name_ends_a_loop_line_at_once_without_jev_and_nowhere_else(self):
+        from unittest import mock
+
+        with mock.patch.object(ears, "control") as jev:
+            self.assertEqual(ears.early_read({}, "Diablo.", {}, loop=True), {"local": "name"})
+            jev.assert_not_called()
+        self.assertIsNone(ears.early_local("Diablo.", loop=False))
+        self.assertTrue(ears.early_sure({"local": "name"}))
+
+    def test_name_in_loop_is_a_turn_inside_speech_control(self):
+        from unittest import mock
+
+        for got, want in ((ears.STOP, ears.STOP), (True, ears.CUT), (False, True), (ears.LOOP, True)):
+            with mock.patch.object(ears, "timed_turn", return_value=got) as turn, \
+                    mock.patch.object(ears, "set_state") as state:
+                self.assertEqual(ears.name_in_loop(None, None, None, None, since=12.5), want)
+            self.assertTrue(turn.call_args.kwargs["in_loop"])
+            self.assertEqual(turn.call_args.kwargs["woke_at"], 12.5)
+            state.assert_called_with("listening", loop=True)
+
+    def test_name_then_request_then_speech_control_goes_on(self):
+        import time
+        from unittest import mock
+
+        from voice import timeline
+
+        chimes, asked, jev, said, records = [], [], [], [], []
+        done = {"flag": False}
+        start = time.monotonic()
+
+        def level(at):
+            if 0.2 <= at < 0.8:
+                return 0.5
+            if 2.6 <= at < 3.4:
+                return 0.7
+            if 6.4 <= at < 7.2:
+                return 0.9
+            return 0.0
+
+        mic = TimedMic(level, stop=lambda: done["flag"] or time.monotonic() - start > 20)
+
+        def transcribe(audio, cfg, *_, **__):
+            loud = float(np.max(np.abs(audio))) if len(audio) else 0.0
+            return "What is the weather?" if loud > 0.8 else "What is the time?" if loud > 0.6 else "Diablo."
+
+        def play(name):
+            chimes.append(name)
+            if name == "never":
+                done["flag"] = True
+
+        def control(cfg, text, desktop):
+            jev.append(text)
+            return {}
+
+        def answer_words(cfg, text, *args, **kwargs):
+            asked.append(text)
+            return f"answer to {text}"
+
+        def say_answer(mic_, speaker, words, *args, **kwargs):
+            said.append(words)
+            return False
+
+        real_record = ears.record
+
+        def record(*args, **kwargs):
+            records.append(kwargs)
+            return real_record(*args, **kwargs)
+
+        cfg = dict(QUIET_CFG, **{"ears.loop_idle_s": 30})
+        settings = mock.Mock(get=lambda: cfg)
+        with mock.patch.object(ears, "INLINE_WAIT_S", 2.0), \
+                mock.patch.object(ears, "listening", side_effect=lambda: not done["flag"]), \
+                mock.patch.object(ears, "record", side_effect=record), \
+                mock.patch.object(ears, "transcribe", side_effect=transcribe), \
+                mock.patch.object(ears, "answer_words", side_effect=answer_words), \
+                mock.patch.object(ears, "say_answer", side_effect=say_answer), \
+                mock.patch.object(ears, "talk_ok", return_value=(True, 1.0)), \
+                mock.patch.object(ears, "control", side_effect=control), \
+                mock.patch.object(ears, "local_line", return_value=None), \
+                mock.patch.object(ears, "tour_line", return_value=None), \
+                mock.patch.object(ears, "set_state"), mock.patch.object(ears, "thinking_changed"), \
+                mock.patch.object(ears, "feedback"), mock.patch.object(ears.chime, "play", side_effect=play), \
+                mock.patch.object(ears, "recordings"), mock.patch.object(ears, "surroundings") as around, \
+                mock.patch.object(ears.speakers, "Hold"), \
+                mock.patch.object(ears.commands, "desktop_state", return_value={}), \
+                mock.patch.object(timeline.Timeline, "save"), mock.patch.object(ears.log, "exception"):
+            around.lines.return_value = []
+            around.points_at_screen.return_value = False
+            around.Snapshot.return_value.get.return_value = ([], None)
+            around.Snapshot.return_value.desktop = {}
+            ears.voice_loop(mic, settings, None, LevelVAD())
+        self.assertEqual(asked, ["What is the time?"])
+        self.assertEqual(said, ["answer to What is the time?"])
+        self.assertNotIn("Diablo.", jev)
+        self.assertEqual(chimes[0], "listen")
+        self.assertEqual(chimes[-1], "never")
+        self.assertIn("What is the weather?", jev)
+        self.assertEqual(len(records), 3)
+        self.assertNotIn("interrupt", records[1])
 
     def test_a_cut_inline_reply_reports_the_cut(self):
         from unittest import mock
@@ -342,7 +444,7 @@ class TestSpeechControlAnswersInOrder(unittest.TestCase):
         def transcribe(audio, cfg, *_, **__):
             return "line two" if np.max(np.abs(audio)) > 0.75 else "line one"
 
-        def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None):
+        def answer_words(cfg, text, *args, **kwargs):
             time.sleep(0.3)
             return f"answer to {text}"
 

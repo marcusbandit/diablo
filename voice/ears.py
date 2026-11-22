@@ -62,9 +62,6 @@ INLINE_WAIT_S = 1.5
 # kept playing after each new order (2026-11-13). The wait now ends once he has been quiet
 # this long and an answer is ready.
 INTERRUPT_QUIET_S = 0.5
-# Right after he cut an answer off with the name, the rest waits this long for the line he cut
-# in to say, so it is not spoken over him.
-CUT_QUIET_S = 3.0
 # A piece this likely to be speech already holds a ready answer back: the first syllable of his
 # next line often scores under SPEECH_PROB.
 ONSET_PROB = 0.3
@@ -869,7 +866,9 @@ def early_local(words, loop=False):
     "speech control" from a turn, a bare "stop" inside speech control. They end the turn at the
     first pause, so the chime answers at once instead of after the full quiet: on a box whose
     speech to text runs through the hub, "Diablo, dictate" sat waiting until he said it four
-    times (2026-11-16)."""
+    times (2026-11-16). Inside speech control the name alone is one too: the request follows it."""
+    if loop and bare_name(words):
+        return {"local": "name"}
     if commands.wants_dictation(words):
         return {"local": "dictate"}
     intent = commands.loop_intent(words, active=loop)
@@ -1595,9 +1594,11 @@ def follow_up(cfg):
     return follow_up_s(cfg)
 
 
-def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lead=None, tl=None, window=None):
+def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lead=None, tl=None, window=None,
+         in_loop=False):
     """One turn. True when Marcus cut the reply off with the name, so another turn follows,
-    LOOP when he asked for the voice loop.
+    LOOP when he asked for the voice loop. in_loop: the turn is a break inside speech control,
+    so ending speech control or sending him away returns STOP.
 
     The request is recorded from woke_at, the moment the name was heard, with lead, the
     talk between the end of the name and the fire, in front: "Diablo, turn the lights off"
@@ -1683,10 +1684,14 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
         return False
     log.info("heard: %s", text)
     if dismissed(text):
-        return dismiss(cfg, speaker, tl)
+        sent = dismiss(cfg, speaker, tl)
+        return STOP if in_loop else sent
     toured = tour_line(mic, speaker, cfg, detector, tap, tl, text)
     if toured is not None:
         return toured
+    if in_loop and commands.loop_intent(text, active=True) == "stop":
+        tl.note(outcome="speech control off")
+        return STOP
     if commands.loop_intent(text) == "start":
         tl.note(outcome="speech control on")
         return LOOP
@@ -1796,11 +1801,10 @@ def told(lines, tl, first, shows):
         yield line
 
 
-def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=None, after_cut=False):
+def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=None):
     """One line inside the voice loop, no name needed. None when nothing was said or the
     line was not for him, STOP when he ended the loop, CUT when he cut its answer off with
-    the name, True when a line was handled. after_cut: he just cut an answer off, so a ready
-    answer waits CUT_QUIET_S of quiet for the line he cut in to say."""
+    the name, True when a line was handled."""
     cfg = dict(settings.get())
     cfg["ears.turn_max_s"] = cfg.get("ears.loop_turn_max_s") or cfg.get("ears.turn_max_s") or LOOP_TURN_MAX_S
     set_state("listening", holding=False, loop=True)
@@ -1808,8 +1812,7 @@ def loop_turn(mic, settings, speaker, vad, detector=None, tap=None, dictation=No
     heard = record(mic, cfg, time.monotonic(), vad, probe=lambda clip: transcribe(clip, cfg),
                    no_speech_s=LOOP_LISTEN_S, tl=tl,
                    early=lambda words: early_read(cfg, words, commands.desktop_state, loop=True),
-                   interrupt=PENDING.has_speech,
-                   interrupt_quiet_s=CUT_QUIET_S if after_cut else INTERRUPT_QUIET_S, judge=own_voice(cfg, tap))
+                   interrupt=PENDING.has_speech, judge=own_voice(cfg, tap))
     audio, spoke = heard
     if not spoke:
         return None
@@ -1838,6 +1841,9 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
         log.info("loop: line refused, voice %.3f against his talk", voice)
         tl.note(outcome=f"refused, voice {voice:.2f}")
         return None
+    if heard.local == "name":
+        tl.note(text=heard.text, outcome="name, listening for the request")
+        return name_in_loop(mic, settings, speaker, vad, detector, tap, since=heard.until)
     if heard.early is None:
         chime.play("done")
     set_state("thinking", loop=True, **({} if heard.text is not None else {"step": "transcribing"}))
@@ -1858,6 +1864,9 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
         tl.note(outcome="noise")
         return None
     log.info("loop heard: %s", text)
+    if bare_name(text):
+        tl.note(outcome="name, listening for the request")
+        return name_in_loop(mic, settings, speaker, vad, detector, tap, since=heard.until)
     if commands.loop_intent(text, active=True) == "stop":
         tl.note(outcome="speech control off")
         return STOP
@@ -1900,6 +1909,35 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
     if words is not None and say_answer(mic, speaker, words, cfg, detector, tap, tl):
         return CUT
     return True
+
+
+def bare_name(text):
+    """Whether a line is his name and nothing else, as Whisper spells it: "Diablo.", "Hey Diablo?"."""
+    text = str(text or "")
+    found = SAID_NAME.search(text)
+    if not found:
+        return False
+    rest = (text[:found.start()] + " " + text[found.end():]).lower()
+    return all(word in NAME_CALLS for word in re.findall(r"[a-z']+", rest))
+
+
+# Words that only call him, around the name.
+NAME_CALLS = ("hey", "hi", "oi", "ok", "okay", "yo")
+
+
+def name_in_loop(mic, settings, speaker, vad, detector=None, tap=None, since=None):
+    """He said the name inside speech control, alone or over an answer: a break from it, never a
+    turn by itself. The listening chime, then the next line is the request, taken the way a woken
+    turn takes it, Claude included, and speech control goes on after. since: where the name line
+    ended, so words he goes straight on with are kept; None after a cut. STOP when the request
+    ended speech control, CUT when he cut its answer off with the name again, True otherwise."""
+    log.info("loop: the name, listening for the request")
+    result = timed_turn(timeline.Timeline("loop-name"), mic, settings, speaker, vad, detector, tap,
+                        woke_at=since, in_loop=True)
+    set_state("listening", loop=True)
+    if result == STOP:
+        return STOP
+    return CUT if result is True else True
 
 
 def loop_to_claude(cfg, text):
@@ -1960,7 +1998,11 @@ def voice_loop(mic, settings, speaker, vad, detector=None, tap=None, dictation=N
         if cut:
             last = time.monotonic()
         try:
-            result = loop_turn(mic, settings, speaker, vad, detector, tap, dictation, after_cut=cut)
+            if cut:
+                # He cut the answer off with the name: the same break as the name said alone.
+                result = name_in_loop(mic, settings, speaker, vad, detector, tap)
+            else:
+                result = loop_turn(mic, settings, speaker, vad, detector, tap, dictation)
         except Exception:
             log.exception("loop turn failed")
             result = None
