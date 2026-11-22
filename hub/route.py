@@ -643,9 +643,14 @@ def desktop_action(answer, text, desktop):
     Jev must be sure enough of the command (route.desktop_threshold 0.8 to close a window, a tab or press enter,
     route.desktop_light_threshold 0.6 for the rest), the line short unless it is music or sound, and the
     target clear: a named window jev is unsure of, or a workspace with no number, goes
-    to Claude instead of a guess.
+    to Claude instead of a guess. A "new thread" line is never one: the hub makes that T3
+    thread itself (hub/newthread.py), where a new tab or window would be a wrong guess.
     """
     if not answer or not desktop:
+        return None
+    from . import newthread
+
+    if newthread.command(text) is not None:
         return None
     action = answer.get("desktop")
     known = (DESKTOP_WINDOW + DESKTOP_WORKSPACE + DESKTOP_MEDIA + DESKTOP_SOUND + tuple(KEY_SAID)

@@ -7,8 +7,11 @@ stage: what Super+Shift+Enter does in his stage layout (hypr-config, lua/stage.l
 named window: focus it, call that bind's own put_on_stage, then put the cursor in its middle.
 The staging itself stays in hypr-config; nothing here lays windows out.
 
-Run over ssh from the hub as `python -m voice.window focus|stage <app or title>`; it prints one
-line and exits 0 when done. No target, or "it" or "this", means the focused window. The voice
+thread: open a t3code://threads/... link in T3 Code and focus its window, for a thread the hub
+just made ("new thread in AniBeam").
+
+Run over ssh from the hub as `python -m voice.window focus|stage <app or title>` or
+`python -m voice.window thread <t3code link>`; it prints one line and exits 0 when done. No target, or "it" or "this", means the focused window. The voice
 side calls focus() and stage() with an address.
 """
 
@@ -157,9 +160,48 @@ def stage(address):
     return _warp(address)
 
 
+T3_CLASS = "t3code"
+THREAD_LINK = re.compile(r"^t3code://threads/[\w%.:-]+/[\w%.:-]+$")
+THREAD_WAIT_S = 6
+
+
+def t3_window():
+    """The T3 Code window, or None."""
+    for c in clients() or []:
+        if T3_CLASS in str(c.get("class") or c.get("initialClass") or "").lower().replace(".", ""):
+            return c
+    return None
+
+
+def thread(link, launch=None, wait=None, sleep=None):
+    """(ok, why): opens the thread link in T3 Code, then focuses T3 Code with focus(). A T3 Code
+    that is not running yet gets a few seconds to show its window."""
+    import time
+
+    if not THREAD_LINK.match(str(link or "")):
+        return False, "that is not a T3 Code thread link"
+    try:
+        (launch or subprocess.Popen)(["xdg-open", link], start_new_session=True, stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_env())
+    except OSError as error:
+        return False, f"xdg-open failed: {error}"
+    deadline = time.monotonic() + (THREAD_WAIT_S if wait is None else wait)
+    while True:
+        c = t3_window()
+        if c is not None:
+            return focus(c["address"])
+        if time.monotonic() >= deadline:
+            return False, "T3 Code did not open"
+        (sleep or time.sleep)(0.25)
+
+
 def main(argv):
+    if argv and argv[0] == "thread":
+        ok, why = thread(argv[1] if len(argv) > 1 else "")
+        print("opened the thread in T3 Code" if ok else why)
+        return 0 if ok else 1
     if not argv or argv[0] not in ("focus", "stage"):
-        print("usage: python -m voice.window focus|stage [app or title]")
+        print("usage: python -m voice.window focus|stage [app or title] | thread <t3code link>")
         return 2
     client, why = find(" ".join(argv[1:]))
     if client is None:
