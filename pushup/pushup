@@ -123,7 +123,7 @@ def load_config():
     cfg["reps_min"], cfg["reps_max"] = sorted((cfg["reps_min"], cfg["reps_max"]))
     # Names the catalog doesn't know (pull-ups, once there's a bar) stay: they get a plain figure
     # and push-up sized goals.
-    cfg["exercises"] = [catalog.current(e) for e in cfg["exercises"] if isinstance(e, str) and e] or ["push-ups"]
+    cfg["exercises"] = list(dict.fromkeys(catalog.current(e) for e in cfg["exercises"] if isinstance(e, str) and e)) or ["push-ups"]
     cfg["stretches"] = [e for e in cfg["stretches"] if e in STRETCHES] or list(catalog.MIXED_STRETCHES)
     if "gear" not in raw:
         # From before gear was asked: someone who switched on a move that needs some has the everyday
@@ -229,7 +229,7 @@ def inbox_entry(e, now):
         n = e.get("did")
         if isinstance(n, bool) or not isinstance(n, int) or not 0 < n <= INBOX_MAX["did"] or not isinstance(e.get("exercise"), str):
             return None
-        out["exercise"] = catalog.find(e["exercise"]) or e["exercise"]
+        out["exercise"] = catalog.current(catalog.find(e["exercise"]) or e["exercise"])
         return out
     return None
 

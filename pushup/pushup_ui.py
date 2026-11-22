@@ -1193,6 +1193,9 @@ class Card:
         self.reminder_mode = not (args.intro or args.graph or args.add or args.challenge_intro)
         self.challenge = json.loads(args.challenge) if getattr(args, "challenge", "") else None
         self.offer = json.loads(args.options) if self.reminder_mode and args.options else []
+        for o in self.offer:
+            if isinstance(o, dict) and isinstance(o.get("exercise"), str):
+                o["exercise"] = catalog.current(o["exercise"])
         self.at = 0
         self.calm = bool(args.calm)
         # The day's push-ups are in: the card is a bonus, passing it is free and quick.

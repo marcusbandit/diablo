@@ -101,7 +101,9 @@ def current(name):
 # Names people type for these: 'rows', 'pullups', 'dips'. Matched with spaces and hyphens taken out.
 ALIASES = {"pushups": "push-ups", "pushup": "push-ups", "pullups": "assisted pull-ups", "pullup": "assisted pull-ups",
            "rows": "inverted rows", "row": "inverted rows", "bodyrows": "inverted rows", "bodyrow": "inverted rows",
-           "invertedrow": "inverted rows", "supinerows": "inverted rows", "australianpullups": "inverted rows", "dips": "assisted dips",
+           "invertedrow": "inverted rows", "supinerows": "inverted rows", "supinerow": "inverted rows",
+           "australianpullups": "inverted rows", "australianpullup": "inverted rows", "tablerows": "inverted rows",
+           "tablerow": "inverted rows", "dips": "assisted dips",
            "pikeups": "seated pike ups", "pikes": "pike push-ups",
            "bulgarians": "bulgarian split squats", "bss": "bulgarian split squats", "lsits": "L-sit", "lsit": "L-sit",
            "compression": "compression hold", "compressions": "compression hold", "legliftholds": "compression hold"}

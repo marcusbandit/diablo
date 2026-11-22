@@ -180,7 +180,7 @@ def rows(text, prefixed=True):
                 "title": f"Rows, {r['sets']} of {r['cap']} sets",
                 "subtitle": f"Enter logs {r['goal']} at the table edge",
                 "icon": "rowing",
-                "run": [PUSHUP, "log", str(r["goal"]), "body", "rows"],
+                "run": [PUSHUP, "log", str(r["goal"]), "inverted", "rows"],
             })
         on = c["feet_up"]
         out.append({
