@@ -145,6 +145,7 @@ Rectangle {
                 font.family: card.style.family
                 font.pixelSize: card.style.normal - 1
                 wrapMode: Text.Wrap
+                textFormat: Text.PlainText
             }
         }
     }
