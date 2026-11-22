@@ -36,3 +36,9 @@ test("two turns read as the newest with a count", () => {
     const turns = [{ words: "thinking", origin: "a", since: 1 }, { words: "the lights", origin: "b", since: 2 }];
     assert.equal(busy.busyWords(turns), "the lights +1");
 });
+
+test("a finished task card in the feed is never a moon", () => {
+    const turn = { words: "thinking", origin: "voice", since: 1 };
+    const moons = busy.moons([turn], [anibeam, { id: "d", state: "done" }, { id: "f", state: "failed" }], false);
+    assert.deepEqual(moons.map(m => m.id), ["turn:voice:1", "task:thread-1"]);
+});

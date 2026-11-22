@@ -207,6 +207,41 @@ def listing(states=None, since=None, now=None):
     return sorted(shown, key=order)[:MOST]
 
 
+def taken(task, now):
+    """How long a task has run, or ran, in words."""
+    start = task.get("started_at") or 0
+    end = task.get("finished_at") if task.get("state") in FINISHED and task.get("finished_at") else now
+    seconds = max(0, int(end - start)) if start else 0
+    if seconds < 60:
+        return f"{seconds} s"
+    minutes = seconds // 60
+    return f"{minutes} min" if minutes < 60 else f"{minutes // 60} h {minutes % 60} min"
+
+
+def spoken_listing(state=None, now=None):
+    """The task cards as the list_tasks tool answers them: one line each, waiting ones first."""
+    now = time.time() if now is None else now
+    if state and state not in STATES:
+        return f"state is one of {', '.join(STATES)}"
+    shown = listing([state] if state else None, now=now)
+    if not shown:
+        return f"no {state} tasks" if state else "no tasks"
+    rows = []
+    for task in shown:
+        parts = [f"{task['state']}: {task['title']}"]
+        if task["step"]:
+            parts.append(task["step"])
+        elif task["state"] == "waiting":
+            parts.append("waits on Marcus")
+        parts.append(("took " if task["state"] in FINISHED else "for ") + taken(task, now))
+        if task["machine"]:
+            parts.append(f"on {task['machine']}")
+        rows.append(f"{', '.join(parts)} [{task['id']}]")
+    waiting = sum(1 for task in shown if task["state"] == "waiting")
+    head = f"{waiting} waiting on Marcus" if waiting else "nothing waiting on Marcus"
+    return head + "\n" + "\n".join(rows)
+
+
 def prune(now=None):
     """Drops finished tasks older than PRUNE_S, at most once every PRUNE_EVERY_S."""
     now = time.time() if now is None else now

@@ -7,8 +7,10 @@ so the orb can tell a quiet hub from a lost one. When the hub cannot be reached 
 {"turns": [], "tasks": [], "lost": true} and tries again, so a dropped link never leaves the orb busy.
 
 The live task cards ride along the same way: GET /v1/tasks at the start and with every recheck,
-then each `task` event, printed as {"tasks": [{"id", "state", "title"}]} with only the active ones
-(queued, working, waiting), so the orb can carry one moon for each.
+then each `task` event, printed as {"tasks": [{"id", "state", "title", "step", "machine", "link",
+"started_at", "finished_at"}]}. The active ones (queued, working, waiting) give the orb one moon
+each; the Tasks section of the central card lists them all, finished ones too until they are
+DONE_KEPT_S (FAILED_KEPT_S for a failure) old, so the list and the moons read one feed.
 
 Before each connection it prints {"hub": {"url", "token"}} from config.toml, so History in the
 central card reads the hub with the same pair.
@@ -71,6 +73,9 @@ def shown(event):
 
 
 ACTIVE = ("queued", "working", "waiting")
+FINISHED = ("done", "failed")
+DONE_KEPT_S = 120
+FAILED_KEPT_S = 600
 TASKS = {}
 TASKS_LOCK = threading.Lock()
 # Bumped by every task event, so a listing asked for before one never undoes it.
@@ -78,23 +83,49 @@ TASK_EVENTS = [0]
 LAST_TASKS = [None]
 
 
-def entry(task):
-    """What the orb keeps of one active task, or None for a finished or malformed one."""
-    if not isinstance(task, dict) or not task.get("id") or task.get("state") not in ACTIVE:
+def kept_for(state):
+    return FAILED_KEPT_S if state == "failed" else DONE_KEPT_S
+
+
+def entry(task, now=None):
+    """What the presence keeps of one task: every active one, and a finished one while it is
+    newer than its keep time. None for an older or malformed one."""
+    now = time.time() if now is None else now
+    if not isinstance(task, dict) or not task.get("id") or task.get("state") not in ACTIVE + FINISHED:
         return None
+    finished = number(task.get("finished_at"), 0.0) or None
+    if task["state"] in FINISHED and (not finished or now - finished > kept_for(task["state"])):
+        return None
+    links = task.get("links") if isinstance(task.get("links"), dict) else {}
+    link = str(links.get("thread") or links.get("pr") or "")
     return {"id": str(task["id"]), "state": task["state"],
             "title": " ".join(str(task.get("title") or "").split())[:60],
-            "started_at": number(task.get("started_at"), 0.0)}
+            "step": " ".join(str(task.get("step") or "").split())[:120],
+            "machine": " ".join(str(task.get("machine") or "").split())[:40],
+            "link": link if link.startswith(("https://", "http://", "t3code://")) else "",
+            "started_at": number(task.get("started_at"), 0.0),
+            "finished_at": finished}
+
+
+def expire(now=None):
+    """Drops the finished tasks past their keep time. True when any went."""
+    now = time.time() if now is None else now
+    gone = [key for key, task in TASKS.items() if entry(task, now) is None]
+    for key in gone:
+        TASKS.pop(key, None)
+    return bool(gone)
 
 
 def tasks_line():
     with TASKS_LOCK:
         rows = sorted(TASKS.values(), key=lambda t: (t["started_at"], t["id"]))
-    return {"tasks": [{k: v for k, v in row.items() if k != "started_at"} for row in rows]}
+    return {"tasks": rows}
 
 
 def say_tasks():
     """Prints the tasks line, only when it differs from the last one printed."""
+    with TASKS_LOCK:
+        expire()
     line = tasks_line()
     with TASKS_LOCK:
         if line == LAST_TASKS[0]:
@@ -173,7 +204,7 @@ def locked():
     return handle
 
 
-PAGES = ("settings", "voice", "history")
+PAGES = ("settings", "voice", "history", "tasks")
 MARKS_CPS = 15.0
 
 
@@ -217,7 +248,7 @@ def mark(beat, now=None):
 
 def show(event, now=None):
     """A `screen` event onto the desktop: small into presence.json, large into panel.json, an
-    `open` one into panel.json as the Settings page it names, or the History tab."""
+    `open` one into panel.json as the Settings page it names, the History tab or Tasks."""
     now = time.time() if now is None else now
     if event.get("marks") is not None:
         return mark(event.get("marks"), now)
@@ -226,8 +257,8 @@ def show(event, now=None):
         if page not in PAGES:
             return None
         panel = read_json(STATE / "panel.json", {})
-        if page == "history":
-            write_json(STATE / "panel.json", {**panel, "open": True, "view": "history", "page": "", "at": now})
+        if page in ("history", "tasks"):
+            write_json(STATE / "panel.json", {**panel, "open": True, "view": page, "page": "", "at": now})
         else:
             write_json(STATE / "panel.json", {**panel, "open": True, "view": "settings", "page": page, "page_at": now, "at": now})
         return page
@@ -262,7 +293,7 @@ def duck(event, opener=urllib.request.urlopen):
 def ask(base, headers):
     with urllib.request.urlopen(urllib.request.Request(f"{base}/v1/busy", headers=headers), timeout=10) as reply:
         say(shown(json.loads(reply.read())))
-    url = f"{base}/v1/tasks?state={','.join(ACTIVE)}"
+    url = f"{base}/v1/tasks?since={time.time() - FAILED_KEPT_S:.0f}"
     with TASKS_LOCK:
         before = TASK_EVENTS[0]
     try:

@@ -398,6 +398,19 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_tasks",
+            "description": "Read the task cards Marcus sees in his apps and in the central card on his desktop: every watched T3 thread and update_task card, the ones waiting on him first, with state, current step, time taken and machine. Use it when he asks what is running, what waits on him, or how a piece of work is going, and answer in a line or two.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "state": {"type": "string", "enum": ["queued", "working", "waiting", "done", "failed"], "description": "only cards in this state; leave out for all"},
+                },
+            },
+        },
+    },
 ]
 TOOLS += [
     {"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["inputSchema"]}}
@@ -606,6 +619,9 @@ def _call_tool(name, arguments, ctx=None):
     if name == "update_task":
         from . import mcp_server, tasks
         return mcp_server.update_task(arguments, tasks.save)
+    if name == "list_tasks":
+        from . import tasks
+        return tasks.spoken_listing(arguments.get("state"))
     if name == "save_fact":
         db.add_fact(arguments.get("text", ""), arguments.get("tags") or [])
         return "fact saved"

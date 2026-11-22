@@ -154,18 +154,42 @@ class TestTaskFeed(unittest.TestCase):
         self.assertTrue(feed.track({"id": "b", "state": "working", "title": "Fix the orb", "started_at": 20}))
         self.assertTrue(feed.track({"id": "a", "state": "queued", "title": "Ship it", "started_at": 10}))
         self.assertFalse(feed.track({"id": "a", "state": "queued", "title": "Ship it", "started_at": 10}))
-        self.assertTrue(feed.track({"id": "a", "state": "waiting", "title": "Ship it", "started_at": 10}))
-        self.assertEqual(feed.tasks_line(), {"tasks": [{"id": "a", "state": "waiting", "title": "Ship it"},
-                                                       {"id": "b", "state": "working", "title": "Fix the orb"}]})
+        self.assertTrue(feed.track({"id": "a", "state": "waiting", "title": "Ship it", "step": "Waits on you", "started_at": 10}))
+        self.assertEqual([(t["id"], t["state"], t["title"], t["step"]) for t in feed.tasks_line()["tasks"]],
+                         [("a", "waiting", "Ship it", "Waits on you"), ("b", "working", "Fix the orb", "")])
         self.assertTrue(feed.track({"id": "b", "state": "done"}))
         self.assertFalse(feed.track({"id": "zz", "state": "failed"}))
         self.assertFalse(feed.track("junk"))
         self.assertEqual([t["id"] for t in feed.tasks_line()["tasks"]], ["a"])
 
+    def test_a_row_carries_what_the_task_list_shows(self):
+        feed.track({"id": "t", "state": "working", "title": "  Build   the card ", "step": "Running tests", "machine": "box-a",
+                    "started_at": 5, "links": {"thread": "https://example.com/t/1", "pr": "https://example.com/pr/2"}})
+        feed.track({"id": "u", "state": "working", "started_at": 6, "links": {"pr": "file:///etc/passwd"}})
+        self.assertEqual(feed.tasks_line()["tasks"], [
+            {"id": "t", "state": "working", "title": "Build the card", "step": "Running tests", "machine": "box-a",
+             "link": "https://example.com/t/1", "started_at": 5.0, "finished_at": None},
+            {"id": "u", "state": "working", "title": "", "step": "", "machine": "",
+             "link": "", "started_at": 6.0, "finished_at": None}])
+
+    def test_finished_tasks_stay_a_short_while(self):
+        now = 10_000.0
+        with mock.patch.object(feed.time, "time", return_value=now):
+            self.assertTrue(feed.track({"id": "d", "state": "done", "started_at": 1, "finished_at": now - 30}))
+            self.assertTrue(feed.track({"id": "f", "state": "failed", "started_at": 1, "finished_at": now - 300}))
+            self.assertFalse(feed.track({"id": "old", "state": "done", "finished_at": now - feed.DONE_KEPT_S - 1}))
+        self.assertEqual(sorted(feed.TASKS), ["d", "f"])
+        with mock.patch.object(feed.time, "time", return_value=now + feed.DONE_KEPT_S):
+            self.assertTrue(feed.expire())
+        self.assertEqual(sorted(feed.TASKS), ["f"])
+        with mock.patch.object(feed.time, "time", return_value=now + feed.FAILED_KEPT_S):
+            feed.expire()
+        self.assertEqual(feed.TASKS, {})
+
     def test_a_listing_replaces_what_was_known(self):
         feed.track({"id": "old", "state": "working"})
         feed.replace_tasks([{"id": "n", "state": "working", "started_at": 1}, {"id": "d", "state": "done"}, "junk"])
-        self.assertEqual(feed.tasks_line(), {"tasks": [{"id": "n", "state": "working", "title": ""}]})
+        self.assertEqual([t["id"] for t in feed.tasks_line()["tasks"]], ["n"])
 
     def test_a_listing_never_undoes_an_event_that_came_while_it_was_fetched(self):
         before = feed.TASK_EVENTS[0]

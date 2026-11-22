@@ -51,7 +51,16 @@ Asked to, he opens up: the orb glides to the middle of the monitor and a big car
 him (`Panel.qml`, sized by `Place.panelRect`). It no longer follows the cursor. Escape, the
 close button or a click anywhere outside puts him back. Three pages:
 
-- **Now**: a card shown big. "Enlarge this" moves the newest card here.
+- **Now**: a card shown big ("Shown"). "Enlarge this" moves the newest card here. Beside it,
+  **Tasks** lists every task card the hub holds (`Tasks.qml`, rows worked out in `tasks.js`):
+  title, state, current step and time taken, the ones waiting on Marcus first with what they
+  wait for. Hovering a row says where it runs and when it started or finished; a click opens its
+  T3 thread or pull request. It reads the same `tasks` lines from `busy.py` that the moons do, so
+  the two never disagree: busy.py keeps every active card, and a finished one for 2 minutes (10
+  for a failure), and the list drops it on the same clock. The header beside his name counts the
+  tasks waiting on Marcus ("2 waiting for you", else "Nothing waiting"); a click on it opens
+  Tasks, and so does the Now tab when nothing is shown. `node --test tests/presence/tasks.test.mjs`
+  checks the order, the expiry and the times.
 - **History**: everything Marcus said to him on every channel, marked spoken or typed, and every
   reply, newest at the bottom (`History.qml`). It reads `GET /v1/history` with the `hub_url` and
   `hub_token` that `busy.py` reads from `config.toml` and prints to the shell; scrolling up loads
@@ -67,6 +76,7 @@ The spoken quick actions (`voice/panel.py`, no model turn): "open up", "expand" 
 "go to your settings", "open your settings", "take me to your settings" open it on Settings;
 "train your voice", "teach you my voice", "retrain your ears" open it on Settings at Your voice;
 "show my history", "open the history" open it on History;
+"show my tasks", "open the task list" open it on Tasks;
 "enlarge this", "make it bigger" enlarge the newest card; "close", "shrink", "make it small
 again" close it. "Close it" and "make it bigger" also mean a window, so they only count while the
 central card is open or a card is on screen. The state is `panel.json` (`{open, view, card,
@@ -75,7 +85,8 @@ page, page_at, at}`) in the same state dir; the ears, `busy.py` and `shell.qml` 
 `page_at` stamp, so asking again moves it again; scrolling by hand stops it at once.
 
 Typed, or on any channel the quick actions do not catch, the brain does the same with the
-`open_settings` tool (`page` settings, voice or history). It posts to `POST /v1/screen/open`, which goes out
+`open_settings` tool (`page` settings, voice, history or tasks). Asked what is running or what
+waits on him, the brain reads the same cards with `list_tasks` and answers in a line. It posts to `POST /v1/screen/open`, which goes out
 as a `screen` event with `open`, and `busy.py` writes it into `panel.json`, the same road
 `show_on_screen` takes.
 
@@ -111,7 +122,8 @@ line boils, every 700 ms while he sleeps) on a small dark disc, tinted by what h
 Only his own running hub turns make him busy (`presence/busy.js`, tested in node by
 `tests/presence/busy.test.mjs`). The moons count what he has in flight while one runs: each
 turn, and each live task card (`GET /v1/tasks` and the `task` event, which `busy.py` follows
-beside the turns), a task waiting on Marcus in blue. A task card on its own never raises him,
+beside the turns), a task waiting on Marcus in blue. A finished card in the feed is for the
+Tasks list only and never a moon. A task card on its own never raises him,
 never gives him the busy face and never puts its title in his pill: a watched T3 thread is
 not him, and its step belongs on its card.
 They sit evenly around one orbit and turn together; one that ends fades where it was and the

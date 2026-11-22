@@ -16,7 +16,7 @@ DB_PATH = os.environ.get("DIABLO_HUB_DB", os.path.expanduser("~/diablo-hub/diabl
 SERVER_INFO = {"name": "diablo", "version": "2.0"}
 SHARED = (
     "save_fact", "recall_facts", "emit_object", "workspace_todo", "hue_light",
-    "phone_status", "fleet_power", "fleet_where", "brain_search", "brain_read", "brain_log", "update_task",
+    "phone_status", "fleet_power", "fleet_where", "brain_search", "brain_read", "brain_log", "update_task", "list_tasks",
     "ask_user", "cancel_question",
 )
 EXTRA = [
@@ -53,10 +53,10 @@ EXTRA = [
     },
     {
         "name": "open_settings",
-        "description": "Open your central card on Marcus's desktop at a page of your Settings tab, whichever channel he asked on. page settings: when he asks to open, see or go to your settings. page voice: Settings at Your voice, with Teach him again, when he asks to train or retrain your voice or ears, to teach you his voice, or to learn his voice. It only opens the page; he starts the training there. page history: the History tab, everything he said on every channel and every reply, when he asks to see his history, the chat history, or everything he has said.",
+        "description": "Open your central card on Marcus's desktop at a page of your Settings tab, whichever channel he asked on. page settings: when he asks to open, see or go to your settings. page voice: Settings at Your voice, with Teach him again, when he asks to train or retrain your voice or ears, to teach you his voice, or to learn his voice. It only opens the page; he starts the training there. page history: the History tab, everything he said on every channel and every reply, when he asks to see his history, the chat history, or everything he has said. page tasks: Tasks, every task card with the ones waiting on him first, when he asks to see the tasks, what is running or what waits on him on screen.",
         "inputSchema": {
             "type": "object",
-            "properties": {"page": {"type": "string", "enum": ["settings", "voice", "history"]}},
+            "properties": {"page": {"type": "string", "enum": ["settings", "voice", "history", "tasks"]}},
         },
     },
     {
@@ -399,6 +399,8 @@ def open_settings(arguments):
         return failed if failed.startswith("could not") else f"not opened: {failed}"
     if page == "history":
         return "opened the History tab"
+    if page == "tasks":
+        return "opened Tasks"
     return "opened Settings at Your voice" if page == "voice" else "opened your Settings"
 
 

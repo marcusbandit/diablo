@@ -71,7 +71,10 @@ Window {
         "panel-training": { mood: "listening", panel: { view: "settings" } },
         "panel-history": { mood: "asleep", panel: { view: "history" } },
         "panel-history-search": { mood: "asleep", panel: { view: "history", query: "basil" } },
-        "panel-now": { mood: "asleep", panel: { view: "now", card: { title: "Weather", big: "7°", lines: ["Cloudy, feels like 4°. Rain from 16:00.", "Tomorrow 4 to 8 degrees, light rain."] } } },
+        "panel-tasks": { mood: "asleep", screen: [5120, 1440], panel: { view: "tasks", tasks: "all" } },
+        "panel-tasks-calm": { mood: "asleep", screen: [5120, 1440], panel: { view: "tasks", tasks: "calm" } },
+        "panel-tasks-empty": { mood: "asleep", panel: { view: "tasks", tasks: "none" } },
+        "panel-now": { mood: "asleep", panel: { view: "now", tasks: "all", card: { title: "Weather", big: "7°", lines: ["Cloudy, feels like 4°. Rain from 16:00.", "Tomorrow 4 to 8 degrees, light rain."] } } },
         "panel-list": { mood: "asleep", panel: { view: "now", card: { title: "Packing list", sections: win.packing } } },
         "panel-list-desk": { mood: "asleep", screen: [5120, 1440], panel: { view: "now", card: { title: "Packing list", sections: win.packing } } },
         "panel-list-wide": { mood: "asleep", screen: [5120, 1440], panel: { view: "now", card: { title: "Spring cleaning", sections: win.chores } } },
@@ -91,6 +94,24 @@ Window {
         "diagram-last": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 99 }
     })
     readonly property var s: scenes[scene] ?? scenes["card-below"]
+    // Made-up task cards, timed from now, in the shape busy.py prints them.
+    function sampleTasks(which: string): var {
+        const now = Date.now() / 1000;
+        const all = [
+            { id: "t1", state: "working", title: "Split the settings page", step: "Running the tests", machine: "desk", started_at: now - 14 * 60 - 5, finished_at: null },
+            { id: "t2", state: "waiting", title: "Rename the export button", step: "Waits on 1 request from you", machine: "desk", started_at: now - 6 * 60, finished_at: null },
+            { id: "t3", state: "done", title: "Fix the weather card", step: "Merged", machine: "server", started_at: now - 22 * 60, finished_at: now - 60 },
+            { id: "t4", state: "queued", title: "Tidy the old branches", step: "", machine: "desk", started_at: now - 40, finished_at: null },
+            { id: "t5", state: "working", title: "Back up the photo library", step: "Copying 2 of 5 folders", machine: "server", started_at: now - 67 * 60, finished_at: null },
+            { id: "t6", state: "failed", title: "Build the phone app", step: "The build ran out of memory", machine: "desk", started_at: now - 9 * 60, finished_at: now - 3 * 60 },
+            { id: "t7", state: "waiting", title: "Book a table for Friday", step: "", machine: "", started_at: now - 2 * 60, finished_at: null },
+        ];
+        if (which === "none")
+            return [];
+        if (which === "calm")
+            return all.filter(t => t.state !== "waiting");
+        return all;
+    }
     readonly property bool cardsUp: (s.cards ?? []).length > 0
     readonly property bool awake: ["listening", "thinking", "speaking"].includes(s.mood)
 
@@ -253,6 +274,7 @@ Window {
         earsUrl: win.ears
         hubUrl: win.hub
         hubToken: "preview-token"
+        tasks: win.sampleTasks(win.s.panel?.tasks ?? "none")
         Component.onCompleted: if (win.s.panel?.query)
             historySearch(win.s.panel.query)
     }

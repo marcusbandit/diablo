@@ -81,7 +81,7 @@ class TestEndpoint(ApiCase):
         self.assertEqual(self.client.post("/v1/screen", json={"title": "x"}).status_code, 403)
 
     def test_opening_a_settings_page_goes_out_as_a_screen_event(self):
-        for page in ("settings", "voice", "history"):
+        for page in ("settings", "voice", "history", "tasks"):
             with mock.patch.object(server, "publish") as published:
                 reply = self.client.post("/v1/screen/open", headers=HEADERS, json={"page": page})
             self.assertEqual(reply.status_code, 200)
@@ -135,6 +135,11 @@ class TestDesktopSide(unittest.TestCase):
         self.assertEqual(busy.show({"open": "history"}, now=9), "history")
         panel = self.read("panel.json")
         self.assertEqual((panel["open"], panel["view"], panel["page"]), (True, "history", ""))
+
+    def test_open_tasks_puts_the_central_card_on_tasks(self):
+        self.assertEqual(busy.show({"open": "tasks"}, now=9), "tasks")
+        panel = self.read("panel.json")
+        self.assertEqual((panel["open"], panel["view"], panel["page"]), (True, "tasks", ""))
 
     def test_an_unknown_page_writes_nothing(self):
         self.assertIsNone(busy.show({"open": "../x"}, now=5))
@@ -192,12 +197,14 @@ class TestTool(unittest.TestCase):
             self.assertEqual(post.call_args.kwargs["json"], {"page": "settings"})
             self.assertIn("History", mcp_server.call("open_settings", {"page": "history"}))
             self.assertEqual(post.call_args.kwargs["json"], {"page": "history"})
+            self.assertEqual(mcp_server.call("open_settings", {"page": "tasks"}), "opened Tasks")
 
     def test_the_charter_says_when_to_open_settings(self):
         from hub import charter
 
         self.assertIn("open_settings with page voice", charter.CHARTER)
         self.assertIn("open_settings with page history", charter.CHARTER)
+        self.assertIn("open_settings with page tasks", charter.CHARTER)
 
 
 class TestHubPair(unittest.TestCase):
