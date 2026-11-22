@@ -557,6 +557,33 @@ class SoundBeforeVideoTest(DuckCase):
         self.step()
         self.assertEqual(self.desk.vol(7), 10000)
 
+    def test_the_reply_takes_a_video_resumed_while_he_waited_again(self):
+        self.duck.update(True)
+        self.step()
+        self.hold.acquire()
+        self.hold.release(gap=0)
+        self.step()
+        self.assertEqual(self.desk.vol(7), 50000)
+        self.hold.acquire()
+        self.assertEqual(self.media.state, "Paused")
+        self.assertEqual(self.desk.vol(7), 10000)
+        self.duck.update(False)
+        self.hold.release()
+        self.assertEqual(self.log[-1], ("play", "zen.instance1"))
+        self.assertEqual(self.played_with(), 50000)
+
+    def test_a_new_conversation_before_the_flush_keeps_the_video_paused(self):
+        self.duck.update(True)
+        self.step()
+        self.hold.acquire()
+        self.hold.release()
+        self.duck.update(False)
+        with self.duck.lock:
+            self.duck._tick()
+        self.duck.update(True)
+        self.hold.flush()
+        self.assertEqual(self.media.state, "Paused")
+
     def test_keep_up_still_leaves_the_video_playing(self):
         self.duck.update(True)
         self.step()
@@ -568,6 +595,19 @@ class SoundBeforeVideoTest(DuckCase):
         self.duck.update(False)
         self.step()
         self.assertNotIn(("pause", "zen.instance1"), self.log)
+
+
+class PausedSoundTest(unittest.TestCase):
+    SOURCES = [{"id": "zen.1", "player": "zen.1", "names": ["zen"], "streams": [{"index": 7}]},
+               {"id": "app:spotify", "player": None, "names": ["spotify"], "streams": [{"index": 8}]}]
+
+    def test_by_id_or_by_player(self):
+        self.assertEqual(speakers.paused_sound([{"op": "pause", "id": "zen.1"}], self.SOURCES), (["zen"], [7]))
+        self.assertEqual(speakers.paused_sound([{"op": "pause", "player": "zen.1"}], self.SOURCES), (["zen"], [7]))
+
+    def test_dims_and_ops_without_names_pick_nothing(self):
+        ops = [{"op": "dim", "stream": 8, "id": "app:spotify"}, {"op": "pause"}]
+        self.assertEqual(speakers.paused_sound(ops, self.SOURCES), ([], []))
 
 
 class HoldLeavesTheDuckTest(unittest.TestCase):

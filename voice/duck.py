@@ -216,6 +216,7 @@ class Ducker:
         self.first = None
         self.his = set()
         self.spared = set()
+        self.resumed = set()
         self.cfg = settings(self.config_file)
 
     def start(self):
@@ -277,6 +278,7 @@ class Ducker:
                 return ALL
             if not self.cfg["on"]:
                 return set()
+            self._unspare()
             self._tick()
             return set(self.held)
 
@@ -288,7 +290,7 @@ class Ducker:
         """The sound hold calls this right before it plays what it paused, and waits for it, so
         nothing it resumes plays turned down. With the conversation over, everything comes back
         now. Mid conversation, the streams of those players come back and their apps stay up
-        for the rest of it."""
+        until the next hold claims the sound, which pauses or dims them again by its rules."""
         with self.lock:
             if not self.started:
                 return
@@ -309,7 +311,14 @@ class Ducker:
 
             held = set(self.held)
             self._give_back(only=theirs)
-            self.his |= held - set(self.held)
+            given = held - set(self.held)
+            self.his |= given
+            self.resumed |= given
+
+    def _unspare(self):
+        self.his -= self.resumed
+        self.resumed = set()
+        self.spared = set()
 
     def status(self):
         cfg = self.cfg
@@ -354,6 +363,7 @@ class Ducker:
             self.engaged = False
             self.suspended = False
             self.spared = set()
+            self.resumed = set()
             self.ended = True
         if self.held and (not wanted or not self.cfg["on"] or self.suspended):
             self._give_back()
@@ -364,6 +374,7 @@ class Ducker:
             self.first = None
             self.his = set()
             self.spared = set()
+            self.resumed = set()
             self.cfg = settings(self.config_file)
         if wanted and self.cfg["on"] and not self.suspended:
             self._sweep()

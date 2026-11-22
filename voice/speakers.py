@@ -264,14 +264,15 @@ class SoundHold:
     acquire() and release() are reference counted. The first acquire takes the sound
     (dim, pause, mute, by the rules it was given) and writes the crash file; the last
     release waits `gap` seconds before giving it back, and an acquire inside that gap
-    cancels the wait, so a second reply or his next turn never lets the sound pop back
-    up between. The sound is given back once, to what it was before the first acquire,
+    cancels the wait, so a second reply inside one conversation never lets the sound pop
+    back up between. The sound is given back once, to what it was before the first acquire,
     and only where nobody has touched it since. While held, the first acquire's rules win.
 
     Nothing it paused plays again before the conversation duck has given its sound back:
     the give back waits on duck.DUCK.before_resume() first. Once the conversation is over
     there is no gap, and the duck's end hands straight on to flush(), so the sound and what
-    was paused come back in one step, the sound first.
+    was paused come back in one step, the sound first. That includes the moment between a
+    reply and a follow-up listen, since the ears are asleep for it.
     """
 
     def __init__(self, media=None, gap=DEFAULT_GAP_S, timer=threading.Timer):
@@ -321,9 +322,9 @@ class SoundHold:
 
     def flush(self):
         """The conversation duck just gave the sound back: a hold that only waits out its gap
-        gives back now."""
+        gives back now, unless a new conversation began since."""
         with self._lock:
-            if not self.users and self.taken:
+            if not self.users and self.taken and duck.DUCK.quiet():
                 self._cancel()
                 self._give_back()
 
@@ -402,10 +403,12 @@ class SoundHold:
 def paused_sound(ops, sources):
     """The names and sink inputs of what the hold's ops pause, for the duck to give back before
     they play again."""
-    paused = {op.get("id") for op in ops if op.get("op") == "pause"}
+    pauses = [op for op in ops if op.get("op") == "pause"]
+    ids = {op.get("id") for op in pauses} - {None}
+    players = {op.get("player") for op in pauses} - {None}
     names, streams = [], []
     for src in sources:
-        if src.get("id") in paused:
+        if src.get("id") in ids or src.get("player") in players:
             names += [n for n in src.get("names") or [] if n]
             streams += [s["index"] for s in src.get("streams") or [] if s.get("index") is not None]
     return names, streams
