@@ -2,7 +2,9 @@
 // it is invented.
 import type { Server } from "bun";
 
-import type { BusyTurn, Message, Question, Section, Task } from "../src/engine/wire";
+import type { Block, BusyTurn, Message, Question, Section, Task } from "../src/engine/wire";
+
+import library from "./exercises.json";
 
 export const CODE = "ABCD-EFGH";
 
@@ -35,6 +37,12 @@ export class FakeHub {
   revoked: number[] = [];
   /** Sections whose messages answer 404, like one deleted between two calls. */
   broken = new Set<string>();
+  /** The workout room's sessions, newest last: invented sets and reps. */
+  workout: { id: string; exercise: string; sets: number[]; at: string; open: boolean }[] = [
+    { id: "s-1", exercise: "squats", sets: [15, 15, 12], at: "10:40", open: false },
+    { id: "s-2", exercise: "body rows", sets: [8, 8, 7], at: "13:05", open: false },
+  ];
+  workoutRecent = ["push-ups", "squats", "body rows", "plank"];
   private nextId = 1;
   private nextDevice = 1;
   private streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
@@ -51,6 +59,10 @@ export class FakeHub {
   stop() {
     this.closeStreams();
     this.server.stop(true);
+  }
+
+  workoutPanel(): Block[] {
+    return [workoutLogger(this.workout, this.workoutRecent)];
   }
 
   /** Stores a message as the hub would, and tells the stream. */
@@ -147,6 +159,26 @@ export class FakeHub {
       return this.json({ reply: reply.text, id: reply.id, user_id: 0, section: q.section, objects: [] });
     }
     if (path === "/v1/tasks") return this.json({ tasks: this.tasks });
+    if (path === "/v1/sections/workout/panel") return this.json({ section: "workout", objects: this.workoutPanel(), generated: Date.now() / 1000 });
+    if (path === "/v1/act" && req.method === "POST") {
+      const body = (await req.json()) as { module: string; action: string; args: Record<string, unknown> };
+      if (body.module !== "workout") return this.json({ detail: "no module" }, 404);
+      const open = this.workout.find((w) => w.open);
+      if (body.action === "close") {
+        if (!open) return this.json({ detail: "no session is open" }, 400);
+        open.open = false;
+      } else {
+        const exercise = String(body.args.exercise ?? open?.exercise ?? "push-ups");
+        const reps = body.action === "sets" ? (body.args.reps as number[]) : [Number(body.args.did)];
+        if (open && open.exercise === exercise) open.sets.push(...reps);
+        else {
+          if (open) open.open = false;
+          this.workout.push({ id: `s-${this.workout.length + 1}`, exercise, sets: reps, at: "15:20", open: true });
+        }
+        this.workoutRecent = [exercise, ...this.workoutRecent.filter((x) => x !== exercise)];
+      }
+      return this.json({ ok: true, message: "logged", panel: { objects: this.workoutPanel() } });
+    }
     if (path === "/v1/busy") return this.json({ kind: "busy", turns: this.busy, at: Date.now() / 1000 });
     if (path === "/v1/facts") return this.json({ facts: [{ id: 1, ts: 1, text: "Alex Example likes tea.", tags: [] }] });
     const device = path.match(/^\/v1\/devices\/(\d+)$/);
@@ -156,6 +188,33 @@ export class FakeHub {
     }
     return this.json({ detail: "not found" }, 404);
   }
+}
+
+type Entry = { id: string; name: string; group: string; timed: boolean };
+
+export function workoutLogger(sessions: FakeHub["workout"], recentIds: string[]): Block {
+  const byId = new Map((library as Entry[]).map((e) => [e.id, e]));
+  const view = (w: FakeHub["workout"][number]) => {
+    const e = byId.get(w.exercise)!;
+    return { id: w.id, exercise: w.exercise, name: e.name, timed: e.timed, sets: w.sets, at: w.at, open: w.open };
+  };
+  const open = sessions.find((w) => w.open);
+  const recent = recentIds.map((id) => byId.get(id)!).filter(Boolean);
+  const defaults = ["push-ups", "squats", "body rows", "plank", "lunges", "sit-ups", "glute bridges", "burpees"]
+    .filter((id) => !recentIds.includes(id))
+    .map((id) => byId.get(id)!);
+  const last = sessions[sessions.length - 1];
+  return {
+    kind: "sets",
+    title: "Sets and reps",
+    current: open ? { ...view(open), suggest: open.sets[open.sets.length - 1] } : null,
+    last: last ? { exercise: last.exercise, name: byId.get(last.exercise)!.name, did: last.sets[last.sets.length - 1], timed: byId.get(last.exercise)!.timed } : null,
+    today: [...sessions].reverse().map(view),
+    sets_today: sessions.reduce((n, w) => n + w.sets.length, 0),
+    recent,
+    defaults,
+    library,
+  };
 }
 
 export function question(id: string, extra: Partial<Question> = {}): Question {

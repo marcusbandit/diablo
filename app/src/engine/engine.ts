@@ -58,6 +58,8 @@ export type EngineState = {
   sending: string | null;
   /** A reply just landed. */
   speaking: boolean;
+  /** Goes up each time the hub says a module's panel changed, so a room can read it again. */
+  panelTick: Record<string, number>;
   pairing: Pairing;
 };
 
@@ -133,6 +135,7 @@ export class Engine {
     turns: {},
     sending: null,
     speaking: false,
+    panelTick: {},
     pairing: { working: false, error: null, confirm: null },
   };
 
@@ -644,6 +647,14 @@ export class Engine {
         this.store.patchTask(task);
         this.set({ tasks: this.store.tasks });
         this.saveSoon();
+        break;
+      }
+      case "panel": {
+        const changed = (event as { modules?: unknown }).modules;
+        if (!Array.isArray(changed)) break;
+        const tick = { ...this.state.panelTick };
+        for (const id of changed) if (typeof id === "string") tick[id] = (tick[id] ?? 0) + 1;
+        this.set({ panelTick: tick });
         break;
       }
       case "busy": {

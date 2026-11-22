@@ -1,0 +1,772 @@
+[
+{
+"id": "push-ups",
+"name": "Push-ups",
+"group": "push",
+"timed": false,
+"aliases": [
+"press-ups"
+]
+},
+{
+"id": "decline push-ups",
+"name": "Decline push-ups",
+"group": "push",
+"timed": false,
+"aliases": [
+"feet-up push-ups",
+"feet up push-ups"
+]
+},
+{
+"id": "incline push-ups",
+"name": "Incline push-ups",
+"group": "push",
+"timed": false,
+"aliases": []
+},
+{
+"id": "diamond push-ups",
+"name": "Diamond push-ups",
+"group": "push",
+"timed": false,
+"aliases": [
+"close-grip push-ups",
+"triangle push-ups"
+]
+},
+{
+"id": "wide push-ups",
+"name": "Wide push-ups",
+"group": "push",
+"timed": false,
+"aliases": [
+"wide-grip push-ups"
+]
+},
+{
+"id": "archer push-ups",
+"name": "Archer push-ups",
+"group": "push",
+"timed": false,
+"aliases": []
+},
+{
+"id": "knee push-ups",
+"name": "Knee push-ups",
+"group": "push",
+"timed": false,
+"aliases": []
+},
+{
+"id": "pseudo planche push-ups",
+"name": "Pseudo planche push-ups",
+"group": "push",
+"timed": false,
+"aliases": [
+"planche push-ups"
+]
+},
+{
+"id": "pike push-ups",
+"name": "Pike push-ups",
+"group": "push",
+"timed": false,
+"aliases": [
+"pikes"
+]
+},
+{
+"id": "handstand push-ups",
+"name": "Handstand push-ups",
+"group": "push",
+"timed": false,
+"aliases": [
+"hspu"
+]
+},
+{
+"id": "handstand hold",
+"name": "Handstand hold",
+"group": "push",
+"timed": true,
+"aliases": [
+"handstand",
+"wall handstand"
+]
+},
+{
+"id": "chair dips",
+"name": "Chair dips",
+"group": "push",
+"timed": false,
+"aliases": [
+"bench dips"
+]
+},
+{
+"id": "assisted dips",
+"name": "Assisted dips",
+"group": "push",
+"timed": false,
+"aliases": []
+},
+{
+"id": "dips",
+"name": "Dips",
+"group": "push",
+"timed": false,
+"aliases": [
+"parallel bar dips",
+"bar dips"
+]
+},
+{
+"id": "bench press",
+"name": "Bench press",
+"group": "push",
+"timed": false,
+"aliases": [
+"barbell bench press",
+"flat bench"
+]
+},
+{
+"id": "incline bench press",
+"name": "Incline bench press",
+"group": "push",
+"timed": false,
+"aliases": []
+},
+{
+"id": "dumbbell bench press",
+"name": "Dumbbell bench press",
+"group": "push",
+"timed": false,
+"aliases": [
+"db bench press"
+]
+},
+{
+"id": "overhead press",
+"name": "Overhead press",
+"group": "push",
+"timed": false,
+"aliases": [
+"ohp",
+"military press",
+"shoulder press"
+]
+},
+{
+"id": "dumbbell shoulder press",
+"name": "Dumbbell shoulder press",
+"group": "push",
+"timed": false,
+"aliases": [
+"db shoulder press"
+]
+},
+{
+"id": "lateral raises",
+"name": "Lateral raises",
+"group": "push",
+"timed": false,
+"aliases": [
+"side raises",
+"lat raises"
+]
+},
+{
+"id": "front raises",
+"name": "Front raises",
+"group": "push",
+"timed": false,
+"aliases": []
+},
+{
+"id": "triceps extensions",
+"name": "Triceps extensions",
+"group": "push",
+"timed": false,
+"aliases": [
+"overhead triceps extensions",
+"tricep extensions"
+]
+},
+{
+"id": "skull crushers",
+"name": "Skull crushers",
+"group": "push",
+"timed": false,
+"aliases": [
+"lying triceps extensions"
+]
+},
+{
+"id": "triceps pushdowns",
+"name": "Triceps pushdowns",
+"group": "push",
+"timed": false,
+"aliases": [
+"tricep pushdowns",
+"cable pushdowns"
+]
+},
+{
+"id": "chest flyes",
+"name": "Chest flyes",
+"group": "push",
+"timed": false,
+"aliases": [
+"chest flies",
+"dumbbell flyes",
+"pec flyes"
+]
+},
+{
+"id": "pull-ups",
+"name": "Pull-ups",
+"group": "pull",
+"timed": false,
+"aliases": []
+},
+{
+"id": "chin-ups",
+"name": "Chin-ups",
+"group": "pull",
+"timed": false,
+"aliases": [
+"chins"
+]
+},
+{
+"id": "assisted pull-ups",
+"name": "Assisted pull-ups",
+"group": "pull",
+"timed": false,
+"aliases": [
+"band pull-ups"
+]
+},
+{
+"id": "negative pull-ups",
+"name": "Negative pull-ups",
+"group": "pull",
+"timed": false,
+"aliases": [
+"pull-up negatives"
+]
+},
+{
+"id": "scapular pull-ups",
+"name": "Scapular pull-ups",
+"group": "pull",
+"timed": false,
+"aliases": [
+"scap pulls",
+"scapula pull-ups"
+]
+},
+{
+"id": "dead hang",
+"name": "Dead hang",
+"group": "pull",
+"timed": true,
+"aliases": [
+"hang",
+"bar hang"
+]
+},
+{
+"id": "body rows",
+"name": "Body rows",
+"group": "pull",
+"timed": false,
+"aliases": [
+"rows",
+"inverted rows",
+"australian pull-ups",
+"table rows"
+]
+},
+{
+"id": "barbell rows",
+"name": "Barbell rows",
+"group": "pull",
+"timed": false,
+"aliases": [
+"bent-over rows",
+"bent over rows"
+]
+},
+{
+"id": "dumbbell rows",
+"name": "Dumbbell rows",
+"group": "pull",
+"timed": false,
+"aliases": [
+"one-arm rows",
+"db rows"
+]
+},
+{
+"id": "lat pulldowns",
+"name": "Lat pulldowns",
+"group": "pull",
+"timed": false,
+"aliases": [
+"pulldowns"
+]
+},
+{
+"id": "seated cable rows",
+"name": "Seated cable rows",
+"group": "pull",
+"timed": false,
+"aliases": [
+"cable rows"
+]
+},
+{
+"id": "face pulls",
+"name": "Face pulls",
+"group": "pull",
+"timed": false,
+"aliases": []
+},
+{
+"id": "biceps curls",
+"name": "Biceps curls",
+"group": "pull",
+"timed": false,
+"aliases": [
+"bicep curls",
+"curls",
+"dumbbell curls"
+]
+},
+{
+"id": "hammer curls",
+"name": "Hammer curls",
+"group": "pull",
+"timed": false,
+"aliases": []
+},
+{
+"id": "shrugs",
+"name": "Shrugs",
+"group": "pull",
+"timed": false,
+"aliases": []
+},
+{
+"id": "deadlifts",
+"name": "Deadlifts",
+"group": "pull",
+"timed": false,
+"aliases": [
+"deadlift"
+]
+},
+{
+"id": "supermen",
+"name": "Supermen",
+"group": "pull",
+"timed": false,
+"aliases": [
+"superman",
+"supermans"
+]
+},
+{
+"id": "squats",
+"name": "Squats",
+"group": "legs",
+"timed": false,
+"aliases": [
+"air squats",
+"bodyweight squats"
+]
+},
+{
+"id": "back squats",
+"name": "Back squats",
+"group": "legs",
+"timed": false,
+"aliases": [
+"barbell squats"
+]
+},
+{
+"id": "front squats",
+"name": "Front squats",
+"group": "legs",
+"timed": false,
+"aliases": []
+},
+{
+"id": "goblet squats",
+"name": "Goblet squats",
+"group": "legs",
+"timed": false,
+"aliases": []
+},
+{
+"id": "pistol squats",
+"name": "Pistol squats",
+"group": "legs",
+"timed": false,
+"aliases": [
+"pistols"
+]
+},
+{
+"id": "squat jumps",
+"name": "Squat jumps",
+"group": "legs",
+"timed": false,
+"aliases": [
+"jump squats"
+]
+},
+{
+"id": "lunges",
+"name": "Lunges",
+"group": "legs",
+"timed": false,
+"aliases": [
+"forward lunges"
+]
+},
+{
+"id": "reverse lunges",
+"name": "Reverse lunges",
+"group": "legs",
+"timed": false,
+"aliases": []
+},
+{
+"id": "walking lunges",
+"name": "Walking lunges",
+"group": "legs",
+"timed": false,
+"aliases": []
+},
+{
+"id": "bulgarian split squats",
+"name": "Bulgarian split squats",
+"group": "legs",
+"timed": false,
+"aliases": [
+"bulgarians",
+"bss",
+"split squats"
+]
+},
+{
+"id": "cossack squats",
+"name": "Cossack squats",
+"group": "legs",
+"timed": false,
+"aliases": []
+},
+{
+"id": "step-ups",
+"name": "Step-ups",
+"group": "legs",
+"timed": false,
+"aliases": [
+"box step-ups"
+]
+},
+{
+"id": "box jumps",
+"name": "Box jumps",
+"group": "legs",
+"timed": false,
+"aliases": []
+},
+{
+"id": "wall sit",
+"name": "Wall sit",
+"group": "legs",
+"timed": true,
+"aliases": [
+"wall squat"
+]
+},
+{
+"id": "glute bridges",
+"name": "Glute bridges",
+"group": "legs",
+"timed": false,
+"aliases": [
+"bridges",
+"hip bridges"
+]
+},
+{
+"id": "hip thrusts",
+"name": "Hip thrusts",
+"group": "legs",
+"timed": false,
+"aliases": [
+"barbell hip thrusts"
+]
+},
+{
+"id": "romanian deadlifts",
+"name": "Romanian deadlifts",
+"group": "legs",
+"timed": false,
+"aliases": [
+"rdl",
+"rdls",
+"stiff-leg deadlifts"
+]
+},
+{
+"id": "nordic curls",
+"name": "Nordic curls",
+"group": "legs",
+"timed": false,
+"aliases": [
+"nordics",
+"nordic hamstring curls"
+]
+},
+{
+"id": "leg press",
+"name": "Leg press",
+"group": "legs",
+"timed": false,
+"aliases": []
+},
+{
+"id": "leg extensions",
+"name": "Leg extensions",
+"group": "legs",
+"timed": false,
+"aliases": []
+},
+{
+"id": "leg curls",
+"name": "Leg curls",
+"group": "legs",
+"timed": false,
+"aliases": [
+"hamstring curls"
+]
+},
+{
+"id": "calf raises",
+"name": "Calf raises",
+"group": "legs",
+"timed": false,
+"aliases": [
+"calves",
+"heel raises"
+]
+},
+{
+"id": "sit-ups",
+"name": "Sit-ups",
+"group": "core",
+"timed": false,
+"aliases": []
+},
+{
+"id": "crunches",
+"name": "Crunches",
+"group": "core",
+"timed": false,
+"aliases": []
+},
+{
+"id": "bicycle crunches",
+"name": "Bicycle crunches",
+"group": "core",
+"timed": false,
+"aliases": [
+"bicycles"
+]
+},
+{
+"id": "leg raises",
+"name": "Leg raises",
+"group": "core",
+"timed": false,
+"aliases": [
+"lying leg raises"
+]
+},
+{
+"id": "hanging leg raises",
+"name": "Hanging leg raises",
+"group": "core",
+"timed": false,
+"aliases": []
+},
+{
+"id": "hanging knee raises",
+"name": "Hanging knee raises",
+"group": "core",
+"timed": false,
+"aliases": [
+"knee raises"
+]
+},
+{
+"id": "russian twists",
+"name": "Russian twists",
+"group": "core",
+"timed": false,
+"aliases": []
+},
+{
+"id": "v-ups",
+"name": "V-ups",
+"group": "core",
+"timed": false,
+"aliases": [
+"v ups",
+"jackknives"
+]
+},
+{
+"id": "flutter kicks",
+"name": "Flutter kicks",
+"group": "core",
+"timed": false,
+"aliases": []
+},
+{
+"id": "dead bugs",
+"name": "Dead bugs",
+"group": "core",
+"timed": false,
+"aliases": []
+},
+{
+"id": "bird dogs",
+"name": "Bird dogs",
+"group": "core",
+"timed": false,
+"aliases": []
+},
+{
+"id": "ab wheel rollouts",
+"name": "Ab wheel rollouts",
+"group": "core",
+"timed": false,
+"aliases": [
+"ab rollouts",
+"rollouts",
+"ab wheel"
+]
+},
+{
+"id": "plank",
+"name": "Plank",
+"group": "core",
+"timed": true,
+"aliases": [
+"front plank",
+"forearm plank"
+]
+},
+{
+"id": "side plank",
+"name": "Side plank",
+"group": "core",
+"timed": true,
+"aliases": []
+},
+{
+"id": "hollow hold",
+"name": "Hollow hold",
+"group": "core",
+"timed": true,
+"aliases": [
+"hollow body hold"
+]
+},
+{
+"id": "compression hold",
+"name": "Compression hold",
+"group": "core",
+"timed": true,
+"aliases": [
+"compression",
+"leg lift hold"
+]
+},
+{
+"id": "seated pike ups",
+"name": "Seated pike-ups",
+"group": "core",
+"timed": false,
+"aliases": [
+"pike ups"
+]
+},
+{
+"id": "l-sit",
+"name": "L-sit",
+"group": "core",
+"timed": true,
+"aliases": []
+},
+{
+"id": "burpees",
+"name": "Burpees",
+"group": "cardio",
+"timed": false,
+"aliases": []
+},
+{
+"id": "jumping jacks",
+"name": "Jumping jacks",
+"group": "cardio",
+"timed": false,
+"aliases": [
+"star jumps"
+]
+},
+{
+"id": "mountain climbers",
+"name": "Mountain climbers",
+"group": "cardio",
+"timed": false,
+"aliases": []
+},
+{
+"id": "high knees",
+"name": "High knees",
+"group": "cardio",
+"timed": false,
+"aliases": []
+},
+{
+"id": "kettlebell swings",
+"name": "Kettlebell swings",
+"group": "cardio",
+"timed": false,
+"aliases": [
+"kb swings",
+"swings"
+]
+},
+{
+"id": "jump rope",
+"name": "Jump rope",
+"group": "cardio",
+"timed": false,
+"aliases": [
+"skipping",
+"rope skips",
+"skipping rope"
+]
+}
+]

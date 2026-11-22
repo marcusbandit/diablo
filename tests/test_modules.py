@@ -73,11 +73,13 @@ class ModuleCase(unittest.TestCase):
 
 class TestWorkoutLog(ModuleCase):
     def test_a_set_lands_in_this_hubs_own_inbox_file(self):
-        entry = workout.log({"kind": "set", "exercise": "Push-Ups", "did": 12}, now=1793900000)
+        [entry] = workout.log({"kind": "set", "exercise": "Push-Ups", "did": 12}, now=1793900000)
         files = list(self.inbox.glob("diablo-*.jsonl"))
         self.assertEqual(len(files), 1)
         line = json.loads(files[0].read_text().strip())
         self.assertEqual(line, entry)
+        self.assertEqual(line["set_no"], 1)
+        self.assertTrue(line["session_id"].startswith("s-"))
         self.assertEqual((line["result"], line["exercise"], line["did"], line["ts"], line["source"]),
                          ("manual", "push-ups", 12, 1793900000, "diablo"))
         self.assertTrue(line["id"].startswith("diablo-"))
@@ -110,7 +112,7 @@ class TestWorkoutLog(ModuleCase):
                 workout.entry_for(args, 100)
 
     def test_the_tool_says_what_it_logged_or_why_not(self):
-        self.assertIn("logged 10 push-ups", modules.call("workout_log", {"kind": "set", "exercise": "push-ups", "did": 10}))
+        self.assertIn("logged set 1 of push-ups: 10", modules.call("workout_log", {"kind": "set", "exercise": "push-ups", "did": 10}))
         self.assertIn("not logged", modules.call("workout_log", {"kind": "set", "exercise": "push-ups", "did": -3}))
 
 
@@ -127,6 +129,7 @@ class TestWorkoutRead(ModuleCase):
         self.assertIn("Streak: 5 days", text)
         self.assertIn("obliques, calves", text)
         self.assertIn("not counted by pushup yet: 10 push-ups", text)
+        self.assertIn("Open session: Push-ups, 1 set: 10", text)
 
     def test_a_backdated_line_logged_after_the_overview_is_still_pending(self):
         self.write_overview(generated=time.time() - 60)
@@ -195,14 +198,17 @@ class TestWorkoutRead(ModuleCase):
                 for word in ("pushup", "banditbox", ".json", "syncs", "Syncthing"):
                     self.assertNotIn(word.lower(), text.lower(), text)
 
-    def test_the_log_button_takes_its_size_from_the_last_set(self):
-        self.write_overview(last={"ts": 1, "exercise": "push-ups", "did": 14})
-        first = workout.panel({})[1]["items"][0]
-        self.assertEqual((first["label"], first["say"]), ("Log 14 push-ups", "Log 14 push-ups"))
+    def test_the_log_button_takes_its_size_and_exercise_from_the_last_set(self):
+        def first():
+            return next(b for b in workout.panel({}) if b["kind"] == "actions")["items"][0]
+
+        self.write_overview(last={"ts": 1, "exercise": "pushups", "did": 14})
+        self.assertEqual((first()["label"], first()["act"]["args"]), ("Log 14 push-ups", {"exercise": "push-ups", "did": 14}))
         self.write_overview(last={"ts": 1, "exercise": "squats", "did": 14})
-        first = workout.panel({})[1]["items"][0]
-        self.assertEqual(first["label"], "Log push-ups")
-        self.assertIs(first["send"], False)
+        self.assertEqual(first()["label"], "Log 14 squats")
+        self.write_overview(last={})
+        self.assertEqual(first()["label"], "Log a set")
+        self.assertIs(first()["send"], False)
 
     def test_week_rows_carry_their_date_and_sets_per_group_for_the_chart(self):
         self.write_overview()
@@ -513,7 +519,7 @@ class TestBrainWiring(ModuleCase):
         self.assertEqual(len(names), len(set(names)))
 
     def test_mcp_calls_reach_the_module(self):
-        self.assertIn("logged 5 squats", mcp_server.call("workout_log", {"kind": "set", "exercise": "squats", "did": 5}))
+        self.assertIn("logged set 1 of squats: 5", mcp_server.call("workout_log", {"kind": "set", "exercise": "squats", "did": 5}))
 
     def test_a_writing_tool_in_a_turn_refreshes_its_panel_once_the_turn_is_done(self):
         turn = brains.Turn()

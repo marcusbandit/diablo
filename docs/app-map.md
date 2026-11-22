@@ -37,7 +37,7 @@ name, and the one number that matters as the biggest thing on it.
 
 | Room | For | Hub module |
 |---|---|---|
-| Workout | Push-ups today, the week, logging a set. | `workout` |
+| Workout | Sets today, logging sets and reps of one exercise (recent, defaults, search over the full list), today's sessions. | `workout` |
 | Lights | The lamps and their colours. | `lights` |
 | Mail | Mail he sorted and what he wants to send. | `mail` |
 | Reminders | What he will remind you of, and when. | `reminders` |

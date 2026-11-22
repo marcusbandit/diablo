@@ -103,6 +103,9 @@ export default function Den() {
             </View>
           </View>
         ) : null}
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space(3) }}>
+          <Chip label="Workout" onPress={() => router.push("/workout")} />
+        </View>
         {assistLeft && s.link === "online" ? (
           <Pressable onPress={() => router.push("/assistant")}>
             <Text style={{ color: color.sub, fontFamily: font.medium, ...type.body }}>Hold power for Diablo</Text>

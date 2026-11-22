@@ -482,6 +482,7 @@ it does not know, so adding a kind never breaks an older client.
 
 | kind | fields | shows |
 | --- | --- | --- |
+| `sets` | `title, gap_min, current, last, today, sets_today, recent, defaults, library` | the Workout room's logger, drawn by `app/` only (other clients skip it). `current` is the open session or null, `{id, exercise, name, timed, sets: [reps], at, open, suggest}`; `today` holds today's sessions newest first in the same shape; `last` is `{exercise, name, did, timed}` for the exercise logged last anywhere; `recent`, `defaults` and `library` are `[{id, name, group, timed}]`, the library also with `aliases` for search. A log posts `POST /v1/act` with module `workout` and action `set` (`{exercise?, did}`), `sets` (`{exercise?, reps: [n, ...]}`) or `close` (`{}`); an exercise left out goes on the open session, then the last one logged |
 | `goal` | `title, value, max, caption?, icon?, badges: [{icon, label}], updated?: {age, at, every}, stale?` | the section's main number as a ring, with short facts beside it |
 | `stats` | `items: [{label, value, unit?, icon?, open?}]`, `title?`, `caption?` | a row of number tiles; `open` names a module whose section a tap opens |
 | `progress` | `label, value, max, caption?, icon?` | one bar towards a goal |
