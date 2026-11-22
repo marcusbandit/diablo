@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import tomllib
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -73,6 +74,11 @@ DEFAULTS = {
     "rows": True,  # inverted rows at the table edge, the pull to the push-ups
     "rows_every": 3,  # and every third card can be rows
     "challenge_stretch_every": 5,  # once the target is in, every fifth card is one of David's hard stretches
+    # A card is a session: the same move this many times, with a counted rest between the sets.
+    "sets": 3,
+    "rest_seconds": 90,
+    "session_every_min": 120,  # outside the challenge, minutes between sessions once a card is a session
+    "session_every_max": 180,
 }
 
 DISCORD_NAMES = ("discord", "vesktop", "legcord", "armcord", "webcord", "equibop", "dissent")
@@ -1119,18 +1125,22 @@ def challenge_interval(cfg, entries=None, now=None):
     entries = read_log() if entries is None else entries
     now = time.time() if now is None else now
     c = challenge(cfg, entries, now)
+    sets = max(1, min(10, int(cfg.get("sets") or 1)))
     if c["left"] <= 0:
-        return random.uniform(*BONUS_GAP) + BONUS_BACKOFF * min(BONUS_BACKOFF_MAX, bonus_passes(entries, now))
+        # A bonus card is a whole session now: twice as far apart.
+        stretch = 2 if sets > 1 else 1
+        return stretch * random.uniform(*BONUS_GAP) + BONUS_BACKOFF * min(BONUS_BACKOFF_MAX, bonus_passes(entries, now))
     first = "decline push-ups" if c["feet_up"] else "push-ups"
     lo, hi, _ = plan(cfg, entries, first, now)
     keep, _ = hurt_trim(first, hurting(entries, now))
     per_set = eased(lo, keep) if keep < 1 else max(3, lo)
     load = catalog.loads(entries, now)
     # Only what a card will offer takes a slot: a move left out while its muscles recover doesn't.
-    slots = math.ceil(c["left"] / per_set) + sum(max(0, c[k]["cap"] - c[k]["sets"]) for m, k in SIDES
-                                                 if not catalog.sore(m, load))
+    # A card is a session of `sets` sets, so the day needs that many fewer cards, further apart.
+    slots = math.ceil(c["left"] / (per_set * sets)) + sum(math.ceil(max(0, c[k]["cap"] - c[k]["sets"]) / sets)
+                                                         for m, k in SIDES if not catalog.sore(m, load))
     gap = (c["deadline"] - SLACK - now) / (slots + 0.5)
-    return min(GAP_MAX, max(GAP_MIN, gap)) * random.uniform(0.9, 1.1)
+    return min(GAP_MAX * sets, max(GAP_MIN * sets, gap)) * random.uniform(0.9, 1.1)
 
 
 def day_begins(cfg, now, mark=True):
@@ -1166,11 +1176,13 @@ def parse_answer(text):
         return {"result": text.strip()}
 
 
-def log_answer(answer, offered=None):
-    """Record what a card said happened. Returns a short line for the daemon log."""
+def log_answer(answer, offered=None, extra=None):
+    """Record what a card said happened. Returns a short line for the daemon log. extra goes on the
+    log line as it is: a session's session_id and set_no."""
     result = answer.get("result")
+    extra = extra or {}
     if result == "done" and answer.get("did", 0) >= 0 and isinstance(answer.get("exercise"), str):
-        log_event(reps=answer.get("goal", 0), did=answer["did"], exercise=answer["exercise"], result="done")
+        log_event(reps=answer.get("goal", 0), did=answer["did"], exercise=answer["exercise"], result="done", **extra)
         return f"done {answer['did']} {answer['exercise']}"
     if result == "manual" and answer.get("did", 0) > 0 and isinstance(answer.get("exercise"), str):
         sets = max(1, min(10, int(answer.get("sets", 1))))
@@ -1181,7 +1193,7 @@ def log_answer(answer, offered=None):
         return f"trained {answer['activity']} {answer['minutes']} min"
     if result in ("skip", "pass") and offered:
         # A pass is a skip on a rest day card or a bonus card past the target: written down, never held against you.
-        log_event(reps=offered["goal"], did=0, exercise=answer.get("exercise", offered["exercise"]), result=result)
+        log_event(reps=offered["goal"], did=0, exercise=answer.get("exercise", offered["exercise"]), result=result, **extra)
         return result
     return ""
 
@@ -1225,6 +1237,8 @@ def remind(cfg, env=None, rest=None, held=None):
             "--spice", cfg["spice"], *record_args(entries, week=week)]
     if rest:
         args += ["--calm"]
+    elif int(cfg.get("sets") or 1) > 1:
+        args += ["--set-no", "1", "--set-of", str(session_sets(cfg, first["exercise"], entries, now, logged=False))]
     if not cfg.get("sound"):
         args += ["--quiet"]
     if paused:
@@ -1262,7 +1276,16 @@ def remind(cfg, env=None, rest=None, held=None):
         answer["result"] = "pass"  # a rest day card, or a bonus one past the target, never feeds the grudge
     if answer.get("result") == "done":
         answer["goal"] = offered["goal"]
-    logged = log_answer(answer, offered)
+    session = (int(cfg.get("sets") or 1) > 1 and not rest and not offered.get("stretch")
+               and answer.get("result") == "done" and answer.get("did", 0) > 0 and answer.get("exercise") == offered["exercise"])
+    sid = f"desk-{uuid.uuid4().hex[:10]}" if session else None
+    logged = log_answer(answer, offered, {"session_id": sid, "set_no": 1} if sid else None)
+    if sid:
+        rest_of = run_session(cfg, env, offered["exercise"], sid, week)
+        logged = f"{logged}, {rest_of}"
+        if rest_of == "locked":
+            HELD_PLAYERS.extend(paused)
+            return logged
     if logged and answer.get("receipts"):
         # Asked for the full stats from the ending: they open once the set is in them.
         if after_receipts(receipts(env, stop=session_locked), env, stop=session_locked) == "stopped":
@@ -1276,12 +1299,86 @@ def remind(cfg, env=None, rest=None, held=None):
     return "lost"
 
 
+def session_sets(cfg, exercise, entries=None, now=None, logged=True):
+    """How many sets a session of this move has: the sets setting, and in the challenge no more than
+    the Bulgarians or rows have room for today. logged: the session's first set is already in the
+    log, so it is added back to the room left."""
+    total = max(1, min(10, int(cfg.get("sets") or 1)))
+    if challenge_on(cfg) and exercise in (BSS, ROWS):
+        c = challenge(cfg, read_log() if entries is None else entries, now)
+        side = c["bss" if exercise == BSS else "rows"]
+        total = min(total, max(1, side["cap"] - side["sets"] + (1 if logged else 0)))
+    return total
+
+
+def next_offer(cfg, entries, exercise, now):
+    """The next set of a session: the same move, its goal worked out again now that the last set is
+    in, so a tired arm gets a goal it can reach."""
+    if challenge_on(cfg):
+        offer, _ = challenge_offer(cfg, entries, now)
+        found = next((o for o in offer if o["exercise"] == exercise), None)
+        if found:
+            return found
+    return option(cfg, entries, exercise, catalog.loads(entries, now), now)
+
+
+def run_session(cfg, env, exercise, sid, week):
+    """Sets 2 and on of a session: a counted rest, then the same move again, until its sets are done.
+    Esc on the rest, a skip, a hurt or a lock ends it early. Returns a line for the daemon log."""
+    total = session_sets(cfg, exercise, read_log(), time.time())  # the first set is in the log by now
+    for k in range(2, total + 1):
+        entries = read_log()
+        now = time.time()
+        nxt = next_offer(cfg, entries, exercise, now)
+        line = f"Next: set {k} of {total}, {nxt['goal']} {catalog.unit(exercise, nxt['goal'])}"
+        text = overlay(["--rest-for", str(cfg["rest_seconds"]), "--next", line, "--spice", cfg["spice"], "--arm-delay", "0.5"],
+                       env, stop=session_locked)
+        if text == "stopped":
+            return "locked"
+        if parse_answer(text).get("result") != "rested":
+            return f"ended after set {k - 1} of {total}"
+        play_sound(cfg)
+        entries = read_log()
+        now = time.time()
+        nxt = next_offer(cfg, entries, exercise, now)
+        args = ["--options", json.dumps([nxt]), "--spice", cfg["spice"], *record_args(entries, week=week),
+                "--set-no", str(k), "--set-of", str(total)]
+        if challenge_on(cfg):
+            args += challenge_args(challenge(cfg, entries, now))
+        if not cfg.get("sound"):
+            args += ["--quiet"]
+        text = overlay(args, env, stop=session_locked)
+        if text == "stopped":
+            return "locked"
+        answer = parse_answer(text)
+        if answer.get("result") == "hurt" and isinstance(answer.get("exercise"), str):
+            spots = catalog.spots_by_part(answer.get("spots") or [])
+            for part, where in spots.items():
+                log_hurt(part, spots=where)
+            part = answer.get("part") if answer.get("part") in HURT_PARTS else hurt_part(answer["exercise"])
+            if not spots and part:
+                log_hurt(part)
+            return f"ended at set {k} of {total}: it hurts"
+        if answer.get("result") == "skip" or (answer.get("result") == "done" and answer.get("did") == 0):
+            answer["result"] = "pass"  # tired at set three is not a skipped card
+        if answer.get("result") not in ("done", "pass"):
+            return f"ended at set {k} of {total}"
+        answer["goal"] = nxt["goal"]
+        answer.setdefault("exercise", exercise)
+        log_answer(answer, nxt, {"session_id": sid, "set_no": k})
+        if answer["result"] != "done":
+            return f"ended at set {k} of {total}"
+    return f"all {total} sets"
+
+
 slider_top = catalog.slider_top
 
 
 def next_interval(cfg):
     if challenge_on(cfg):
         return challenge_interval(cfg)
+    if int(cfg.get("sets") or 1) > 1:
+        return random.uniform(cfg["session_every_min"], cfg["session_every_max"]) * 60
     return random.uniform(cfg["interval_min"], cfg["interval_max"]) * 60
 
 
@@ -1898,7 +1995,7 @@ def cmd_overlay(args):
         os.execv(sys.executable, [sys.executable, *sys.argv])
     if not args.top:
         args.top = slider_top(args.reps)
-    if not args.options and not (args.intro or args.graph or args.add or args.challenge_intro):
+    if not args.options and not (args.intro or args.graph or args.add or args.challenge_intro or args.rest_for):
         # A bare card for screenshots and tests: one exercise, the goal given.
         args.options = json.dumps([{"exercise": args.exercise, "goal": args.reps, "top": args.top, "why": args.why}])
     from pushup_ui import show
@@ -2013,6 +2110,10 @@ def main():
     p.add_argument("--challenge", default="")
     p.add_argument("--challenge-intro", action="store_true")
     p.add_argument("--stats", default="")
+    p.add_argument("--set-no", type=int, default=1)  # a session's set: SET 2 OF 3 on the card
+    p.add_argument("--set-of", type=int, default=1)
+    p.add_argument("--rest-for", type=float, default=0)  # the rest between two sets, counted down
+    p.add_argument("--next", default="")  # what comes after the rest, said on the rest screen
     p.set_defaults(fn=cmd_overlay)
     args = ap.parse_args()
     global DAY_END

@@ -26,7 +26,8 @@ nemurenai while banditbox is off. The Diablo hub writes its own inbox file,
 
 One JSON object a line, appended by pushup on banditbox only. Never edit it from elsewhere.
 
-- A card's set: `{"ts", "exercise", "reps", "did", "result"}`. `reps` is the goal, `did` what got done;
+- A card's set: `{"ts", "exercise", "reps", "did", "result"}`, plus `session_id` and `set_no` when
+  the card is a session of several sets. `reps` is the goal, `did` what got done;
   `result` is `done`, `skip`, `pass` (a rest day or bonus card let go, never held against you) or `lost`
   (the card died). Holds count seconds.
 - A set logged by hand: `{"ts", "exercise", "did", "result": "manual", "source"}`.
