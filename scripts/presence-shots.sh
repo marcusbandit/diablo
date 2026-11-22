@@ -38,6 +38,7 @@ SCENES=(
   "card-above|asleep|900,$((mh - 90))|$(card a Weather 7° 'cloudy, feels like 4°')"
   "card-right-edge|asleep|$((mw - 40)),500|$(card a 'Next bus' '5 min' 'then 20 min')"
   "two-cards|speaking|900,400|$(card a Weather 7° 'cloudy, feels like 4°'),$(card b Diablo '' 'Here is the weather for today, sir.')"
+  "card-long-reply|speaking|900,200|$(card a Diablo '' 'Here is how the build cache works, sir. Every crate is compiled once and kept, so the next build in any checkout picks it up instead of starting over. First, the cache sits in its own folder beside the builds and keeps the newest twenty gigabytes. Second, a build that changes only the interface skips the cache entirely and costs nothing. Third, when a build fails the cache is left as it was, so a broken change never poisons it. To see what it holds, run cache stats in the terminal, or open https://example.com/docs/build-cache/what-it-keeps-and-for-how-long-in-every-checkout to read the whole page. That is all there is to it, and it should make every build after the first one a good deal quicker.')"
   "panel-settings|asleep|900,400||{\"open\":true,\"view\":\"settings\"}|trained"
   "panel-voice|asleep|900,400||{\"open\":true,\"view\":\"settings\",\"page\":\"voice\",\"page_at\":1}|trained"
   "panel-training|listening|900,400||{\"open\":true,\"view\":\"settings\"}|speech"

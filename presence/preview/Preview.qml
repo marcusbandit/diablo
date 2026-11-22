@@ -65,6 +65,7 @@ Window {
         "card-right-edge": { mood: "asleep", at: [700, 160], cards: [{ id: "a", title: "Next bus", big: "5 min", lines: ["then 20 min"] }] },
         "two-cards": { mood: "speaking", at: [240, 100], cards: [{ id: "a", title: "Weather", big: "7°", lines: ["cloudy, feels like 4°"] },
             { id: "b", title: "Diablo", big: "", lines: ["Here is the weather for today, sir."] }] },
+        "card-long-reply": { mood: "speaking", at: [240, 100], screen: [760, 1440], cards: [{ id: "a", title: "Diablo", big: "", lines: ["Here is how the build cache works, sir. Every crate is compiled once and kept, so the next build in any checkout picks it up instead of starting over. First, the cache sits in its own folder beside the builds and keeps the newest twenty gigabytes. Second, a build that changes only the interface skips the cache entirely and costs nothing. Third, when a build fails the cache is left as it was, so a broken change never poisons it. To see what it holds, run cache stats in the terminal, or open https://example.com/docs/build-cache/what-it-keeps-and-for-how-long-in-every-checkout to read the whole page. That is all there is to it, and it should make every build after the first one a good deal quicker."] }] },
         "panel-settings": { mood: "asleep", panel: { view: "settings" } },
         "panel-voice": { mood: "asleep", panel: { view: "settings", page: "voice", short: true } },
         "panel-training": { mood: "listening", panel: { view: "settings" } },
