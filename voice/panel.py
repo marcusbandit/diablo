@@ -47,7 +47,7 @@ HISTORY = re.compile(
 )
 TASKS = re.compile(
     _LEAD + r"(?:(?:open|show|bring\s+up|pull\s+up|go\s+to|let\s+me\s+see)\s+(?:me\s+)?(?:up\s+)?(?:my|our|the|your|diablo'?s)?\s*"
-    r"(?:(?:running|background|open|live)\s+)?(?:tasks|task\s+list|task\s+cards|jobs))" + _TAIL,
+    r"(?:(?:(?:running|background|open|live)\s+)?(?:tasks|task\s+list|task\s+cards)|background\s+jobs))" + _TAIL,
     re.I,
 )
 ENLARGE = re.compile(

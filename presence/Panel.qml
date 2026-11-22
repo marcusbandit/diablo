@@ -321,6 +321,7 @@ Rectangle {
                 required property var modelData
                 readonly property bool lit: panel.view === modelData.id
 
+                visible: modelData.id !== "now" || panel.card !== null
                 implicitWidth: subText.implicitWidth
                 implicitHeight: 24
 

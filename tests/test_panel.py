@@ -32,7 +32,8 @@ class TestIntent(unittest.TestCase):
                      "go to tasks", "Can you show me the background jobs?", "let me see the tasks"):
             self.assertEqual(panel.intent(line, SHUT, []), "tasks", line)
             self.assertEqual(panel.intent(line, OPEN, [CARD]), "tasks", line)
-        for line in ("What is waiting for me?", "show my tasks in Todoist", "add a task", "what tasks are running"):
+        for line in ("What is waiting for me?", "show my tasks in Todoist", "add a task", "what tasks are running",
+                     "show me open jobs", "show me the jobs"):
             self.assertIsNone(panel.intent(line, SHUT, []), line)
 
     def test_asking_for_his_settings(self):

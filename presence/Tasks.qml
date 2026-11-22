@@ -13,7 +13,18 @@ Item {
     property bool active: false
     property real now: Date.now() / 1000
 
-    readonly property var rows: TaskRows.rows(list.tasks, list.now)
+    // Worked out again only when the feed changes or a finished row's time is up, so a tick of
+    // the clock never rebuilds the rows under the pointer; only the times follow `now`.
+    property var rows: []
+
+    function relist() {
+        const next = TaskRows.rows(list.tasks, Date.now() / 1000);
+        if (JSON.stringify(next) !== JSON.stringify(list.rows))
+            list.rows = next;
+    }
+
+    onTasksChanged: list.relist()
+    Component.onCompleted: list.relist()
 
     function key(event: var) {
         const page = view.height * 0.9;
@@ -58,7 +69,10 @@ Item {
         repeat: true
         triggeredOnStart: true
         running: list.active
-        onTriggered: list.now = Date.now() / 1000
+        onTriggered: {
+            list.now = Date.now() / 1000;
+            list.relist();
+        }
     }
 
     Flickable {

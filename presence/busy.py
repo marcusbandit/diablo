@@ -7,7 +7,8 @@ so the orb can tell a quiet hub from a lost one. When the hub cannot be reached 
 {"turns": [], "tasks": [], "lost": true} and tries again, so a dropped link never leaves the orb busy.
 
 The live task cards ride along the same way: GET /v1/tasks at the start and with every recheck,
-then each `task` event, printed as {"tasks": [{"id", "state", "title", "step", "machine", "link",
+asking for the active ones and the freshly finished ones apart, so finished cards can never
+crowd a live one out of the hub's cap, then each `task` event, printed as {"tasks": [{"id", "state", "title", "step", "machine", "link",
 "started_at", "finished_at"}]}. The active ones (queued, working, waiting) give the orb one moon
 each; the Tasks section of the central card lists them all, finished ones too until they are
 DONE_KEPT_S (FAILED_KEPT_S for a failure) old, so the list and the moons read one feed.
@@ -81,6 +82,9 @@ TASKS_LOCK = threading.Lock()
 # Bumped by every task event, so a listing asked for before one never undoes it.
 TASK_EVENTS = [0]
 LAST_TASKS = [None]
+# How far this machine's clock runs ahead of the hub's, from the `now` of each listing, so the
+# stamps and the keep times are on this clock.
+SKEW = [0.0]
 
 
 def kept_for(state):
@@ -88,13 +92,15 @@ def kept_for(state):
 
 
 def entry(task, now=None):
-    """What the presence keeps of one task: every active one, and a finished one while it is
-    newer than its keep time. None for an older or malformed one."""
-    now = time.time() if now is None else now
+    """What the presence keeps of one task, with the hub's stamps moved onto this clock: every
+    active one, and a finished one while it is newer than its keep time. None for an older or
+    malformed one."""
     if not isinstance(task, dict) or not task.get("id") or task.get("state") not in ACTIVE + FINISHED:
         return None
-    finished = number(task.get("finished_at"), 0.0) or None
-    if task["state"] in FINISHED and (not finished or now - finished > kept_for(task["state"])):
+    started = number(task.get("started_at"), 0.0)
+    finished = number(task.get("finished_at"), 0.0)
+    row = {"state": task["state"], "finished_at": finished + SKEW[0] if finished else None}
+    if stale(row, now):
         return None
     links = task.get("links") if isinstance(task.get("links"), dict) else {}
     link = str(links.get("thread") or links.get("pr") or "")
@@ -103,14 +109,22 @@ def entry(task, now=None):
             "step": " ".join(str(task.get("step") or "").split())[:120],
             "machine": " ".join(str(task.get("machine") or "").split())[:40],
             "link": link if link.startswith(("https://", "http://", "t3code://")) else "",
-            "started_at": number(task.get("started_at"), 0.0),
-            "finished_at": finished}
+            "started_at": started + SKEW[0] if started else 0.0,
+            "finished_at": row["finished_at"]}
+
+
+def stale(row, now=None):
+    """A finished row past its keep time, or one with no finish time."""
+    now = time.time() if now is None else now
+    if row["state"] not in FINISHED:
+        return False
+    return not row.get("finished_at") or now - row["finished_at"] > kept_for(row["state"])
 
 
 def expire(now=None):
     """Drops the finished tasks past their keep time. True when any went."""
     now = time.time() if now is None else now
-    gone = [key for key, task in TASKS.items() if entry(task, now) is None]
+    gone = [key for key, row in TASKS.items() if stale(row, now)]
     for key in gone:
         TASKS.pop(key, None)
     return bool(gone)
@@ -293,12 +307,18 @@ def duck(event, opener=urllib.request.urlopen):
 def ask(base, headers):
     with urllib.request.urlopen(urllib.request.Request(f"{base}/v1/busy", headers=headers), timeout=10) as reply:
         say(shown(json.loads(reply.read())))
-    url = f"{base}/v1/tasks?since={time.time() - FAILED_KEPT_S:.0f}"
     with TASKS_LOCK:
         before = TASK_EVENTS[0]
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=10) as reply:
-            replace_tasks(json.loads(reply.read()).get("tasks") or [], before)
+        listing = []
+        for query in (f"state={','.join(ACTIVE)}",
+                      f"state={','.join(FINISHED)}&since={time.time() - SKEW[0] - FAILED_KEPT_S:.0f}"):
+            with urllib.request.urlopen(urllib.request.Request(f"{base}/v1/tasks?{query}", headers=headers), timeout=10) as reply:
+                body = json.loads(reply.read())
+            if number(body.get("now"), 0):
+                SKEW[0] = time.time() - number(body["now"], 0)
+            listing += body.get("tasks") or []
+        replace_tasks(listing, before)
     except Exception as error:  # the turns still count when the task list can not be read
         sys.stderr.write(f"tasks feed: {error}\n")
         return

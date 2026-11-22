@@ -148,7 +148,9 @@ class TestTaskFeed(unittest.TestCase):
     def setUp(self):
         feed.TASKS.clear()
         feed.LAST_TASKS[0] = None
+        feed.SKEW[0] = 0.0
         self.addCleanup(feed.TASKS.clear)
+        self.addCleanup(feed.SKEW.__setitem__, 0, 0.0)
 
     def test_active_tasks_come_and_go_with_their_events(self):
         self.assertTrue(feed.track({"id": "b", "state": "working", "title": "Fix the orb", "started_at": 20}))
@@ -185,6 +187,33 @@ class TestTaskFeed(unittest.TestCase):
         with mock.patch.object(feed.time, "time", return_value=now + feed.FAILED_KEPT_S):
             feed.expire()
         self.assertEqual(feed.TASKS, {})
+
+    def test_hub_stamps_move_onto_this_clock(self):
+        feed.SKEW[0] = 180.0
+        now = 10_000.0
+        with mock.patch.object(feed.time, "time", return_value=now):
+            self.assertTrue(feed.track({"id": "d", "state": "done", "started_at": now - 400, "finished_at": now - 200}))
+        self.assertEqual((feed.TASKS["d"]["started_at"], feed.TASKS["d"]["finished_at"]), (now - 220, now - 20))
+
+    def test_the_listing_asks_for_live_and_finished_cards_apart(self):
+        replies = iter([{"turns": []}, {"tasks": [{"id": "w", "state": "working", "started_at": 1}], "now": 1000.0},
+                        {"tasks": [{"id": "d", "state": "done", "started_at": 1, "finished_at": 990.0}], "now": 1000.0}])
+        urls = []
+
+        def opened(request, timeout):
+            urls.append(request.full_url)
+            reply = mock.MagicMock()
+            reply.__enter__.return_value.read.return_value = json.dumps(next(replies)).encode()
+            return reply
+
+        with mock.patch.object(feed.urllib.request, "urlopen", side_effect=opened), \
+                mock.patch.object(feed.time, "time", return_value=1060.0), mock.patch.object(feed, "say"):
+            feed.ask("http://hub.example", {})
+        self.assertIn("state=queued,working,waiting", urls[1])
+        self.assertIn("state=done,failed&since=", urls[2])
+        self.assertEqual(feed.SKEW[0], 60.0)
+        self.assertEqual(sorted(feed.TASKS), ["d", "w"])
+        self.assertEqual(feed.TASKS["d"]["finished_at"], 1050.0)
 
     def test_a_listing_replaces_what_was_known(self):
         feed.track({"id": "old", "state": "working"})

@@ -402,7 +402,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_tasks",
-            "description": "Read the task cards Marcus sees in his apps and in the central card on his desktop: every watched T3 thread and update_task card, the ones waiting on him first, with state, current step, time taken and machine. Use it when he asks what is running, what waits on him, or how a piece of work is going, and answer in a line or two.",
+            "description": "Read the task cards Marcus sees in his apps and in the central card on his desktop: every running watched T3 thread and update_task card, the ones waiting on him first, plus the ones that finished in the last 12 hours and failures he has not seen, with state, current step, time taken and machine. The central card drops finished ones after a few minutes, so a done card here may no longer be on his screen. Use it when he asks what is running, what waits on him, or how a piece of work is going, and answer in a line or two.",
             "parameters": {
                 "type": "object",
                 "properties": {
