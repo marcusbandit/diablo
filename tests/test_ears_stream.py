@@ -267,6 +267,93 @@ class TestFollowing(unittest.TestCase):
         self.assertEqual(job["early"], ["Three."])
         gate.set()
 
+    def test_a_tool_starting_ends_the_reply_once_its_lines_are_said(self):
+        gate, started = threading.Event(), threading.Event()
+
+        def work(say):
+            say("I will find where that fix belongs.")
+            say("One moment.")
+            say.working()
+            started.set()
+            gate.wait(5)
+            say("Found it.")
+            return ""
+
+        self.group.work_grace_s = 0.1
+        job = self.job(work)
+        started.wait(1)
+        [(found, early)] = self.group.take_early()
+        begun = time.monotonic()
+        lines = list(ears.following(found, early))
+        self.assertLess(time.monotonic() - begun, 0.5, "the reply waited on the work")
+        self.assertEqual(lines, ["I will find where that fix belongs.", "One moment."])
+        gate.set()
+        job["done"].wait(1)
+        self.assertEqual(job["early"], ["Found it."])
+
+    def test_a_tool_mid_reply_still_lets_the_queued_lines_out_first(self):
+        gate, first, started = threading.Event(), threading.Event(), threading.Event()
+
+        def work(say):
+            say("Checking.")
+            first.set()
+            started.wait(1)
+            say("Still on it.")
+            say.working()
+            gate.wait(5)
+            return ""
+
+        self.group.work_grace_s = 0.1
+        self.job(work)
+        first.wait(1)
+        [(found, early)] = self.group.take_early()
+        started.set()
+        begun = time.monotonic()
+        self.assertEqual(list(ears.following(found, early)), ["Checking.", "Still on it."])
+        self.assertLess(time.monotonic() - begun, 0.5)
+        gate.set()
+
+    def test_a_quick_tool_between_two_lines_leaves_one_reply(self):
+        gate, started, go = threading.Event(), threading.Event(), threading.Event()
+
+        def work(say):
+            say("Let me check.")
+            say.working()
+            started.set()
+            go.wait(1)
+            say("It is in the panel.")
+            gate.wait(5)
+            return ""
+
+        self.group.work_grace_s = 1.0
+        self.job(work)
+        started.wait(1)
+        [(found, early)] = self.group.take_early()
+        threading.Timer(0.05, go.set).start()
+        with mock.patch.object(ears, "FOLLOW_S", 0.3):
+            self.assertEqual(list(ears.following(found, early)), ["Let me check.", "It is in the panel."])
+        gate.set()
+
+    def test_lines_after_the_work_flow_as_one_reply_again(self):
+        gate, said = threading.Event(), threading.Event()
+
+        def work(say):
+            say.working()
+            say("Found it.")
+            say("It is in the panel.")
+            said.set()
+            gate.wait(5)
+            return ""
+
+        self.group.work_grace_s = 0.05
+        job = self.job(work)
+        said.wait(1)
+        self.assertIsNone(job["working"])
+        [(found, early)] = self.group.take_early()
+        with mock.patch.object(ears, "FOLLOW_S", 0.1):
+            self.assertEqual(list(ears.following(found, early)), ["Found it.", "It is in the panel."])
+        gate.set()
+
     def test_the_rest_of_a_finished_answer_joins_the_same_reply(self):
         def work(say):
             say("I run your lights.")
@@ -368,6 +455,15 @@ class TestBeat(unittest.TestCase):
         heard, _, _, _ = self.words(["On it, sir."], {"reply": "On it, sir.", "spoken_first": "On it, sir.",
                                                       "rest": "", "backend": "claude"}, beat="")
         self.assertEqual(heard, ["On it, sir."])
+
+    def test_read_lines_hands_the_step_line_over(self):
+        import json
+
+        seen = []
+        lines = [json.dumps({"say": "Looking."}), json.dumps({"step": "Grep: rows"}), json.dumps({"done": {"reply": "Found."}})]
+        self.assertEqual(ears.read_lines(iter(lines), seen.append, None, lambda: seen.append("work")), {"reply": "Found."})
+        self.assertEqual(seen, ["Looking.", "work"])
+        self.assertEqual(ears.read_lines(iter(lines), seen.append), {"reply": "Found."})
 
     def test_read_lines_hands_the_brain_line_over(self):
         import json

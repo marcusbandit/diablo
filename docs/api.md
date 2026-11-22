@@ -128,7 +128,8 @@ text block was done and `first_say_ms` when his first sentence went out, both fr
 `"stream": true` answers as ndjson lines instead of one body. On a spoken turn (source `voice`) the
 claude brain streams its text token by token (`--include-partial-messages`), and every sentence goes
 out as `{"say": "..."}` the moment it ends: at `. ! ?` and a space, or near 220 characters for a
-run-on, never inside a word or a link. A tool starting cuts the sentence it interrupts loose at once.
+run-on, never inside a word or a link. A tool starting cuts the sentence it interrupts loose at once and sends `{"step": "<label>"}`,
+which ends the reply the ears are speaking once its lines are said.
 A list item goes out as its own say line without its bullet or number, with a full stop added when it has
 none. Code fences, table rows and headings are never sent as say lines. Before any say
 line, `{"brain": "claude"}` comes the moment the hub knows the turn goes to the full brain, after

@@ -259,6 +259,21 @@ class TestSayLines(unittest.TestCase):
         lines = self.run_turn(["Checking whether the build is done."], "Checking whether the build is done.", "Done.")
         self.assertEqual(lines[-1]["done"]["rest"], "Done.")
 
+    def test_a_tool_starting_goes_down_the_stream_so_the_ears_stop_speaking(self):
+        async def ask(conv, text, **kwargs):
+            await kwargs["on_say"]("I will find where that fix belongs.")
+            await kwargs["on_step"]("Grep: body rows")
+            return brains.Turn(text="Found it.", backend="claude", first_text="I will find where that fix belongs.",
+                               said=["I will find where that fix belongs."])
+
+        with mock.patch.object(server.brains, "ask", side_effect=ask), mock.patch.object(server, "publish"):
+            response = self.client.post("/v1/chat", headers=HEADERS,
+                                        json={"text": "fix the rows", "source": "voice", "stream": True})
+        lines = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+        self.assertEqual(lines[0], {"say": "I will find where that fix belongs."})
+        self.assertEqual(lines[1], {"step": "Grep: body rows"})
+        self.assertIn("done", lines[-1])
+
     def test_a_streamed_list_is_said_item_by_item(self):
         def delta(text):
             return {"type": "stream_event", "parent_tool_use_id": None,
