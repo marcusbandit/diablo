@@ -63,16 +63,26 @@ class Burst:
 
     def start(self, work, tl, said, run=True):
         """work(say) runs the hub call; each line it hands to say is a first line, spoken
-        ahead of the answer only while the job is alone in its burst."""
+        ahead of the answer only while the job is alone in its burst. say.working() says a tool
+        has started: the reply being spoken ends once the lines in hand are said, and the lines
+        written after the work make a reply of their own."""
         now = self.clock()
         job = {"done": threading.Event(), "words": "", "tl": tl, "said": said, "dropped": False, "early": [],
-               "started": now, "finished": None, "n": next(self._serial), "stirred": threading.Event()}
+               "working": False, "started": now, "finished": None, "n": next(self._serial), "stirred": threading.Event()}
 
         def say(words):
             with self.lock:
                 if not job["dropped"]:
                     job["early"].append(words)
+                job["working"] = False
             job["stirred"].set()
+
+        def working():
+            with self.lock:
+                job["working"] = True
+            job["stirred"].set()
+
+        say.working = working
 
         def go():
             try:
@@ -127,7 +137,8 @@ class Burst:
 
     def pull_early(self, job, wait):
         """The next first line of a lone job, waiting up to wait seconds for one to come. None
-        when none came, the job finished with none left, or it was dropped or joined a burst."""
+        when none came, a tool started after the last one, the job finished with none left, or it
+        was dropped or joined a burst."""
         deadline = time.monotonic() + wait
         while True:
             with self.lock:
@@ -135,6 +146,8 @@ class Burst:
                     return None
                 if job["early"]:
                     return job["early"].pop(0)
+                if job["working"]:
+                    return None
             left = deadline - time.monotonic()
             if job["done"].is_set() or left <= 0:
                 return None

@@ -71,9 +71,10 @@ ONSET_PROB = 0.3
 # A streamed answer can be quiet between its first line and its end for as long as a hub turn
 # may run (hub/brains.py TURN_SECONDS), plus a margin.
 TURN_READ_S = 960
-# Streamed sentences are spoken as one reply while the next keeps coming within this long, so a
-# tool at work between two sentences never splits one answer in two; the name still cuts in.
-FOLLOW_S = 30.0
+# Streamed sentences are spoken as one reply while the next keeps coming within this long. A tool
+# starting ends the reply once the lines in hand are said: the ears never sit in speaking while
+# the work runs, and what the turn says after it comes as its own reply (2026-11-22, #114).
+FOLLOW_S = 8.0
 # "That's all", "dismiss", "thanks, Diablo", "go away": he is done talking. Said after an answer,
 # or straight after the name, it closes the conversation here, with no brain turn: a short
 # goodbye, his reply cards gone, and no follow-up window.
@@ -682,7 +683,7 @@ def transcribe(audio, cfg, tl=None, fallback=False):
         Path(path).unlink(missing_ok=True)
 
 
-def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None, on_brain=None):
+def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None, on_brain=None, on_work=None):
     """The hub's answer to the words, as it sent it: reply, say, backend and maybe act.
 
     With on_say the answer streams: his first line comes to on_say the moment the hub has it,
@@ -690,7 +691,7 @@ def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None, on_brain=
     What was on screen at the wake goes along. A picture goes only when the words point
     at the screen, so a plain question stays fast. desktop (the open windows and media
     players) lets Jev pick a plain desktop command, which comes back as "act". on_brain runs
-    the moment the hub says the full brain has the turn."""
+    the moment the hub says the full brain has the turn, on_work each time a tool starts."""
     import base64
 
     body = {"text": text, "section": "", "source": "voice", "client_id": f"ears-{uuid.uuid4()}",
@@ -719,12 +720,12 @@ def ask(cfg, text, context=None, shot=None, desktop=None, on_say=None, on_brain=
             response.read()
             found = response.json()
             return found if isinstance(found, dict) else {}
-        return read_lines(response.iter_lines(), on_say, on_brain)
+        return read_lines(response.iter_lines(), on_say, on_brain, on_work)
 
 
-def read_lines(lines, on_say, on_brain=None):
-    """The streamed answer: each {"say"} line goes to on_say, {"brain"} to on_brain, and
-    {"done"} is the answer."""
+def read_lines(lines, on_say, on_brain=None, on_work=None):
+    """The streamed answer: each {"say"} line goes to on_say, {"brain"} to on_brain, {"step"} to
+    on_work, and {"done"} is the answer."""
     for line in lines:
         if not line.strip():
             continue
@@ -737,6 +738,9 @@ def read_lines(lines, on_say, on_brain=None):
         elif "brain" in item:
             if on_brain is not None and item.get("beat", True):
                 on_brain()
+        elif "step" in item:
+            if on_work is not None:
+                on_work()
         elif "done" in item:
             found = item["done"]
             return found if isinstance(found, dict) else {}
@@ -807,8 +811,8 @@ def say_ready(mic, speaker, cfg, detector, tap):
 
 def following(job, early):
     """The lines of a lone job still thinking: those in hand, then each next one as it is written,
-    for as long as the next keeps coming within FOLLOW_S, and once the job is done the rest of its
-    answer, so the whole answer is one reply."""
+    for as long as the next keeps coming within FOLLOW_S and no tool has started, and once the job
+    is done the rest of its answer, so the whole answer is one reply."""
     yield from early
     while True:
         line = PENDING.pull_early(job, FOLLOW_S)
@@ -1261,13 +1265,14 @@ def speaks_direct(cfg):
     return str(cfg.get("ears.speak_direct") or "0").strip().lower() in ("1", "on", "true", "yes")
 
 
-def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None, on_brain=None):
+def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None, on_brain=None, on_work=None):
     """The words to say for one heard line, after running any desktop act. Empty: say nothing.
 
     With on_say, each sentence he writes goes there as soon as the hub has it, and the words
     returned are only the sentences no line carried, so nothing is said twice. on_brain() runs
     once the hub says Claude has the turn and gives the text of the beat it started, or "";
-    a first line that only acknowledges is then not said again."""
+    a first line that only acknowledges is then not said again. on_work() runs each time a tool
+    starts, which ends the reply being spoken once its lines are said."""
     tl = tl or timeline.Timeline()
     tl.mark("hub_sent")
     first, heard = [], []
@@ -1304,7 +1309,8 @@ def answer_words(cfg, text, context, shot, desktop, tl=None, on_say=None, on_bra
 
     try:
         found = ask(cfg, text, context, shot, desktop, on_say=heard_first if on_say is not None else None,
-                    **({"on_brain": heard_brain} if on_say is not None and on_brain is not None else {}))
+                    **({"on_brain": heard_brain} if on_say is not None and on_brain is not None else {}),
+                    **({"on_work": on_work} if on_say is not None and on_work is not None else {}))
     except (httpx.HTTPError, ValueError) as error:
         log.warning("hub chat failed: %s", error)
         tl.mark("hub_back")
@@ -1692,7 +1698,7 @@ def turn(mic, settings, speaker, vad, detector=None, tap=None, woke_at=None, lea
         return say_answer(mic, speaker, run_act(heard.early["act"], tl, cfg), cfg, detector, tap, tl)
     context, shot = seen.get()
     words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, seen.desktop, tl, say,
-                                                          beat_for(speaker, cfg, tl)), tl, text)
+                                                          beat_for(speaker, cfg, tl), say.working), tl, text)
     if words is None:
         return False
     return say_answer(mic, speaker, words, cfg, detector, tap, tl)

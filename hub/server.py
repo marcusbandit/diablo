@@ -79,8 +79,8 @@ class ChatIn(BaseModel):
     # desktop command and the ears run it (the reply then carries "act").
     desktop: Optional[dict] = None
     # The ears ask for the answer as ndjson lines: {"brain": "claude"} once the full brain has a
-    # spoken turn, one {"say": ...} for each sentence the moment it is written, then
-    # {"done": <the usual reply>} or {"error": ...} at the end.
+    # spoken turn, one {"say": ...} for each sentence the moment it is written, {"step": ...} each
+    # time a tool starts, then {"done": <the usual reply>} or {"error": ...} at the end.
     stream: bool = False
     # The box whose ears heard a spoken turn; banditbox when left out.
     host: str = ""
@@ -489,9 +489,12 @@ async def chat_lines(body, caller):
     async def on_brain(beat=True):
         lines.put_nowait({"brain": "claude", "beat": bool(beat)})
 
+    async def on_work(label):
+        lines.put_nowait({"step": label})
+
     async def run():
         try:
-            lines.put_nowait({"done": await run_chat(body, caller, on_say=on_say, on_brain=on_brain)})
+            lines.put_nowait({"done": await run_chat(body, caller, on_say=on_say, on_brain=on_brain, on_work=on_work)})
         except HTTPException as problem:
             lines.put_nowait({"error": {"status": problem.status_code, "detail": problem.detail}})
         except Exception:
@@ -529,7 +532,7 @@ async def may_answer(question, origin):
     return not guard.restricted
 
 
-async def run_chat(body, caller, picking=None, on_say=None, on_brain=None):
+async def run_chat(body, caller, picking=None, on_say=None, on_brain=None, on_work=None):
     """One chat turn. picking is (question, choices, words) for a tap on a question card: the answer is
     recorded only once the request is known to be good, and the turn carries it."""
     answering = None
@@ -634,6 +637,8 @@ async def run_chat(body, caller, picking=None, on_say=None, on_brain=None):
 
     async def on_step(label):
         publish(dict(where, state="doing", step=label, tool=events.plain_step(label)))
+        if on_work is not None and source == "voice":
+            await on_work(label)
 
     said = questions.answer_line(answering) if answering is not None else text
     early = on_say if source == "voice" else None
