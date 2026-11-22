@@ -369,7 +369,7 @@ to the default sink's monitor, the exact audio going out, through `parec`.
   |---|---|---|
   | `speech_hold` | `gvoice` (his rules in `~/.config/gvoice/settings.json`), `dim`, `pause`, `off` | `gvoice` |
   | `speech_hold_dim_to` | 0 to 100, the level `dim` and `pause` use for sound that cannot pause | gvoice's `dim_to` |
-  | `speech_hold_gap_s` | seconds a released hold waits for the next taker, 0 to 30 | `1.5` |
+  | `speech_hold_gap_s` | seconds a released hold waits for the next taker while the conversation goes on, 0 to 30 | `1.5` |
 
   `dim` dims everything to the level, `pause` pauses players and dims the rest. Both keep
   an app he marked "nothing" in gvoice out of it. Set one with
@@ -380,8 +380,8 @@ to the default sink's monitor, the exact audio going out, through `parec`.
 ## Other sound goes quiet while he talks
 
 `voice/duck.py` turns every other app's stream down while a conversation is on: from the
-listening chime through thinking and the reply, the whole of speech control and dictation to
-Diablo, and `linger_s` (5 s) after, so a quick next "Diablo" finds it still down. It works per
+listening chime through thinking and the reply, and the whole of speech control and dictation
+to Diablo. The sound comes back the moment the conversation ends, with no linger. It works per
 stream (PipeWire sink inputs through `pactl`), so his master volume is never touched, and it
 looks again every 0.25 s, so a video or song that starts mid-conversation goes down too.
 Diablo's own voice and chimes (`Diablo`, `pw-play`, `diablo-voice`) are never touched, and
@@ -399,6 +399,13 @@ neither is an app his gvoice rules mark "nothing".
 - The holds above leave the dims to it: a stream it turned down is never dimmed by a hold as
   well, since two owners of one volume would each give back the other's level. Pauses still
   happen as before.
+- A paused video never plays again before its sound is back (Marcus: "There shall never be a
+  moment where video is playing that was playing before, where there is no audio"). A hold that
+  is about to resume a player first has the duck give the sound back and waits for it. When the
+  conversation is over, the hold skips its gap and the duck's end hands straight on to it, so
+  the sound and the video come back in one step, the sound first. A player resumed in the
+  middle of a conversation, such as after he stops talking and Diablo thinks, gets its sound
+  back and stays up for the rest of that conversation.
 - Settings, in `~/.config/diablo/duck.json` (`{"on": true, "level": 20}`), on the central card's
   Settings under Ears: the switch and the level (10, 15, 20 or 30 percent of each stream's own
   volume). `POST /v1/ears/duck` on 127.0.0.1:8758 takes `{"on", "level"}`.

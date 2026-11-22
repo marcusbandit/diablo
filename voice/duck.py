@@ -1,6 +1,6 @@
 """Other sound goes quiet while Marcus talks with Diablo, and comes back after.
 
-From the moment the ears listen until a few seconds after the exchange ends, every other
+From the moment the ears listen until the exchange ends, every other
 app's stream (a PipeWire sink input: a video in the browser, Spotify, a call) is turned down
 to `level` percent of its own volume. His master volume is never touched. Streams that start
 while the conversation is on are turned down within a fraction of a second, so a video he
@@ -11,7 +11,10 @@ once showed up as "ALSA plug-in [python3.12]" and was turned down as he spoke (2
 Children do not count: the ears start real apps, and those are turned down like any other.
 
 When it ends, each stream gets the exact volume it had, but only where nobody moved it since:
-a volume he changed while it was down stays where he put it.
+a volume he changed while it was down stays where he put it. That happens the moment the
+exchange ends, with no linger, and the sound hold (voice/speakers.py) plays what it paused
+only after that, through before_resume() and on_release: "There shall never be a moment where
+video is playing that was playing before, where there is no audio" (Marcus, 2026-11-22).
 
 WirePlumber remembers each app's last volume. A stream that closes while turned down leaves
 its app saved at the low level, and the app's next stream would start quiet (pw-play was left
@@ -40,7 +43,7 @@ log = logging.getLogger("diablo.duck")
 
 CONFIG_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "diablo" / "duck.json"
 STATE_FILE = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "diablo" / "ducked.json"
-DEFAULTS = {"on": True, "level": 20, "linger_s": 5.0}
+DEFAULTS = {"on": True, "level": 20}
 LEVELS = (10, 15, 20, 30)
 POLL_S = 0.25
 IDLE_POLL_S = 2.0
@@ -65,10 +68,6 @@ def settings(path=None):
         out["on"] = raw["on"]
     try:
         out["level"] = max(0, min(100, int(round(float(raw.get("level", out["level"]))))))
-    except (TypeError, ValueError, OverflowError):
-        pass
-    try:
-        out["linger_s"] = max(0.0, min(60.0, float(raw.get("linger_s", out["linger_s"]))))
     except (TypeError, ValueError, OverflowError):
         pass
     return out
@@ -204,8 +203,8 @@ class Ducker:
         self.running = False
         self.thread = None
         self.active = False
-        self.until = 0.0
         self.engaged = False
+        self.ended = False
         self.suspended = False
         self.suspended_at = 0.0
         self.held = {}
@@ -213,8 +212,11 @@ class Ducker:
         self.orphans = {}
         self.foreign = lambda: set()
         self.exempt = lambda: []
+        self.on_release = lambda: None
         self.first = None
         self.his = set()
+        self.spared = set()
+        self.resumed = set()
         self.cfg = settings(self.config_file)
 
     def start(self):
@@ -231,7 +233,6 @@ class Ducker:
         with self.lock:
             self.running = False
             self.active = False
-            self.until = 0.0
             self._give_back(glide=False)
         self.wake.set()
 
@@ -241,8 +242,6 @@ class Ducker:
         active = bool(active)
         if active == self.active:
             return
-        if not active:
-            self.until = self.clock() + self.cfg["linger_s"]
         self.active = active
         self.wake.set()
 
@@ -279,9 +278,47 @@ class Ducker:
                 return ALL
             if not self.cfg["on"]:
                 return set()
-            self.until = max(self.until, self.clock() + self.cfg["linger_s"])
+            self._unspare()
             self._tick()
             return set(self.held)
+
+    def quiet(self):
+        """True when the ears run the duck and no conversation is on."""
+        return self.started and not self._wanted()
+
+    def before_resume(self, names=(), streams=()):
+        """The sound hold calls this right before it plays what it paused, and waits for it, so
+        nothing it resumes plays turned down. With the conversation over, everything comes back
+        now. Mid conversation, the streams of those players come back and their apps stay up
+        until the next hold claims the sound, which pauses or dims them again by its rules."""
+        with self.lock:
+            if not self.started:
+                return
+            if not self._wanted():
+                self._tick()
+                return
+            names = {str(n).lower() for n in names if n}
+            streams = set(streams)
+            self.spared |= names
+
+            def theirs(index, stream):
+                if index in streams:
+                    return True
+                found = {self.held[index]["app"]}
+                if stream is not None:
+                    found |= {stream["app"].lower(), stream["binary"].lower()}
+                return bool(names & found)
+
+            held = set(self.held)
+            self._give_back(only=theirs)
+            given = held - set(self.held)
+            self.his |= given
+            self.resumed |= given
+
+    def _unspare(self):
+        self.his -= self.resumed
+        self.resumed = set()
+        self.spared = set()
 
     def status(self):
         cfg = self.cfg
@@ -289,27 +326,45 @@ class Ducker:
                 "active": self.engaged, "suspended": self.suspended, "held": len(self.held)}
 
     def _wanted(self):
-        return self.active or self.clock() < self.until
+        return self.active
 
     def _run(self):
         while True:
-            with self.lock:
-                if not self.running:
-                    return
-                try:
-                    self._tick()
-                except Exception:
-                    log.exception("duck tick failed")
-                fast = self.engaged or self.held or self._wanted()
-                wait = POLL_S if fast else (IDLE_POLL_S if self.orphans else 30.0)
+            wait = self._step()
+            if wait is None:
+                return
             self.wake.wait(wait)
             self.wake.clear()
+
+    def _step(self):
+        """One pass of the thread: the seconds until the next, or None once stopped. A
+        conversation that just ended hands on to on_release outside the lock, since the hold
+        takes its own lock first and then this one."""
+        with self.lock:
+            if not self.running:
+                return None
+            try:
+                self._tick()
+            except Exception:
+                log.exception("duck tick failed")
+            ended, self.ended = self.ended, False
+            fast = self.engaged or self.held or self._wanted()
+            wait = POLL_S if fast else (IDLE_POLL_S if self.orphans else 30.0)
+        if ended:
+            try:
+                self.on_release()
+            except Exception:
+                log.exception("the hold after the duck failed")
+        return wait
 
     def _tick(self):
         wanted = self._wanted()
         if self.engaged and not wanted:
             self.engaged = False
             self.suspended = False
+            self.spared = set()
+            self.resumed = set()
+            self.ended = True
         if self.held and (not wanted or not self.cfg["on"] or self.suspended):
             self._give_back()
         if self.suspended and not self.engaged and self.clock() - self.suspended_at > SUSPEND_IDLE_S:
@@ -318,6 +373,8 @@ class Ducker:
             self.engaged = True
             self.first = None
             self.his = set()
+            self.spared = set()
+            self.resumed = set()
             self.cfg = settings(self.config_file)
         if wanted and self.cfg["on"] and not self.suspended:
             self._sweep()
@@ -348,7 +405,7 @@ class Ducker:
             if index in self.held or index in self.his or index in foreign or not volume:
                 continue
             names = (stream["app"].lower(), stream["binary"].lower())
-            if any(m in n for m in exempt for n in names if n):
+            if any(m in n for m in exempt for n in names if n) or self.spared.intersection(n for n in names if n):
                 continue
             key = app_key(stream)
             known = self.apps.get(key) or self.orphans.get(key)
@@ -394,7 +451,8 @@ class Ducker:
             self._save()
             self._ramp(moves, DUCK_STEPS, DUCK_SECONDS)
 
-    def _give_back(self, glide=True):
+    def _give_back(self, glide=True, only=None):
+        """Everything held comes back, or only the streams only(index, live stream) picks."""
         if not self.held:
             self.apps.clear()
             return
@@ -402,18 +460,21 @@ class Ducker:
         if streams is None:
             return
         live = {s["index"]: s for s in streams}
+        before = dict(self.held)
+        picked = [i for i in before if only is None or only(i, live.get(i))]
         moves, given = [], []
-        for index, entry in self.held.items():
+        for index in picked:
+            entry = self.held.pop(index)
             stream = live.get(index)
             if stream is None:
-                if not any(e["app"] == entry["app"] and i in live for i, e in self.held.items()):
+                if not any(e["app"] == entry["app"] and i in live for i, e in before.items()):
                     self.orphans[entry["app"]] = {"from": entry["from"], "to": entry["to"], "at": self.wall()}
                 continue
             if near(stream["volume"], entry["to"]):
                 moves.append((index, stream["volume"], entry["from"]))
                 given.append(entry["name"] or str(index))
-        self.held.clear()
-        self.apps.clear()
+        if only is None:
+            self.apps.clear()
         if moves:
             if glide:
                 self._ramp(moves, RESTORE_STEPS, RESTORE_SECONDS)

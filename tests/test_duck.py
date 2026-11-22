@@ -53,7 +53,7 @@ class Backend:
         self.desk.set_volume(index, values)
 
 
-class DuckTest(unittest.TestCase):
+class DuckCase(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
         self.config = self.dir / "duck.json"
@@ -88,6 +88,8 @@ class DuckTest(unittest.TestCase):
         self.duck.update(False)
         self.tick(after)
 
+
+class DuckTest(DuckCase):
     def test_a_video_is_turned_down_and_comes_back_exactly(self):
         self.desk.add(7, "Zen", 50000)
         self.talk()
@@ -218,18 +220,18 @@ class DuckTest(unittest.TestCase):
         self.assertIn("application.name='Diablo'", env["PULSE_PROP_OVERRIDE"])
         self.assertIn("node.name='diablo-voice'", env["PULSE_PROP_OVERRIDE"])
 
-    def test_it_holds_through_the_linger_and_lets_go_after(self):
+    def test_the_sound_comes_back_the_moment_the_conversation_ends(self):
         self.desk.add(7, "Zen")
         self.talk()
-        self.duck.update(False)
-        self.tick(3.0)
         self.assertEqual(self.desk.vol(7), round(FULL * 0.2))
-        self.duck.update(True)
-        self.tick(3.0)
         self.duck.update(False)
-        self.tick(4.0)
-        self.assertEqual(self.desk.vol(7), round(FULL * 0.2))
-        self.tick(2.0)
+        self.tick(0.0)
+        self.assertEqual(self.desk.vol(7), FULL)
+        self.assertFalse(self.duck.engaged)
+
+    def test_a_claim_between_conversations_turns_nothing_down(self):
+        self.desk.add(7, "Zen")
+        self.assertEqual(self.duck.claim(), set())
         self.assertEqual(self.desk.vol(7), FULL)
 
     def test_a_volume_he_moved_stays_where_he_put_it(self):
@@ -256,7 +258,7 @@ class DuckTest(unittest.TestCase):
         self.assertEqual(self.desk.vol(7), 18000)
         self.end()
         self.assertEqual(self.desk.vol(7), 60000)
-        self.assertEqual(json.loads(self.config.read_text()), {"on": True, "level": 30, "linger_s": 5.0})
+        self.assertEqual(json.loads(self.config.read_text()), {"on": True, "level": 30})
 
     def test_switching_it_off_mid_conversation_gives_back_at_once(self):
         self.desk.add(7, "Zen")
@@ -358,6 +360,7 @@ class DuckTest(unittest.TestCase):
 
     def test_claim_turns_down_now_and_names_what_the_hold_must_leave(self):
         self.desk.add(7, "Zen")
+        self.duck.update(True)
         self.assertEqual(self.duck.claim(), {7})
         self.assertEqual(self.desk.vol(7), round(FULL * 0.2))
         self.duck.suspend(True)
@@ -394,10 +397,15 @@ class DuckTest(unittest.TestCase):
         self.duck.suspend(True)
         self.assertEqual(self.duck.claim(), duck.ALL)
 
-    def test_settings_keep_a_hand_set_linger(self):
+    def test_an_old_linger_in_the_settings_holds_nothing(self):
         self.config.write_text('{"on": true, "level": 20, "linger_s": 15}')
-        duck.save_settings({"level": 30}, self.config)
-        self.assertEqual(duck.settings(self.config)["linger_s"], 15.0)
+        self.duck = self.make()
+        self.assertNotIn("linger_s", duck.settings(self.config))
+        self.desk.add(7, "Zen")
+        self.talk()
+        self.duck.update(False)
+        self.tick(0.0)
+        self.assertEqual(self.desk.vol(7), FULL)
 
     def test_pactl_failing_reads_as_unknown_not_as_no_streams(self):
         failed = mock.Mock(returncode=1, stdout="")
@@ -411,6 +419,195 @@ class DuckTest(unittest.TestCase):
         self.duck.started = False
         self.assertEqual(self.duck.claim(), set())
         self.assertEqual(self.desk.vol(7), FULL)
+
+
+class Media:
+    """gvoice's media module as the hold uses it: one Zen player on sink input 7, paused by the
+    rules and played again on undo, each step written to the same log as the volumes."""
+
+    def __init__(self, desk, log):
+        self.desk, self.log = desk, log
+        self.state = "Playing"
+
+    def load_settings(self):
+        return {"media": {"players": "pause", "others": "dim", "dim_to": 35, "apps": []}}
+
+    def discover(self, names=True):
+        streams = [{"index": i, "pid": None} for i, s in self.desk.streams.items() if s["app"] == "Zen"]
+        return [{"kind": "player", "id": "zen.instance1", "name": "Zen", "names": ["zen", "zen.instance1"],
+                 "player": "zen.instance1", "playing": self.state == "Playing", "streams": streams}]
+
+    def plan(self, sources, rules):
+        return [{"op": "pause", "player": s["player"], "name": s["name"], "id": s["id"]}
+                for s in sources if s["playing"]]
+
+    def apply(self, ops):
+        for op in ops:
+            if op["op"] == "pause":
+                self.state = "Paused"
+                self.log.append(("pause", op["player"]))
+
+    def undo(self, ops):
+        for op in ops:
+            if op["op"] == "pause" and self.state == "Paused":
+                self.state = "Playing"
+                self.log.append(("play", op["player"]))
+
+
+class Timers:
+    """threading.Timer that only fires when the test says so."""
+
+    def __init__(self):
+        self.made = []
+
+    def __call__(self, wait, fn):
+        timer = mock.Mock(wait=wait, fn=fn)
+        self.made.append(timer)
+        return timer
+
+
+class SoundBeforeVideoTest(DuckCase):
+    """The duck and the hold together: a paused video never plays while its sound is down."""
+
+    def setUp(self):
+        super().setUp()
+        self.log = []
+        self.desk.add(7, "Zen", 50000)
+        set_volume = self.desk.set_volume
+
+        def logged(index, values):
+            set_volume(index, values)
+            self.log.append(("volume", index, self.desk.vol(index)))
+
+        self.desk.set_volume = logged
+        self.media = Media(self.desk, self.log)
+        self.timers = Timers()
+        self.hold = speakers.SoundHold(media=self.media, gap=1.5, timer=self.timers)
+        self.duck.on_release = self.hold.flush
+        self.duck.foreign = lambda: {op.get("stream") for op in self.hold.ops if op.get("op") == "dim"}
+        held = self.dir / "media-held.json"
+        self.extra = [mock.patch.object(duck, "DUCK", self.duck), mock.patch.object(speakers, "HELD_FILE", held)]
+        for p in self.extra:
+            p.start()
+
+    def tearDown(self):
+        for p in self.extra:
+            p.stop()
+        super().tearDown()
+
+    def step(self):
+        self.duck.wake.clear()
+        return self.duck._step()
+
+    def played_with(self):
+        """The volume of sink input 7 at the moment Zen was played again."""
+        at = self.log.index(("play", "zen.instance1"))
+        volumes = [e[2] for e in self.log[:at] if e[0] == "volume" and e[1] == 7]
+        return volumes[-1] if volumes else None
+
+    def test_the_end_of_speech_brings_sound_then_video_in_one_step(self):
+        self.duck.update(True)
+        self.step()
+        self.hold.acquire()
+        self.assertEqual(self.desk.vol(7), 10000)
+        self.assertEqual(self.media.state, "Paused")
+        self.duck.update(False)
+        self.hold.release()
+        self.assertEqual(self.timers.made, [])
+        self.assertEqual(self.media.state, "Playing")
+        self.assertEqual(self.played_with(), 50000)
+        self.assertEqual(self.desk.vol(7), 50000)
+
+    def test_a_hold_waiting_out_its_gap_plays_right_after_the_duck_lets_go(self):
+        self.duck.update(True)
+        self.step()
+        self.hold.acquire()
+        self.hold.release()
+        self.assertEqual(len(self.timers.made), 1)
+        self.assertEqual(self.media.state, "Paused")
+        self.duck.update(False)
+        self.step()
+        self.assertEqual(self.media.state, "Playing")
+        self.assertEqual(self.played_with(), 50000)
+        self.timers.made[0].cancel.assert_called()
+
+    def test_a_late_gap_still_waits_for_the_sound(self):
+        self.duck.update(True)
+        self.step()
+        self.hold.acquire()
+        self.hold.release()
+        self.duck.update(False)
+        self.hold._expire(self.timers.made[0])
+        self.assertEqual(self.played_with(), 50000)
+
+    def test_a_video_resumed_mid_conversation_plays_with_its_sound(self):
+        self.duck.update(True)
+        self.step()
+        self.hold.acquire()
+        self.hold.release(gap=0)
+        self.assertEqual(self.media.state, "Playing")
+        self.assertEqual(self.played_with(), 50000)
+        self.desk.add(9, "Zen", 40000)
+        self.desk.add(8, "Spotify")
+        self.step()
+        self.assertEqual((self.desk.vol(7), self.desk.vol(9), self.desk.vol(8)), (50000, 40000, round(FULL * 0.2)))
+        self.duck.update(False)
+        self.step()
+        self.duck.update(True)
+        self.step()
+        self.assertEqual(self.desk.vol(7), 10000)
+
+    def test_the_reply_takes_a_video_resumed_while_he_waited_again(self):
+        self.duck.update(True)
+        self.step()
+        self.hold.acquire()
+        self.hold.release(gap=0)
+        self.step()
+        self.assertEqual(self.desk.vol(7), 50000)
+        self.hold.acquire()
+        self.assertEqual(self.media.state, "Paused")
+        self.assertEqual(self.desk.vol(7), 10000)
+        self.duck.update(False)
+        self.hold.release()
+        self.assertEqual(self.log[-1], ("play", "zen.instance1"))
+        self.assertEqual(self.played_with(), 50000)
+
+    def test_a_new_conversation_before_the_flush_keeps_the_video_paused(self):
+        self.duck.update(True)
+        self.step()
+        self.hold.acquire()
+        self.hold.release()
+        self.duck.update(False)
+        with self.duck.lock:
+            self.duck._tick()
+        self.duck.update(True)
+        self.hold.flush()
+        self.assertEqual(self.media.state, "Paused")
+
+    def test_keep_up_still_leaves_the_video_playing(self):
+        self.duck.update(True)
+        self.step()
+        self.duck.suspend(True)
+        self.hold.acquire()
+        self.assertEqual(self.media.state, "Playing")
+        self.assertEqual(self.desk.vol(7), 50000)
+        self.hold.release()
+        self.duck.update(False)
+        self.step()
+        self.assertNotIn(("pause", "zen.instance1"), self.log)
+
+
+class PausedSoundTest(unittest.TestCase):
+    SOURCES = [{"id": "zen.1", "player": "zen.1", "names": ["zen"], "streams": [{"index": 7}]},
+               {"id": "app:spotify", "player": None, "names": ["spotify"], "streams": [{"index": 8}]}]
+
+    def test_by_id_or_by_player(self):
+        self.assertEqual(speakers.paused_sound([{"op": "pause", "id": "zen.1"}], self.SOURCES), (["zen"], [7]))
+        self.assertEqual(speakers.paused_sound([{"op": "pause", "player": "zen.1"}], self.SOURCES), (["zen"], [7]))
+
+    def test_dims_and_ops_without_names_pick_nothing(self):
+        ops = [{"op": "dim", "stream": 8, "id": "app:spotify"}, {"op": "pause"}]
+        self.assertEqual(speakers.paused_sound(ops, self.SOURCES), ([], []))
 
 
 class HoldLeavesTheDuckTest(unittest.TestCase):
