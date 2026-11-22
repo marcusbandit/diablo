@@ -66,7 +66,10 @@ Item {
     property string eyeLook: "neutral"
     onLipSyncChanged: eyeLook = "neutral"
     property bool blinking: false
-    onFaceChanged: orb.glance = ""
+    onFaceChanged: {
+        orb.glance = "";
+        orb.glideMouth(false);
+    }
 
     // He acts in every awake state, not only while a measured line plays: the face is drawn from
     // the horns, his eyes and his mouth, with blinks and small glances. Each state picks the eyes
@@ -100,8 +103,29 @@ Item {
         : orb.lipSync ? orb.eyeLook
         : orb.glance !== "" ? orb.glance
         : (orb.act?.eyes ?? "neutral")
-    readonly property real gazeX: orb.glance === "glance-left" ? -1 : orb.glance === "glance-right" ? 1 : 0
     readonly property bool mouthFollows: !orb.lipSync && !orb.babbling
+    property real mouthShift: 0
+    onGlanceChanged: orb.glideMouth(true)
+    onMouthFollowsChanged: orb.glideMouth(false)
+    function glideMouth(animate) {
+        const follows = !orb.lipSync && !orb.babbling;
+        const to = !follows ? 0 : orb.glance === "glance-left" ? -0.025 : orb.glance === "glance-right" ? 0.025 : 0;
+        mouthGlide.stop();
+        if (animate && follows) {
+            mouthGlide.to = to;
+            mouthGlide.start();
+        } else {
+            orb.mouthShift = to;
+        }
+    }
+    NumberAnimation {
+        id: mouthGlide
+
+        target: orb
+        property: "mouthShift"
+        duration: 220
+        easing.type: Easing.OutCubic
+    }
     readonly property string shownMouth: orb.lipSync || orb.babbling ? orb.mouthShape : (orb.act?.mouth ?? "rest")
 
     readonly property bool awake: mood !== "asleep" || control || dictating || thinkingBehind || moment !== "" || presenting
@@ -249,12 +273,7 @@ Item {
                 mipmap: true
                 asynchronous: false
                 transform: Translate {
-                    x: orb.mouthFollows ? orb.gazeX * face.width * 0.025 : 0
-
-                    Behavior on x {
-                        enabled: orb.mouthFollows
-                        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
-                    }
+                    x: orb.mouthShift * face.width
                 }
             }
 
