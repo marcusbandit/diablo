@@ -87,8 +87,10 @@ function Stepper({ label, value, onChange, low, high, step = 1 }: { label: strin
           value={text}
           onChangeText={(t) => {
             const digits = t.replace(/[^0-9]/g, "");
-            setText(digits);
-            if (digits) onChange(clamp(Number(digits), low, high));
+            if (!digits) return setText("");
+            const n = clamp(Number(digits), low, high);
+            setText(String(n));
+            onChange(n);
           }}
           onBlur={() => setText(String(value))}
           keyboardType="number-pad"

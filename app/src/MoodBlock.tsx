@@ -71,6 +71,7 @@ export function MoodBlock({ mood, label, height = 150, inset = 0, onBack, backLa
 
   const ink = useAnimatedStyle(() => ({ transform: [{ scale: spread.value }], opacity: spread.value === 0 ? 0 : 1 }));
   const inkText = useAnimatedStyle(() => ({ color: withTiming(mood.ink, { duration: motion.fade }) }), [mood.ink]);
+  const inkLine = useAnimatedStyle(() => ({ borderColor: withTiming(mood.ink, { duration: motion.fade }) }), [mood.ink]);
   const inkFace = useAnimatedStyle(() => ({ tintColor: withTiming(mood.ink, { duration: motion.fade }) }), [mood.ink]);
 
   const onLayout = (e: LayoutChangeEvent) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height });
@@ -94,7 +95,7 @@ export function MoodBlock({ mood, label, height = 150, inset = 0, onBack, backLa
           hitSlop={space(3)}
           style={{ flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: space(1.5) }}
         >
-          <View style={{ width: 9, height: 9, borderLeftWidth: 2.5, borderBottomWidth: 2.5, borderColor: mood.ink, transform: [{ rotate: "45deg" }], marginLeft: 2 }} />
+          <Animated.View style={[{ width: 9, height: 9, borderLeftWidth: 2.5, borderBottomWidth: 2.5, transform: [{ rotate: "45deg" }], marginLeft: 2 }, inkLine]} />
           <Animated.Text style={[{ fontFamily: font.medium, ...type.small }, inkText]}>{label}</Animated.Text>
         </Pressable>
       ) : (

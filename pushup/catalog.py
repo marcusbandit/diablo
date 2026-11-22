@@ -216,7 +216,80 @@ def roll_up(entry):
     return parts
 
 
-for _e in (*EXERCISES.values(), *ACTIVITIES.values()):
+# Moves logged from elsewhere (Diablo's app and chat, hub/modules/exercises.py) that never come up
+# on a card: known here so a logged set maps onto the muscles it worked instead of counting as push.
+def _m(**kw):
+    return {k.replace("_", " "): v for k, v in kw.items()}
+
+
+LOGGED = {
+    "incline push-ups": {"scale": 1.3, "muscles": _m(chest=1, triceps=0.7, shoulders=0.5, abs=0.3)},
+    "diamond push-ups": {"scale": 0.8, "muscles": _m(triceps=1, chest=0.8, shoulders=0.5, abs=0.4)},
+    "wide push-ups": {"scale": 1, "muscles": _m(chest=1, shoulders=0.6, triceps=0.5, abs=0.4)},
+    "archer push-ups": {"scale": 0.5, "muscles": _m(chest=1, triceps=0.8, shoulders=0.7, abs=0.5)},
+    "knee push-ups": {"scale": 1.5, "muscles": _m(chest=1, triceps=0.7, shoulders=0.5)},
+    "pseudo planche push-ups": {"scale": 0.5, "muscles": _m(shoulders=1, chest=0.8, triceps=0.8, abs=0.6, biceps=0.3)},
+    "handstand push-ups": {"scale": 0.3, "muscles": _m(shoulders=1, triceps=0.9, traps=0.6, chest=0.3)},
+    "handstand hold": {"scale": 1, "timed": True, "muscles": _m(shoulders=1, triceps=0.6, traps=0.5, abs=0.5, forearms=0.4)},
+    "dips": {"scale": 0.6, "muscles": _m(triceps=1, chest=0.9, shoulders=0.7, abs=0.2)},
+    "bench press": {"scale": 0.7, "muscles": _m(chest=1, triceps=0.7, shoulders=0.6)},
+    "incline bench press": {"scale": 0.7, "muscles": _m(chest=1, shoulders=0.8, triceps=0.7)},
+    "dumbbell bench press": {"scale": 0.7, "muscles": _m(chest=1, triceps=0.6, shoulders=0.6)},
+    "overhead press": {"scale": 0.7, "muscles": _m(shoulders=1, triceps=0.8, traps=0.5, abs=0.4)},
+    "dumbbell shoulder press": {"scale": 0.7, "muscles": _m(shoulders=1, triceps=0.7, traps=0.4)},
+    "lateral raises": {"scale": 1.2, "muscles": _m(shoulders=1, traps=0.4)},
+    "front raises": {"scale": 1.2, "muscles": _m(shoulders=1, chest=0.3)},
+    "triceps extensions": {"scale": 1, "muscles": _m(triceps=1)},
+    "skull crushers": {"scale": 1, "muscles": _m(triceps=1, forearms=0.2)},
+    "triceps pushdowns": {"scale": 1.2, "muscles": _m(triceps=1)},
+    "chest flyes": {"scale": 1, "muscles": _m(chest=1, shoulders=0.4)},
+    "pull-ups": {"scale": 0.4, "muscles": _m(lats=1, biceps=0.7, forearms=0.6, traps=0.5, shoulders=0.3, abs=0.2)},
+    "chin-ups": {"scale": 0.4, "muscles": _m(lats=1, biceps=0.9, forearms=0.6, traps=0.4, abs=0.2)},
+    "negative pull-ups": {"scale": 0.5, "muscles": _m(lats=1, biceps=0.7, forearms=0.6, traps=0.5)},
+    "scapular pull-ups": {"scale": 1, "muscles": _m(traps=1, lats=0.6, forearms=0.5)},
+    "dead hang": {"scale": 2, "timed": True, "muscles": _m(forearms=1, lats=0.5, shoulders=0.3)},
+    "barbell rows": {"scale": 0.7, "muscles": _m(lats=1, traps=0.8, biceps=0.6, lower_back=0.5, forearms=0.4)},
+    "dumbbell rows": {"scale": 0.8, "muscles": _m(lats=1, traps=0.6, biceps=0.6, forearms=0.4)},
+    "lat pulldowns": {"scale": 0.8, "muscles": _m(lats=1, biceps=0.6, traps=0.4, forearms=0.4)},
+    "seated cable rows": {"scale": 0.8, "muscles": _m(lats=1, traps=0.8, biceps=0.6, forearms=0.4)},
+    "face pulls": {"scale": 1, "muscles": _m(shoulders=1, traps=0.8)},
+    "biceps curls": {"scale": 1, "muscles": _m(biceps=1, forearms=0.5)},
+    "hammer curls": {"scale": 1, "muscles": _m(biceps=0.9, forearms=1)},
+    "shrugs": {"scale": 1.2, "muscles": _m(traps=1, forearms=0.4)},
+    "deadlifts": {"scale": 0.5, "muscles": _m(hamstrings=1, glutes=1, lower_back=1, traps=0.6, forearms=0.6, quads=0.4, lats=0.4)},
+    "back squats": {"scale": 0.7, "muscles": _m(quads=1, glutes=0.9, adductors=0.5, lower_back=0.4, hamstrings=0.3)},
+    "front squats": {"scale": 0.7, "muscles": _m(quads=1, glutes=0.7, abs=0.4, adductors=0.4)},
+    "goblet squats": {"scale": 1, "muscles": _m(quads=1, glutes=0.8, adductors=0.5, abs=0.3)},
+    "pistol squats": {"scale": 0.4, "muscles": _m(quads=1, glutes=0.9, hip_flexors=0.4, calves=0.3, abs=0.3)},
+    "reverse lunges": {"scale": 1.2, "muscles": _m(quads=1, glutes=0.9, hamstrings=0.4, adductors=0.3)},
+    "walking lunges": {"scale": 1.2, "muscles": _m(quads=1, glutes=0.8, hamstrings=0.4, calves=0.3)},
+    "box jumps": {"scale": 0.8, "cardio": 0.6, "muscles": _m(quads=1, glutes=0.8, calves=0.8, hamstrings=0.3)},
+    "hip thrusts": {"scale": 1, "muscles": _m(glutes=1, hamstrings=0.5, quads=0.3)},
+    "romanian deadlifts": {"scale": 0.7, "muscles": _m(hamstrings=1, glutes=0.8, lower_back=0.7, forearms=0.3)},
+    "nordic curls": {"scale": 0.3, "muscles": _m(hamstrings=1, glutes=0.3, calves=0.2)},
+    "leg press": {"scale": 0.8, "muscles": _m(quads=1, glutes=0.7, adductors=0.3, hamstrings=0.2)},
+    "leg extensions": {"scale": 1, "muscles": _m(quads=1)},
+    "leg curls": {"scale": 1, "muscles": _m(hamstrings=1, calves=0.3)},
+    "crunches": {"scale": 1.5, "muscles": _m(abs=1, obliques=0.4)},
+    "bicycle crunches": {"scale": 1.5, "muscles": _m(obliques=1, abs=0.8, hip_flexors=0.4)},
+    "leg raises": {"scale": 1, "muscles": _m(abs=1, hip_flexors=0.8)},
+    "hanging leg raises": {"scale": 0.6, "muscles": _m(abs=1, hip_flexors=0.9, forearms=0.5, lats=0.3)},
+    "hanging knee raises": {"scale": 0.9, "muscles": _m(abs=1, hip_flexors=0.7, forearms=0.5)},
+    "russian twists": {"scale": 2, "muscles": _m(obliques=1, abs=0.6)},
+    "v-ups": {"scale": 0.8, "muscles": _m(abs=1, hip_flexors=0.7)},
+    "flutter kicks": {"scale": 2, "muscles": _m(abs=0.8, hip_flexors=1)},
+    "dead bugs": {"scale": 1.5, "muscles": _m(abs=1, hip_flexors=0.4)},
+    "bird dogs": {"scale": 1.5, "muscles": _m(lower_back=1, glutes=0.6, abs=0.4, shoulders=0.2)},
+    "ab wheel rollouts": {"scale": 0.6, "muscles": _m(abs=1, lats=0.5, shoulders=0.5, hip_flexors=0.3)},
+    "high knees": {"scale": 3, "cardio": 1, "muscles": _m(hip_flexors=0.8, quads=0.5, calves=0.6)},
+    "kettlebell swings": {"scale": 1, "cardio": 0.7, "muscles": _m(glutes=1, hamstrings=0.8, lower_back=0.6, shoulders=0.3, forearms=0.4)},
+    "jump rope": {"scale": 5, "cardio": 1, "muscles": _m(calves=1, shoulders=0.3, forearms=0.3)},
+}
+for _name, _e in LOGGED.items():
+    _e.setdefault("one", _name.rstrip("s"))
+
+
+for _e in (*EXERCISES.values(), *LOGGED.values(), *ACTIVITIES.values()):
     _e["parts"] = roll_up(_e)
 for _name, _s in STRETCHES.items():
     _s.update(one=_name, scale=1, timed=True, stretch=True, parts={})
@@ -287,7 +360,7 @@ def slider_top(most):
 
 def info(name):
     """An exercise or a stretch. A name nothing knows gets push-up sized goals and no muscles."""
-    return EXERCISES.get(name) or STRETCHES.get(name) or {"one": name.rstrip("s"), "scale": 1, "parts": {"push": 1},
+    return EXERCISES.get(name) or STRETCHES.get(name) or LOGGED.get(name) or {"one": name.rstrip("s"), "scale": 1, "parts": {"push": 1},
                                                           "muscles": {}}
 
 
@@ -297,7 +370,7 @@ def squash(text):
 
 def candidates(text, known=None):
     """Every name a typed name could mean: exact or an alias first, else each name it is a piece of."""
-    known = list(known or (*EXERCISES, *STRETCHES))
+    known = list(known or (*EXERCISES, *STRETCHES, *LOGGED))
     key = squash(text)
     exact = [name for name in known if squash(name) == key]
     if exact:

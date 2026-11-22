@@ -38,6 +38,7 @@ SET_SPACING_S = 90
 LOG_TAIL = 256 * 1024
 PLAN_GROUPS = ("push", "legs", "pull", "core")
 PLAN_DEFAULT = {"push": "push-ups", "legs": "squats", "pull": "body rows", "core": "plank"}
+PLAN_TASK = "Plan Marcus's next"
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 TOOLS = [
@@ -253,7 +254,7 @@ def current(lines, now):
     found = sessions(lines)
     if not found:
         return None
-    session = found[-1]
+    session = max(found, key=lambda s: s["end"])
     if session["closed"] or now - session["end"] > gap_s():
         return None
     return session
@@ -375,13 +376,17 @@ def entries_for(arguments, now, lines=None, data=None, source="diablo"):
     ident = pick_exercise(arguments.get("exercise"), lines, data, now)
     open_now = current(lines, now)
     first_ts = ts - SET_SPACING_S * (len(reps) - 1)
+    step = SET_SPACING_S
     if open_now and open_now["exercise"] == ident and first_ts - open_now["end"] <= gap_s() and ts + 1 >= open_now["start"]:
         sid, start_no = open_now["id"], len(open_now["sets"]) + 1
+        if first_ts <= open_now["end"]:
+            first_ts = open_now["end"] + 0.001
+            step = max(0.001, (ts - first_ts) / (len(reps) - 1)) if len(reps) > 1 else 0
     else:
         sid, start_no = f"s-{uuid.uuid4().hex[:10]}", 1
     out = []
     for index, did in enumerate(reps):
-        entry = _base(now, first_ts + SET_SPACING_S * index, source)
+        entry = _base(now, first_ts + step * index, source)
         entry.update(result="manual", exercise=exercises.stored(ident), did=did, session_id=sid, set_no=start_no + index)
         out.append(entry)
     return out
@@ -432,6 +437,8 @@ def plan_slots(now=None, days=7, per_day=None, lines=None, tail=None):
     """Short sessions at sensible times: a few a day inside the window, a rest day, groups in turn."""
     now_dt = dt.datetime.fromtimestamp(time.time() if now is None else now)
     per_day = per_day or _number("workout.per_day", 3, 1, 6)
+    lines = inbox_lines() if lines is None else lines
+    tail = log_tail() if tail is None else tail
     window = str(settings.get("workout.window") or "10:00-20:00")
     try:
         begin, end = (dt.datetime.strptime(part.strip(), "%H:%M").time() for part in window.split("-", 1))
@@ -487,17 +494,31 @@ def plan(arguments, now=None):
     if not arguments.get("schedule"):
         return (f"proposed {plural(len(slots), 'session')} over {plural(days, 'day')}:\n" + "\n".join(lines) +
                 "\nnothing is set yet; call again with schedule true once he agrees")
+    pending_plan = [row for row in reminders.upcoming() or [] if str(row.get("text") or "").startswith(PLAN_TASK)
+                    and float(row.get("next_due") or 0) > (time.time() if now is None else now) + 600]
+    if pending_plan:
+        return (f"not planned: a plan is already scheduled, and reminder #{pending_plan[0].get('id')} plans the next stretch; "
+                "cancel that plan's reminders with cancel_reminder first if he wants a new one")
     failed = []
     for slot in slots:
         said = reminders.call("add_reminder", {"text": slot_text(slot), "due": slot["at"]})
         if said.startswith("not set"):
             failed.append(f"{slot['at']}: {said}")
-    last = dt.datetime.fromisoformat(slots[-1]["at"]) + dt.timedelta(hours=1)
-    reminders.call("add_reminder", {
-        "text": f"Plan Marcus's next {days} days of workouts: call workout_plan with days {days} and schedule true, then tell him in one line.",
-        "due": last.strftime("%Y-%m-%dT%H:%M"), "task": True,
-    })
-    head = f"set {len(slots) - len(failed)} of {plural(len(slots), 'reminder')}, and a task at {last.strftime('%a %H:%M')} to plan the next stretch"
+    from .. import events
+
+    events.publish({"kind": "panel", "modules": ["reminders", "today"]})
+    set_count = len(slots) - len(failed)
+    head = f"set {set_count} of {plural(len(slots), 'reminder')}"
+    if set_count:
+        last = dt.datetime.fromisoformat(slots[-1]["at"]) + dt.timedelta(hours=1)
+        said = reminders.call("add_reminder", {
+            "text": f"{PLAN_TASK} {days} days of workouts: call workout_plan with days {days} and schedule true, then tell him in one line.",
+            "due": last.strftime("%Y-%m-%dT%H:%M"), "task": True,
+        })
+        head += (f", and the task that plans the next stretch was not set ({said})" if said.startswith("not set")
+                 else f", and a task at {last.strftime('%a %H:%M')} to plan the next stretch")
+    else:
+        head += ", so nothing will plan the next stretch"
     return head + (":\n" + "\n".join(failed) if failed else "")
 
 
@@ -746,10 +767,10 @@ def actions_for(data, open_now=None, last=None):
         ]}
     if last and exercises.resolve(last[0]):
         name = exercises.name_of(last[0])
-        first = {"label": f"Log {last[1]} {name.lower()}", "icon": "add", "tip": "The size of your last set",
+        first = {"label": f"Log {last[1]} {name.lower()}", "icon": "add",
                  "act": {"module": ID, "action": "set", "args": {"exercise": exercises.resolve(last[0]), "did": last[1]}}}
     else:
-        first = {"label": "Log a set", "icon": "add", "say": "I did ", "send": False, "tip": "Type how many of what"}
+        first = {"label": "Log a set", "icon": "add", "say": "I did ", "send": False}
     return {"kind": "actions", "items": [
         first,
         {"label": "I trained today", "icon": "run", "say": "I trained today: ", "send": False},
@@ -886,7 +907,6 @@ def panel(section):
         blocks.append({"kind": "list", "link": "days", "title": "This week", "icon": "calendar", "items": rows})
     if waiting:
         blocks.append({"kind": "list", "link": "queue", "title": "Not counted yet", "icon": "clock",
-                       "caption": "Logged here. These count at the next refresh.",
                        "items": [{"title": describe(e), "trailing": time.strftime("%H:%M", time.localtime(e["ts"]))} for e in waiting]})
     if not body and not bars and not rows:
         blocks.append({"kind": "notice", "state": "quiet", "title": "Nothing trained this week",

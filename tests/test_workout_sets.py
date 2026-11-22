@@ -37,6 +37,15 @@ class TestNames(unittest.TestCase):
             self.assertEqual(name[0], name[0].upper(), name)
             self.assertEqual(name[1:], name[1:].lower() if name not in ("L-sit", "V-ups") else name[1:], name)
 
+    def test_pushup_knows_every_move_under_the_name_we_send(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pushup"))
+        import catalog
+        for ident, *_ in exercises.LIBRARY:
+            name = exercises.stored(ident)
+            self.assertEqual(catalog.find(name), name, ident)
+            self.assertTrue(catalog.info(name)["muscles"], ident)
+        self.assertEqual(catalog.info("chin-ups")["parts"].get("push"), None)
+
     def test_pushups_own_keys_are_what_lands_in_the_inbox(self):
         self.assertEqual(exercises.stored("l-sit"), "L-sit")
         self.assertEqual(exercises.stored("body rows"), "body rows")
@@ -109,6 +118,20 @@ class TestSetsAndReps(SetsCase):
         [session] = workout.sessions(self.lines())
         self.assertEqual(session["sets"], [15, 12])
         self.assertEqual(workout.current(self.lines(), NOW + 300)["id"], session["id"])
+
+    def test_a_batch_after_a_set_stays_in_order_and_never_in_the_future(self):
+        workout.log({"kind": "set", "exercise": "push-ups", "did": 10}, now=NOW)
+        workout.log({"kind": "sets", "reps": [8, 8, 8]}, now=NOW + 30)
+        [session] = workout.sessions(self.lines())
+        self.assertEqual(session["sets"], [10, 8, 8, 8])
+        self.assertTrue(all(e["ts"] <= NOW + 30 for e in self.lines()))
+
+    def test_a_backdated_batch_of_another_exercise_becomes_the_open_session(self):
+        workout.log({"kind": "set", "exercise": "plank", "did": 40}, now=NOW)
+        workout.log({"kind": "sets", "exercise": "squats", "reps": [12, 12, 12]}, now=NOW + 60)
+        self.assertEqual(workout.current(self.lines(), NOW + 60)["exercise"], "squats")
+        [entry] = workout.log({"kind": "set", "did": 10}, now=NOW + 120)
+        self.assertEqual(entry["exercise"], "squats")
 
     def test_a_long_gap_closes_the_session(self):
         workout.log({"kind": "set", "exercise": "squats", "did": 15}, now=NOW)
@@ -297,6 +320,27 @@ class TestPlan(SetsCase):
         self.assertTrue(add.call_args_list[-1].args[1]["task"])
         self.assertIn("Push-ups: 3 sets of 10", [c.args[1]["text"] for c in add.call_args_list])
         self.assertIn("set 6 of 6 reminders", said)
+
+    def test_a_second_plan_is_refused_while_one_is_scheduled(self):
+        later = self.MONDAY + 3 * 86400
+        rows = [{"id": 7, "text": "Plan Marcus's next 7 days of workouts: call workout_plan", "next_due": later}]
+        with mock.patch("hub.modules.reminders.upcoming", return_value=rows), \
+                mock.patch("hub.modules.reminders.call", return_value="set #1") as add:
+            said = workout.plan({"days": 2, "schedule": True}, now=self.MONDAY)
+        add.assert_not_called()
+        self.assertIn("already scheduled", said)
+
+    def test_no_next_plan_when_every_slot_failed_and_a_failed_task_is_said(self):
+        with mock.patch("hub.modules.reminders.upcoming", return_value=[]), \
+                mock.patch("hub.modules.reminders.call", return_value="not set: down") as add:
+            said = workout.plan({"days": 1, "schedule": True}, now=self.MONDAY)
+        self.assertFalse(any(c.args[1].get("task") for c in add.call_args_list))
+        self.assertIn("nothing will plan the next stretch", said)
+        replies = iter(["set #1", "set #2", "set #3", "not set: no tasks here"])
+        with mock.patch("hub.modules.reminders.upcoming", return_value=[]), \
+                mock.patch("hub.modules.reminders.call", side_effect=lambda *_a: next(replies)):
+            said = workout.plan({"days": 1, "schedule": True}, now=self.MONDAY)
+        self.assertIn("was not set (not set: no tasks here)", said)
 
 
 if __name__ == "__main__":

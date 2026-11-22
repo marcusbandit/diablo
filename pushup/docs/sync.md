@@ -92,7 +92,9 @@ few sets of one exercise:
     {"id": "diablo-0f0e0d0c0b0a", "ts": 1793903800, "logged": 1793903800, "result": "close", "session_id": "s-0a1b2c3d4e", "source": "diablo"}
 
 - `exercise` is always one id from `hub/modules/exercises.py`, which uses the `EXERCISES` keys
-  where pushup knows the move, so there are no near duplicates.
+  where pushup knows the move, so there are no near duplicates. Moves that never come up on a card
+  (bench press, chin-ups, deadlifts and the rest) are in `catalog.LOGGED`, so a logged set lands on
+  the muscles it worked instead of counting as push.
 - A session stays open until a `close` line names it or `workout.session_gap_min` (20) minutes
   pass without a set. pushup ignores `close` lines, since only `session` and `manual` count.
 - Older lines without `session_id` still count and still show, each as a session of one set.
