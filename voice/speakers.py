@@ -267,6 +267,11 @@ class SoundHold:
     cancels the wait, so a second reply or his next turn never lets the sound pop back
     up between. The sound is given back once, to what it was before the first acquire,
     and only where nobody has touched it since. While held, the first acquire's rules win.
+
+    Nothing it paused plays again before the conversation duck has given its sound back:
+    the give back waits on duck.DUCK.before_resume() first. Once the conversation is over
+    there is no gap, and the duck's end hands straight on to flush(), so the sound and what
+    was paused come back in one step, the sound first.
     """
 
     def __init__(self, media=None, gap=DEFAULT_GAP_S, timer=threading.Timer):
@@ -278,6 +283,7 @@ class SoundHold:
         self.ops = []
         self.hush = None
         self.taken = False
+        self.resumes = ([], [])
         self._timer = None
 
     @property
@@ -304,7 +310,7 @@ class SoundHold:
             if self.users or not self.taken:
                 return
             wait = self.gap if gap is None else gap
-            if wait <= 0:
+            if wait <= 0 or duck.DUCK.quiet():
                 self._give_back()
                 return
             self._cancel()
@@ -312,6 +318,14 @@ class SoundHold:
             timer.daemon = True
             self._timer = timer
             timer.start()
+
+    def flush(self):
+        """The conversation duck just gave the sound back: a hold that only waits out its gap
+        gives back now."""
+        with self._lock:
+            if not self.users and self.taken:
+                self._cancel()
+                self._give_back()
 
     def release_all(self):
         """For shutdown: give the sound back now, whoever still holds it."""
@@ -340,11 +354,14 @@ class SoundHold:
         if media is None:
             if duck.DUCK.claim() != duck.ALL and mode != "dim":
                 self.hush = Hush().__enter__()
+                self.resumes = ([p.split(".")[0] for p in self.hush.paused], [])
             return
         try:
             rules = rules_for(media.load_settings()["media"], mode, dim_to)
-            ops = media.plan([src for src in media.discover(names=False) if not own(src)], rules)
+            sources = [src for src in media.discover(names=False) if not own(src)]
+            ops = media.plan(sources, rules)
             self.ops = leave_to_duck(ops, duck.DUCK.claim())
+            self.resumes = paused_sound(self.ops, sources)
             if self.ops:
                 _save_held(self.ops)
             media.apply(self.ops)
@@ -358,13 +375,19 @@ class SoundHold:
             HELD_FILE.unlink(missing_ok=True)
             if mode != "dim":
                 self.hush = Hush().__enter__()
+                self.resumes = ([p.split(".")[0] for p in self.hush.paused], [])
             return
         if self.ops:
             log.info("held %s", ", ".join(f"{op['op']} {op.get('name')}" for op in self.ops))
 
     def _give_back(self):
-        hush, ops = self.hush, self.ops
-        self.hush, self.ops, self.taken = None, [], False
+        hush, ops, (names, streams) = self.hush, self.ops, self.resumes
+        self.hush, self.ops, self.taken, self.resumes = None, [], False, ([], [])
+        if (hush is not None and hush.paused) or any(op.get("op") == "pause" for op in ops):
+            try:
+                duck.DUCK.before_resume(names, streams)
+            except Exception as error:
+                log.warning("giving the sound back before playing failed: %s", error)
         if hush is not None:
             hush.__exit__(None, None, None)
         if ops:
@@ -374,6 +397,18 @@ class SoundHold:
                 log.warning("gvoice release failed: %s", error)
             log.info("gave back %d", len(ops))
         HELD_FILE.unlink(missing_ok=True)
+
+
+def paused_sound(ops, sources):
+    """The names and sink inputs of what the hold's ops pause, for the duck to give back before
+    they play again."""
+    paused = {op.get("id") for op in ops if op.get("op") == "pause"}
+    names, streams = [], []
+    for src in sources:
+        if src.get("id") in paused:
+            names += [n for n in src.get("names") or [] if n]
+            streams += [s["index"] for s in src.get("streams") or [] if s.get("index") is not None]
+    return names, streams
 
 
 def leave_to_duck(ops, ducked):
@@ -402,6 +437,7 @@ def kept_playing():
 _shared = SoundHold()
 duck.DUCK.foreign = lambda: {op.get("stream") for op in list(_shared.ops) if op.get("op") == "dim"}
 duck.DUCK.exempt = kept_playing
+duck.DUCK.on_release = _shared.flush
 
 
 def shutdown():
