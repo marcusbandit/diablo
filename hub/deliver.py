@@ -165,7 +165,8 @@ def answered_before(question, client_id):
     if reply is None or (reply["meta"] or {}).get("answers") != question["id"]:
         return None
     return {"reply": reply["text"], "id": reply["id"], "section": sections.MAIN_ID,
-            "user_id": earlier["id"] if earlier else None, "objects": [], "answered": question["id"]}
+            "user_id": earlier["id"] if earlier else None, "objects": (reply["meta"] or {}).get("objects") or [],
+            "answered": question["id"]}
 
 
 async def answer_action(question, choices, text="", source="fleet", client_id=None):

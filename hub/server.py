@@ -719,21 +719,22 @@ async def new_thread_turn(conv, text, body, caller, source, section):
     no brain turn (hub/newthread.py). None when the line is neither, or the desk is locked."""
     host = voice_host(caller, body.host)
     plan = newthread.plan(text, body.desktop, body.context, host or devices.desk_host())
-    found, rows = None, None
+    found, rows, choices = None, None, None
     if plan is None:
         waiting = questions.pending(conv)
         found = waiting[0] if waiting and newthread.is_mine(waiting[0]) else None
-        if found is None:
+        if found is None or not newthread.might_answer(found, text):
             return None
         rows = await asyncio.to_thread(newthread.projects)
-        if not newthread.reply_names(found, text, rows):
+        choices = newthread.reply_choices(found, text, rows)
+        if choices is None:
             return None
     guard = await asyncio.to_thread(lockguard.for_turn, devices.origin_for(caller, source, host))
     if guard.restricted:
         return None
     if found is not None:
         try:
-            found = questions.choose(found, questions.parse_reply(found, text) or [], text, source)
+            found = questions.choose(found, choices, text, source)
         except questions.Problem:
             return None
     where = {"kind": "turn", "section": section["id"], "source": source}
@@ -742,12 +743,16 @@ async def new_thread_turn(conv, text, body, caller, source, section):
         meta_in["answers"] = found["id"]
     user_id = db.add_message(source, "user", text, meta_in)
     publish(dict(where, state="doing", step="new T3 thread", tool="T3"))
-    if rows is None:
-        rows = await asyncio.to_thread(newthread.projects)
-    if found is not None:
-        line, block = await asyncio.to_thread(newthread.answer, found, rows, conv, host or None)
-    else:
-        line, block = await asyncio.to_thread(newthread.run, conv, plan, rows, host or None)
+    try:
+        if rows is None:
+            rows = await asyncio.to_thread(newthread.projects)
+        if found is not None:
+            line, block = await asyncio.to_thread(newthread.answer, found, rows, conv)
+        else:
+            line, block = await asyncio.to_thread(newthread.run, conv, plan, rows)
+    except Exception:
+        logger.exception("new thread failed")
+        line, block = "I could not make the thread.", None
     meta = {"section": section["id"], "client_id": body.client_id, "objects": [block] if block else [],
             "backend": "t3"}
     reply_id = db.add_message(source, "assistant", line, meta)

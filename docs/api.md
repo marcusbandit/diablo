@@ -114,12 +114,13 @@ action needs. The ears run it on banditbox. Anything else goes on to Claude as b
 (hub/newthread.py). A named project is matched against `t3_project_list` on every T3 box that is
 up, without regard to case, spaces or hyphens; with no name, the project is the part before " / " in a
 focused T3 Code window's title (from `desktop` or the turn's `context` note). A name on two boxes goes
-to the box whose ears heard him, else the first box up in `t3.environments`. The thread is launched
+to the box the focused T3 window is on (the box whose ears heard him) when one is focused, else the
+first box up in `t3.environments`. The thread is launched
 idle, opened in T3 Code on the desk with `python -m voice.window thread <t3code link>`, and the reply
 is one line with backend `t3`. When nothing settles the project, the reply carries a question block
 whose action kind is `new_thread`: three projects and "More projects" per card while more are left,
-grouped by box. A tap, a number, or a few words naming a project answer it; anything else goes to
-Claude. A locked desk leaves the line to Claude, which refuses as usual.
+grouped by box; "More projects" pages through the same projects the first card did. A tap, a
+number, or a few words naming a project answer it; anything else goes to Claude. A locked desk leaves the line to Claude, which refuses as usual.
 Every reply also carries `"timing": {"brain_ms", "jev_ms", "backend", "model", "tools", "tier"}`, the
 hub's own split of the turn, when the turn went through the router. `first_text_ms` is when his first
 text block was done and `first_say_ms` when his first sentence went out, both from the start of the turn.

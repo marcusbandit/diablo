@@ -39,12 +39,12 @@ _COMMAND = re.compile(
     r"(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?"
     r"(?:(?:make|create|start|open|spin\s+up|give|get|set\s+up)\s+(?:me\s+|us\s+)?)?"
     r"(?:(?:a|an|another)\s+)?(?:new|fresh|empty|blank)\s+(?:t3\s+(?:code\s+)?)?thread"
-    r"(?:\s+(?:in|for|on|under|inside)\s+(?:the\s+)?(?P<name>[\w'-]+(?:\s+[\w'-]+){0,3}?))?"
+    r"(?:\s+(?:in|for|on|under|inside)\s+(?:the\s+)?(?!(?:me|us)\b)(?P<name>[\w'-]+(?:\s+[\w'-]+){0,3}?))?"
     r"(?:\s+(?:project|repo|app))?"
     r"(?:\s+(?:please|for\s+me|now|thanks))*$"
 )
 _FILLER = set("""the a an in on for one project repo app please thanks it that this option number
-choice pick go with i'll ill take let's lets do say choose yes ok okay sure diablo sir""".split())
+choice pick go with i'll ill take let's lets do say choose yes ok okay sure sir""".split())
 
 _projects = {"at": 0.0, "rows": None}
 
@@ -113,7 +113,8 @@ def _env_projects(env, call):
 
 def projects(fresh=False, envs=None, call=None, is_up=None, now=None):
     """Every T3 project on every box that is up: [{env, id, title, updated}], boxes in the
-    t3.environments order. A box that is down or slow is left out, never waited on."""
+    t3.environments order, kept for PROJECTS_TTL_S. A box that is down is skipped; one that is
+    slow is waited on at most HOST_TIMEOUT_S a page, all boxes at once, then left out."""
     import concurrent.futures
     import logging
     import time
@@ -232,22 +233,43 @@ def page_of(rows, start):
     return (left, False) if len(left) <= PAGE + 1 else (left[:PAGE], True)
 
 
-def ask(conv, rows, start=0, name="", prefer="", ask_fn=None):
-    """Asks which project with a question card. (line, question block)."""
+def _labels(shown, rows):
+    """One label a project, never two the same once case is set aside, as the card needs."""
+    labels, taken = [], set()
+    for r in shown:
+        label, n = _place(r, rows)[:44], 2
+        while label.lower() in taken:
+            label, n = f"{_place(r, rows)[:40]} {n}", n + 1
+        taken.add(label.lower())
+        labels.append(label)
+    return labels
+
+
+def _key(r):
+    return [r["env"], r["id"]]
+
+
+def ask(conv, pool, start=0, name="", prefer="", ask_fn=None, rows=None):
+    """Asks which project with a question card, paging through pool. rows are all the projects
+    (for "on <box>" when a title is on two). (line, question block)."""
     from . import questions
 
-    listed = ordered(rows, prefer)
+    rows = rows if rows is not None else pool
+    listed = ordered(pool, prefer)
+    if start < 0 or len(listed) - start < 2:
+        start = 0
     shown, more = page_of(listed, start)
-    options = [{"label": _place(r, rows)[:48], "description": f"on {r['env']}"} for r in shown]
+    options = [{"label": label} for label in _labels(shown, rows)]
     picks = [{"env": r["env"], "id": r["id"], "title": r["title"]} for r in shown]
     if more:
-        options.append({"label": MORE, "description": f"{len(listed) - start - len(shown)} more"})
+        options.append({"label": MORE})
         picks.append({"more": start + len(shown)})
     missing = f"No project called {name}. " if name else ""
     asked = (ask_fn or questions.ask)(conv, {
         "header": TITLE, "question": "Which project gets the new thread?", "options": options,
         "allow_text": True,
-    }, ttl_s=QUESTION_TTL_S, action={"kind": KIND, "picks": picks, "name": name, "prefer": prefer})
+    }, ttl_s=QUESTION_TTL_S, action={"kind": KIND, "picks": picks, "name": name, "prefer": prefer,
+                                     "pool": [_key(r) for r in listed]})
     return f"{missing}{ASKED}", questions.public(asked)
 
 
@@ -261,18 +283,21 @@ def plan(text, desktop=None, context=None, host=""):
     return {"name": name, "window": window, "prefer": host if window else ""}
 
 
-def run(conv, step, rows, host=None, call=None, run_fn=None, ask_fn=None):
-    """Carries out a plan. (line, question block or None)."""
+def run(conv, step, rows, host=None, call=None, run_fn=None, ask_fn=None, pool=None):
+    """Carries out a plan. pool narrows a name to the projects a card showed, when it fits one of
+    them. (line, question block or None)."""
     if not rows:
         return "No T3 Code box is up with a project on it.", None
     name, prefer = step["name"], step["prefer"]
     if name:
-        found = match(name, rows, prefer)
+        found = (match(name, pool, prefer) if pool else []) or match(name, rows, prefer)
         chosen = one_project(found)
         if chosen is not None:
             return make(chosen, rows, host, call, run_fn), None
-        if found:
-            return ask(conv, found, 0, "", prefer, ask_fn)
+        if len(found) > 1:
+            return ask(conv, found, 0, "", prefer, ask_fn, rows)
+        if len(rows) == 1:
+            return f"No project called {name}.", None
         return ask(conv, rows, 0, name, prefer, ask_fn)
     if step["window"]:
         chosen = one_project(match(step["window"], rows, prefer))
@@ -291,33 +316,63 @@ def _said(text):
     return " ".join(w for w in re.findall(r"[\w'-]+", str(text or "").lower()) if w not in _FILLER)
 
 
-def reply_names(question, text, rows):
-    """Whether a typed or spoken reply answers this question card: a number or label, or a few
-    words that name a project. Anything else goes on to the brain."""
+def _numbers_only(words):
     from . import questions
 
-    if not is_mine(question):
+    return bool(words) and all(w.isdigit() or w in questions.NUMBER_WORDS for w in words.split())
+
+
+def might_answer(question, text):
+    """Cheap first look, with no project list: could this reply answer the card at all? A long
+    line or a new command never does."""
+    from . import questions
+
+    if not is_mine(question) or command(text) is not None:
         return False
     if questions.parse_reply(question, text) is not None:
         return True
-    said = _said(text)
-    return 0 < len(said.split()) <= REPLY_WORDS and command(text) is None and bool(match(said, rows))
+    return 0 < len(_said(text).split()) <= REPLY_WORDS
+
+
+def pool_of(question, rows):
+    """The projects the card was paging through, in its order, from today's list."""
+    keys = [tuple(k) for k in (question.get("action") or {}).get("pool") or [] if isinstance(k, list) and len(k) == 2]
+    by_key = {(r["env"], r["id"]): r for r in rows}
+    return [by_key[k] for k in keys if k in by_key]
+
+
+def reply_choices(question, text, rows):
+    """How a typed or spoken reply answers the card: [] for words that name a project (matched
+    like a name, the card's own projects first), the option numbers it names, or None when it
+    answers nothing and goes on to the brain."""
+    from . import questions
+
+    if not might_answer(question, text):
+        return None
+    words = _said(text)
+    if words and not _numbers_only(words) and (match(words, pool_of(question, rows)) or match(words, rows)):
+        return []
+    return questions.parse_reply(question, text)
 
 
 def answer(question, rows, conv, host=None, call=None, run_fn=None, ask_fn=None):
-    """An answered card: a pick makes the thread or shows the next page, words are matched like a
-    name. (line, question block or None)."""
+    """An answered card: a pick makes the thread or shows the next page of the same projects,
+    words are matched like a name. (line, question block or None)."""
     action = question.get("action") or {}
     picks = action.get("picks") or []
     got = question.get("answer") or {}
     prefer = action.get("prefer") or ""
+    pool = pool_of(question, rows)
     chosen = [picks[i] for i in got.get("choices") or [] if 0 <= i < len(picks)]
     if chosen and "more" in chosen[0]:
-        return ask(conv, rows, int(chosen[0]["more"]), "", prefer, ask_fn)
+        if len(rows) == 1:
+            return make(rows[0], rows, host, call, run_fn), None
+        return ask(conv, pool if len(pool) >= 2 else rows, int(chosen[0]["more"]), "", prefer, ask_fn, rows)
     if chosen:
         pick = chosen[0]
         project = next((r for r in rows if r["env"] == pick.get("env") and r["id"] == pick.get("id")), None)
         if project is None:
             project = {"env": pick.get("env"), "id": pick.get("id"), "title": pick.get("title") or "that project"}
         return make(project, rows, host, call, run_fn), None
-    return run(conv, {"name": _said(got.get("text")), "window": "", "prefer": prefer}, rows, host, call, run_fn, ask_fn)
+    step = {"name": _said(got.get("text")), "window": "", "prefer": prefer}
+    return run(conv, step, rows, host, call, run_fn, ask_fn, pool)

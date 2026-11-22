@@ -49,7 +49,7 @@ def opened():
 
 class TestCommand(unittest.TestCase):
     def test_new_thread_lines_with_and_without_a_name(self):
-        for line, name in (("new thread", ""), ("Diablo, make a new thread.", ""), ("create new thread in AniBeam", "anibeam"),
+        for line, name in (("new thread", ""), ("new thread for me", ""), ("make us a new thread please", ""), ("Diablo, make a new thread.", ""), ("create new thread in AniBeam", "anibeam"),
                            ("new thread in Diablo", "diablo"), ("could you start a new thread for the diablo project please", "diablo"),
                            ("[voice] new T3 thread in shop-scan", "shop-scan"), ("open a fresh thread on ani beam", "ani beam")):
             self.assertEqual(newthread.command(line), name, line)
@@ -233,11 +233,53 @@ class TestAsk(StoreCase):
     def test_a_typed_or_spoken_reply_counts_only_when_it_could_name_one(self):
         _, block = newthread.ask("main", self.MANY)
         found = questions.get(block["id"])
-        self.assertTrue(newthread.reply_names(found, "two", ROWS))
-        self.assertTrue(newthread.reply_names(found, "the diablo one", ROWS))
-        self.assertFalse(newthread.reply_names(found, "never mind", ROWS))
-        self.assertFalse(newthread.reply_names(found, "actually can you tell me what the weather is like in town today please", ROWS))
-        self.assertFalse(newthread.reply_names({"action": {"kind": "mail"}}, "two", ROWS))
+        self.assertEqual(newthread.reply_choices(found, "two", self.MANY), [1])
+        self.assertEqual(newthread.reply_choices(found, "the hotel one", self.MANY), [])
+        self.assertIsNone(newthread.reply_choices(found, "never mind", self.MANY))
+        self.assertIsNone(newthread.reply_choices(found, "actually can you tell me what the weather is like in town today please", self.MANY))
+        self.assertIsNone(newthread.reply_choices({"action": {"kind": "mail"}}, "two", self.MANY))
+        self.assertFalse(newthread.might_answer(found, "can you tell me what the weather is like in town today please"))
+
+    def test_the_diablo_one_names_diablo_not_option_one(self):
+        rows = [project("boxa", "p-a", "Alpha", "2026-11-22"), project("boxa", "p-d", "Diablo", "2026-11-21"),
+                project("boxa", "p-b", "Bravo", "2026-11-20")]
+        _, block = newthread.ask("main", rows)
+        found = questions.get(block["id"])
+        self.assertEqual(newthread.reply_choices(found, "the diablo one", rows), [])
+        found = questions.choose(found, [], "the diablo one")
+        line, _ = newthread.answer(found, rows, "main", None, self.launches, self.open)
+        self.assertEqual(line, "New thread in Diablo, ready for you.")
+        self.assertEqual(self.launches.calls[0][2]["projectId"], "p-d")
+
+    def test_labels_stay_distinct_so_a_tap_lands_on_what_it_showed(self):
+        rows = [project("boxa", "p-x", "Diablo", "2026-11-22"), project("boxa", "p-y", "diablo", "2026-11-21"),
+                project("boxa", "p-z", "Zulu", "2026-11-20")]
+        _, block = newthread.ask("main", rows)
+        labels = [o["label"] for o in block["options"]]
+        self.assertEqual(len({label.lower() for label in labels}), 3)
+        line, _ = newthread.answer(questions.choose(questions.get(block["id"]), [2]), rows, "main", None, self.launches, self.open)
+        self.assertEqual(line, "New thread in Zulu, ready for you.")
+
+    def test_options_carry_no_descriptions(self):
+        _, block = newthread.ask("main", self.MANY)
+        self.assertTrue(all(not o.get("description") for o in block["options"]))
+
+    def test_more_on_a_card_for_a_name_pages_through_its_matches_only(self):
+        rows = [project("boxa", f"m{i}", f"Ani {name}", f"2026-11-{20 - i:02d}") for i, name in
+                enumerate(("Alpha", "Bravo", "Charlie", "Delta", "Echo"))] + self.MANY
+        line, block = newthread.run("main", {"name": "ani", "window": "", "prefer": ""}, rows, None, self.launches, self.open)
+        self.assertEqual([o["label"] for o in block["options"]], ["Ani Alpha", "Ani Bravo", "Ani Charlie", "More projects"])
+        _, block = newthread.answer(questions.choose(questions.get(block["id"]), [3]), rows, "main", None, self.launches, self.open)
+        self.assertEqual([o["label"] for o in block["options"]], ["Ani Delta", "Ani Echo"])
+
+    def test_one_project_and_an_unknown_name_says_so_without_a_card(self):
+        line, block = newthread.run("main", {"name": "weather", "window": "", "prefer": ""}, [ROWS[0]], None, self.launches, self.open)
+        self.assertEqual((line, block), ("No project called weather.", None))
+        self.assertEqual(self.launches.calls, [])
+
+    def test_a_stale_more_falls_back_to_the_first_page(self):
+        _, block = newthread.ask("main", self.MANY, start=50)
+        self.assertEqual(block["options"][0]["label"], "Alpha")
 
 
 class TestChat(StoreCase):
@@ -289,6 +331,28 @@ class TestChat(StoreCase):
         response = self.client.post(f"/v1/questions/{block['id']}/answer", headers=HEADERS, json={"choices": [3]})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["reply"], "New thread in shop-scan, ready for you.")
+
+    def test_his_own_words_on_the_card(self):
+        self.chat("new thread")
+        self.assertEqual(self.chat("the shop scan one")["reply"], "New thread in shop-scan, ready for you.")
+
+    def test_an_unrelated_line_with_a_card_open_goes_to_the_brain(self):
+        self.chat("new thread")
+        self.brain.stop()
+        turn = brains.Turn(text="Sunny.", backend="claude")
+        with mock.patch.object(brains, "ask", mock.AsyncMock(return_value=turn)) as ask:
+            self.chat("what is the weather like in town today and tomorrow and the day after that")
+        ask.assert_called_once()
+
+    def test_a_retried_more_tap_gets_its_card_again(self):
+        many = [project("boxa", f"p{i}", name) for i, name in enumerate(("Alpha", "Bravo", "Charlie", "Delta", "Echo"))]
+        with mock.patch.object(newthread, "projects", return_value=many):
+            block = self.chat("new thread")["objects"][0]
+            tap = {"choices": [3], "client_id": "tap-1"}
+            first = self.client.post(f"/v1/questions/{block['id']}/answer", headers=HEADERS, json=tap).json()
+            again = self.client.post(f"/v1/questions/{block['id']}/answer", headers=HEADERS, json=tap).json()
+        self.assertEqual(first["objects"][0]["options"][0]["label"], "Delta")
+        self.assertEqual(again["objects"], first["objects"])
 
     def test_a_locked_desk_leaves_it_to_the_brain(self):
         self.guard.stop()
