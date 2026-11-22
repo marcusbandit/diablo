@@ -74,6 +74,16 @@ A line goes, in order, to:
 
 "Diablo, type ..." and "Diablo, dictate" also work from a normal turn.
 
+### The name inside speech control
+
+"Diablo" said alone in speech control, or said over an answer to cut it off, is a short break from
+it, never a request by itself. The line ends at the first pause without asking Jev, the listening
+chime plays, and the next line is the request, taken the way a woken turn takes it: plain commands,
+then Claude, with no name needed, under speech control's caps. After the name said alone, words he
+goes straight on with are kept; after a cut the request starts at the chime. Once that request is
+handled, speech control goes on where it was. A bare "stop" or a goodbye as the request ends it, and
+the name again starts another break.
+
 The mode words end a line after 0.8 s of quiet (`EARLY_LOCAL_S`), not the full quiet plus a
 second speech to text, because the ears read them on the words so far: "dictate", "speech
 control" from a turn, a bare "stop" inside speech control. Jev is not asked for them. On a box
