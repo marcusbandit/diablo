@@ -25,6 +25,9 @@ QUIET_S = 2.0
 # left behind: each speaks once it lands, or joins the next burst.
 STRAGGLE_S = 6.0
 MERGE_TIMEOUT_S = 25.0
+# After a tool starts, the reply being spoken waits this long for a next line before it ends, so a
+# quick tool between two sentences still leaves one reply.
+WORK_GRACE_S = 1.5
 FIRST_SENTENCE_CHARS = 160
 FALLBACK_CHARS = 900
 
@@ -54,6 +57,7 @@ class Burst:
         self.last = 0.0
         self.quiet_s = QUIET_S
         self.straggle_s = STRAGGLE_S
+        self.work_grace_s = WORK_GRACE_S
         self.merger = merger or (lambda turns: (fallback(turns), "fallback"))
         self.merging = None
         self._serial = itertools.count(1)
@@ -68,18 +72,18 @@ class Burst:
         written after the work make a reply of their own."""
         now = self.clock()
         job = {"done": threading.Event(), "words": "", "tl": tl, "said": said, "dropped": False, "early": [],
-               "working": False, "started": now, "finished": None, "n": next(self._serial), "stirred": threading.Event()}
+               "working": None, "started": now, "finished": None, "n": next(self._serial), "stirred": threading.Event()}
 
         def say(words):
             with self.lock:
                 if not job["dropped"]:
                     job["early"].append(words)
-                job["working"] = False
+                job["working"] = None
             job["stirred"].set()
 
         def working():
             with self.lock:
-                job["working"] = True
+                job["working"] = time.monotonic()
             job["stirred"].set()
 
         say.working = working
@@ -137,8 +141,8 @@ class Burst:
 
     def pull_early(self, job, wait):
         """The next first line of a lone job, waiting up to wait seconds for one to come. None
-        when none came, a tool started after the last one, the job finished with none left, or it
-        was dropped or joined a burst."""
+        when none came, a tool started after the last one and none followed within work_grace_s,
+        the job finished with none left, or it was dropped or joined a burst."""
         deadline = time.monotonic() + wait
         while True:
             with self.lock:
@@ -146,9 +150,8 @@ class Burst:
                     return None
                 if job["early"]:
                     return job["early"].pop(0)
-                if job["working"]:
-                    return None
-            left = deadline - time.monotonic()
+                until = deadline if job["working"] is None else min(deadline, job["working"] + self.work_grace_s)
+            left = until - time.monotonic()
             if job["done"].is_set() or left <= 0:
                 return None
             self._wait_stir(job, left)

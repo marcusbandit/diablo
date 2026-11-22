@@ -1896,7 +1896,7 @@ def _loop_line(mic, settings, speaker, vad, detector, tap, dictation, cfg, heard
     context = surroundings.lines()
     shot = surroundings.screenshot() if surroundings.points_at_screen(text) else None
     words = answer_or_background(lambda say: answer_words(cfg, text, context, shot, desktop, tl, say,
-                                                          beat_for(speaker, cfg, tl)), tl, text)
+                                                          beat_for(speaker, cfg, tl), say.working), tl, text)
     if words is not None and say_answer(mic, speaker, words, cfg, detector, tap, tl):
         return CUT
     return True

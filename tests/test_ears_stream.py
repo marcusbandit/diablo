@@ -279,6 +279,7 @@ class TestFollowing(unittest.TestCase):
             say("Found it.")
             return ""
 
+        self.group.work_grace_s = 0.1
         job = self.job(work)
         started.wait(1)
         [(found, early)] = self.group.take_early()
@@ -291,37 +292,63 @@ class TestFollowing(unittest.TestCase):
         self.assertEqual(job["early"], ["Found it."])
 
     def test_a_tool_mid_reply_still_lets_the_queued_lines_out_first(self):
-        gate = threading.Event()
+        gate, first, started = threading.Event(), threading.Event(), threading.Event()
 
         def work(say):
             say("Checking.")
-            time.sleep(0.05)
+            first.set()
+            started.wait(1)
             say("Still on it.")
             say.working()
             gate.wait(5)
             return ""
 
+        self.group.work_grace_s = 0.1
         self.job(work)
-        time.sleep(0.01)
+        first.wait(1)
         [(found, early)] = self.group.take_early()
+        started.set()
         begun = time.monotonic()
         self.assertEqual(list(ears.following(found, early)), ["Checking.", "Still on it."])
         self.assertLess(time.monotonic() - begun, 0.5)
         gate.set()
 
+    def test_a_quick_tool_between_two_lines_leaves_one_reply(self):
+        gate, started, go = threading.Event(), threading.Event(), threading.Event()
+
+        def work(say):
+            say("Let me check.")
+            say.working()
+            started.set()
+            go.wait(1)
+            say("It is in the panel.")
+            gate.wait(5)
+            return ""
+
+        self.group.work_grace_s = 1.0
+        self.job(work)
+        started.wait(1)
+        [(found, early)] = self.group.take_early()
+        threading.Timer(0.05, go.set).start()
+        with mock.patch.object(ears, "FOLLOW_S", 0.3):
+            self.assertEqual(list(ears.following(found, early)), ["Let me check.", "It is in the panel."])
+        gate.set()
+
     def test_lines_after_the_work_flow_as_one_reply_again(self):
-        gate = threading.Event()
+        gate, said = threading.Event(), threading.Event()
 
         def work(say):
             say.working()
             say("Found it.")
             say("It is in the panel.")
+            said.set()
             gate.wait(5)
             return ""
 
+        self.group.work_grace_s = 0.05
         job = self.job(work)
-        time.sleep(0.05)
-        self.assertFalse(job["working"])
+        said.wait(1)
+        self.assertIsNone(job["working"])
         [(found, early)] = self.group.take_early()
         with mock.patch.object(ears, "FOLLOW_S", 0.1):
             self.assertEqual(list(ears.following(found, early)), ["Found it.", "It is in the panel."])

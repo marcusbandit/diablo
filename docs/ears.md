@@ -201,7 +201,8 @@ fetched from Cartesia while the one before plays, one line ahead and no more, so
 most one fetch, and a quarter second of breath sits between them. The first line takes the eyes Jev
 has ready and never waits on them; the mouth is measured for every line. The reply stays open while
 the next line comes within 8 s (`FOLLOW_S`) and no tool has started. A tool starting (the hub's
-`{"step"}` line) ends it once the lines in hand are said, so the ears go back to listening while the
+`{"step"}` line) ends it once the lines in hand are said and no next line came within 1.5 s
+(`WORK_GRACE_S`, so a quick tool still leaves one reply), so the ears go back to listening while the
 work runs instead of sitting in speaking; the lines written after the work are the next reply. Saying his name stops the line playing and drops
 every line behind it. A reply streamed past 700 characters ends with "the rest is in the chat", and
 the final answer never says a sentence a line already said. The lines streamed and the rest of the
