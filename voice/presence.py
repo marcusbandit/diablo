@@ -82,5 +82,5 @@ def show_reply(words, ttl=None, card_id=None):
     words = " ".join(str(words or "").split())
     if not words:
         return None
-    seconds = ttl if ttl is not None else max(TTL_S, min(40.0, len(words) / 14 + 6))
+    seconds = ttl if ttl is not None else max(TTL_S, len(words) / 14 + 6)
     return show("Diablo", "", [words], kind="reply", ttl=seconds, card_id=card_id)

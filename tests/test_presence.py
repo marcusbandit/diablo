@@ -82,7 +82,9 @@ class TestCards(unittest.TestCase):
             path = Path(tmp) / "presence.json"
             with mock.patch.object(presence, "FILE", path), mock.patch.object(presence, "STATE_DIR", Path(tmp)):
                 presence.show_reply(words)
-                self.assertEqual(json.loads(path.read_text())["cards"][-1]["lines"], [words])
+                card = json.loads(path.read_text())["cards"][-1]
+                self.assertEqual(card["lines"], [words])
+                self.assertGreater(card["ttl"], len(words) / 15)
 
 class TestOrbState(unittest.TestCase):
     def test_modes_stick_across_state_writes(self):
