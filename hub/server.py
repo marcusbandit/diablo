@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from . import deliver as delivery
-from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, usage, voicemerge, watch
+from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, newthread, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, usage, voicemerge, watch
 from . import settings as app_settings
 from .config import get_config
 
@@ -582,6 +582,10 @@ async def run_chat(body, caller, picking=None, on_say=None, on_brain=None):
                 raise HTTPException(status_code=409, detail="still answering this message")
             db.delete_message(earlier["id"])
     conv = sections.conv_for(section["id"])
+    if picking is None and question is None and edited is None and not attached:
+        quick = await new_thread_turn(conv, text, body, caller, source, section)
+        if quick is not None:
+            return quick
     if picking is not None:
         try:
             answering = questions.choose(picking[0], picking[1], picking[2], source)
@@ -707,6 +711,59 @@ async def run_chat(body, caller, picking=None, on_say=None, on_brain=None):
         out["say"] = questions.spoken_text(asked[-1])
     if answering is not None:
         out["answered"] = answering["id"]
+    return out
+
+
+async def new_thread_turn(conv, text, body, caller, source, section):
+    """ "New thread [in X]", or an answer to the card that asked which project: carried out here with
+    no brain turn (hub/newthread.py). None when the line is neither, or the desk is locked."""
+    host = voice_host(caller, body.host)
+    plan = newthread.plan(text, body.desktop, body.context, host or devices.desk_host())
+    found, rows, choices = None, None, None
+    if plan is None:
+        waiting = questions.pending(conv)
+        found = waiting[0] if waiting and newthread.is_mine(waiting[0]) else None
+        if found is None or not newthread.might_answer(found, text):
+            return None
+        rows = await asyncio.to_thread(newthread.projects)
+        choices = newthread.reply_choices(found, text, rows)
+        if choices is None:
+            return None
+    guard = await asyncio.to_thread(lockguard.for_turn, devices.origin_for(caller, source, host))
+    if guard.restricted:
+        return None
+    if found is not None:
+        try:
+            found = questions.choose(found, choices, text, source)
+        except questions.Problem:
+            return None
+    where = {"kind": "turn", "section": section["id"], "source": source}
+    meta_in = {"section": section["id"], "client_id": body.client_id}
+    if found is not None:
+        meta_in["answers"] = found["id"]
+    user_id = db.add_message(source, "user", text, meta_in)
+    publish(dict(where, state="doing", step="new T3 thread", tool="T3"))
+    try:
+        if rows is None:
+            rows = await asyncio.to_thread(newthread.projects)
+        if found is not None:
+            line, block = await asyncio.to_thread(newthread.answer, found, rows, conv)
+        else:
+            line, block = await asyncio.to_thread(newthread.run, conv, plan, rows)
+    except Exception:
+        logger.exception("new thread failed")
+        line, block = "I could not make the thread.", None
+    meta = {"section": section["id"], "client_id": body.client_id, "objects": [block] if block else [],
+            "backend": "t3"}
+    reply_id = db.add_message(source, "assistant", line, meta)
+    publish(dict(where, state="done", id=reply_id))
+    out = {"reply": line, "backend": "t3", "id": reply_id, "section": section["id"], "user_id": user_id,
+           "objects": meta["objects"], "threads": []}
+    if block and source == "voice":
+        out["say"] = questions.spoken_text(block)
+        out["reply"] = line.removesuffix(newthread.ASKED).strip()
+    if found is not None:
+        out["answered"] = found["id"]
     return out
 
 

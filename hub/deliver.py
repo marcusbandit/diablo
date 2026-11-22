@@ -133,10 +133,16 @@ class Refused(Exception):
 
 
 async def run_action(question):
-    """Hand an answered action question to what it was for. The line to show Marcus. A mail card goes
+    """Hand an answered action question to what it was for. The line to show Marcus, or (line, question
+    block) when the answer asks a further question, like the next page of a new thread's projects. A mail card goes
     through mailbox.queue_decision, the Mail panel's own path, so the two can never contradict each other;
     the mail loop carries it out within seconds and says so in the app if it fails."""
     action = question.get("action") or {}
+    if action.get("kind") == "new_thread":
+        from . import newthread
+
+        rows = await asyncio.to_thread(newthread.projects)
+        return await asyncio.to_thread(newthread.answer, question, rows, question.get("conv") or "main")
     picked = (question.get("answer") or {}).get("choices") or []
     decisions = action.get("decisions") or []
     if not picked or not 0 <= picked[0] < len(decisions):
@@ -159,7 +165,8 @@ def answered_before(question, client_id):
     if reply is None or (reply["meta"] or {}).get("answers") != question["id"]:
         return None
     return {"reply": reply["text"], "id": reply["id"], "section": sections.MAIN_ID,
-            "user_id": earlier["id"] if earlier else None, "objects": [], "answered": question["id"]}
+            "user_id": earlier["id"] if earlier else None, "objects": (reply["meta"] or {}).get("objects") or [],
+            "answered": question["id"]}
 
 
 async def answer_action(question, choices, text="", source="fleet", client_id=None):
@@ -176,6 +183,7 @@ async def answer_action(question, choices, text="", source="fleet", client_id=No
     if client_id is not None:
         base["client_id"] = client_id
     user_id = db.add_message(source, "user", questions.shown_text(answered), base)
+    objects = []
     try:
         said = await run_action(answered)
     except Refused as refused:
@@ -184,6 +192,9 @@ async def answer_action(question, choices, text="", source="fleet", client_id=No
         questions.reopen(answered)
         db.delete_message(user_id)
         raise
-    reply_id = db.add_message(source, "assistant", said, dict(base, kind=kind))
-    return {"reply": said, "id": reply_id, "section": sections.MAIN_ID, "user_id": user_id, "objects": [],
+    if isinstance(said, tuple):
+        said, block = said
+        objects = [block] if block else []
+    reply_id = db.add_message(source, "assistant", said, dict(base, kind=kind, **({"objects": objects} if objects else {})))
+    return {"reply": said, "id": reply_id, "section": sections.MAIN_ID, "user_id": user_id, "objects": objects,
             "answered": answered["id"]}
