@@ -76,6 +76,16 @@ class TestCards(unittest.TestCase):
                     self.assertEqual(presence._read(), [])
 
 
+    def test_a_long_reply_is_kept_whole(self):
+        words = " ".join(f"Sentence {n} of a long answer that goes on for a while." for n in range(60))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "presence.json"
+            with mock.patch.object(presence, "FILE", path), mock.patch.object(presence, "STATE_DIR", Path(tmp)):
+                presence.show_reply(words)
+                card = json.loads(path.read_text())["cards"][-1]
+                self.assertEqual(card["lines"], [words])
+                self.assertGreater(card["ttl"], len(words) / 15)
+
 class TestOrbState(unittest.TestCase):
     def test_modes_stick_across_state_writes(self):
         from voice import ears

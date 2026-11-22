@@ -144,9 +144,8 @@ Rectangle {
                 color: card.style.text
                 font.family: card.style.family
                 font.pixelSize: card.style.normal - 1
-                wrapMode: Text.WordWrap
-                maximumLineCount: 6
-                elide: Text.ElideRight
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
             }
         }
     }
