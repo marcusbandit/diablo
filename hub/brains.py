@@ -183,14 +183,26 @@ def mail_note(conv, machine, guard):
     may hear it, never on the standby, and never in a turn of its own that a mail started. Each mail is named once,
     ever (hub/mailack.py)."""
     if machine or guard.restricted or str(conv).startswith("mail-") or standby.is_standby():
-        return ""
+        return "", []
     try:
         from . import mailbox
 
-        return mailbox.unread_note()
+        return mailbox.note_for_turn()
     except Exception:
         logger.exception("unread mail note failed")
-        return ""
+        return "", []
+
+
+def mail_heard(ids, said):
+    """After the turn: mail it named counts as heard when it answered, and comes back next turn when it did not."""
+    if not ids:
+        return
+    try:
+        from . import mailbox
+
+        mailbox.heard(ids) if said else mailbox.unheard(ids)
+    except Exception:
+        logger.exception("could not record the mail the turn named")
 
 
 def prefix(origin, notes=None):
@@ -1408,7 +1420,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
         else:
             launch_deep(conv, text, images, decision, guard)
             notes = [DEEP_NOTE] + list(notes or [])
-    waiting_mail = await asyncio.to_thread(mail_note, conv, machine, guard)
+    waiting_mail, mail_ids = await asyncio.to_thread(mail_note, conv, machine, guard)
     if waiting_mail:
         notes = list(notes or []) + [waiting_mail]
     if guard.restricted and chosen == "opencode":
@@ -1468,6 +1480,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                 turn.said, turn.first_said_at = failed.said, failed.first_said_at
                 turn.note = f"{chosen} failed ({failed.error[:160]}), the api brain answered instead"
     except BaseException:
+        mail_heard(mail_ids, False)
         if handover:
             give_back_handover(conv, handover)
         raise
@@ -1483,6 +1496,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                 lanes_for(conv).fill_soon()
             except RuntimeError:
                 pass
+    mail_heard(mail_ids, bool(turn.text) and not turn.error)
     if handover and turn.error and not turn.text:
         give_back_handover(conv, handover)
     turn.did = turn.did or did_for(turn)

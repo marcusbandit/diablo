@@ -33,6 +33,8 @@ STOP = {"the", "and", "for", "from", "about", "mail", "mails", "email", "emails"
         "this", "those", "these", "his", "her", "its", "with", "seen", "saw", "read", "already", "one", "ones",
         "all", "have", "has", "was", "were", "you", "your", "dealt", "done", "know", "new"}
 
+FINGERPRINT_S = 3 * 86400
+
 _lock = threading.Lock()
 _conn = None
 
@@ -75,22 +77,31 @@ def fingerprint(sender, subject):
     return f"fp:{who}|{words}" if who and re.search(r"[^\W\d_]", words) else ""
 
 
+def mail_key(row):
+    mail_id = row.get("mail_id") or row.get("id")
+    return f"mail:{mail_id}" if mail_id else ""
+
+
 def keys(row):
-    return [key for key in (message_key(row.get("message_id")), fingerprint(row.get("sender"), row.get("subject")))
-            if key]
+    return [key for key in (mail_key(row), message_key(row.get("message_id")),
+                            fingerprint(row.get("sender"), row.get("subject"))) if key]
+
+
+def hows(row):
+    """Why a mail counts as heard, empty when it does not. A fingerprint only reaches back FINGERPRINT_S from the
+    mail, so next month's statement with last month's subject is new mail."""
+    found = keys(row)
+    if not found:
+        return set()
+    with _lock:
+        marks = ",".join("?" * len(found))
+        rows = conn().execute(f"SELECT key, how, at FROM acks WHERE key IN ({marks})", found).fetchall()
+    received = float(row.get("received") or time.time())
+    return {how for key, how, at in rows if not key.startswith("fp:") or at >= received - FINGERPRINT_S}
 
 
 def known(row):
-    found = keys(row)
-    if not found:
-        return False
-    with _lock:
-        marks = ",".join("?" * len(found))
-        return conn().execute(f"SELECT 1 FROM acks WHERE key IN ({marks}) LIMIT 1", found).fetchone() is not None
-
-
-def fresh(rows):
-    return [row for row in rows if not known(row)]
+    return bool(hows(row))
 
 
 def mark(rows, how, now=None):

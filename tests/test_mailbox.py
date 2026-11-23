@@ -395,11 +395,11 @@ class TestTelling(MailCase):
         self.baseline()
         self.important(2, "Contract to sign")
         self.poll()
-        self.assertEqual(brains.mail_note("main", False, lockguard.Guard(restricted=True)), "")
-        self.assertEqual(brains.mail_note("mail-task-3", False, lockguard.Guard()), "")
-        self.assertEqual(brains.mail_note("main", True, lockguard.Guard()), "")
         with mock.patch.object(brains.standby, "is_standby", return_value=False):
-            self.assertIn("Contract to sign", brains.mail_note("main", False, lockguard.Guard()))
+            self.assertEqual(brains.mail_note("main", False, lockguard.Guard(restricted=True)), ("", []))
+            self.assertEqual(brains.mail_note("mail-task-3", False, lockguard.Guard()), ("", []))
+            self.assertEqual(brains.mail_note("main", True, lockguard.Guard()), ("", []))
+            self.assertIn("Contract to sign", brains.mail_note("main", False, lockguard.Guard())[0])
 
 
 class TestAcknowledged(MailCase):
@@ -422,6 +422,31 @@ class TestAcknowledged(MailCase):
         self.assertIn("Contract to sign", mailbox.unread_note())
         self.reopen()
         self.assertEqual(mailbox.unread_note(now=time.time() + 30 * 3600), "")
+
+    def test_a_turn_that_fails_gives_its_mail_back_and_one_that_answers_keeps_it_heard(self):
+        self.baseline()
+        self.important(2, "Contract to sign")
+        self.poll()
+        text, ids = mailbox.note_for_turn()
+        self.assertIn("Contract to sign", text)
+        self.assertEqual(mailbox.note_for_turn(), ("", []))
+        brains.mail_heard(ids, False)
+        text, ids = mailbox.note_for_turn()
+        self.assertIn("Contract to sign", text)
+        brains.mail_heard(ids, True)
+        self.reopen()
+        mailbox._held.clear()
+        self.assertEqual(mailbox.note_for_turn(), ("", []))
+
+    def test_a_mail_named_in_passing_still_gets_its_deadline_ping(self):
+        self.baseline()
+        self.important(2, "Sign by tomorrow")
+        self.verdicts["Sign by tomorrow"]["due"] = (dt.datetime.now() + dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M")
+        self.poll()
+        self.assertIn("Sign by tomorrow", mailbox.unread_note())
+        self.go(mailbox.check_nudges(now=time.time() + 3.5 * 3600, every=0))
+        self.assertEqual(len(self.pings), 2)
+        self.assertIn("due soon", self.pings[-1][0])
 
     def test_a_named_mail_gets_no_still_unread_ping(self):
         self.baseline()
@@ -452,6 +477,29 @@ class TestAcknowledged(MailCase):
         self.assertIn("Invoice 124", note)
         self.assertNotIn("recruiter", note.lower())
 
+    def test_the_same_subject_weeks_later_is_new_mail(self):
+        self.baseline()
+        self.important(2, "Your statement is ready", sender="bank@bank.example")
+        self.poll()
+        mailbox.unread_note()
+        self.important(3, "Your statement is ready", sender="bank@bank.example", msgid="<next@bank.example>")
+        self.poll()
+        self.assertEqual(mailbox.unread_note(), "")
+        later = time.time() + 30 * 86400
+        with mock.patch.object(mailbox.time, "time", return_value=later):
+            self.important(4, "Your statement is ready", sender="bank@bank.example", msgid="<later@bank.example>")
+            self.poll()
+            self.assertIn("statement", mailbox.unread_note(now=later))
+
+    def test_a_mail_without_id_or_subject_is_still_named_once(self):
+        self.baseline()
+        self.important(2, "2024", msgid=" ")
+        self.poll()
+        row = mailbox.query("SELECT * FROM mails WHERE subject = '2024'")[0]
+        self.assertEqual(mailack.fingerprint(row["sender"], row["subject"]), "")
+        self.assertIn("2024", mailbox.unread_note())
+        self.assertEqual(mailbox.unread_note(), "")
+
     def test_a_new_invoice_number_is_new_mail(self):
         self.baseline()
         self.important(2, "Invoice 123", sender="bills@shop.example")
@@ -474,6 +522,8 @@ class TestAcknowledged(MailCase):
         self.assertIn("Recruiter", said)
         self.assertNotIn("Sign-in", said)
         self.assertTrue(mail.call("mail_acknowledge", {"description": "spaceship"}).startswith("Nothing matched"))
+        self.assertTrue(mail.call("mail_acknowledge", {"description": "recruiter"}).startswith("Already acknowledged"))
+        self.assertTrue(mail.call("mail_acknowledge", {"ids": ["\u00b2"]}).startswith("Nothing matched"))
         note = mailbox.unread_note()
         self.assertIn("Sign-in", note)
         self.assertNotIn("Recruiter", note)
