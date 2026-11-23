@@ -70,6 +70,21 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "guests",
+            "description": "Guest mode: present true when Marcus says guests or friends are over, false when they have left. While guests are over, a spoken order to change how you speak waits.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "present": {"type": "boolean"},
+                    "hours": {"type": "number", "description": "how long it lasts (default 12)"},
+                },
+                "required": ["present"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "save_fact",
             "description": "Save a lasting fact about Marcus, his setup, or his preferences.",
             "parameters": {
@@ -625,6 +640,9 @@ def _call_tool(name, arguments, ctx=None):
     if name == "list_tasks":
         from . import tasks
         return tasks.spoken_listing(arguments.get("state"))
+    if name == "guests":
+        return character.guest_order(arguments.get("present", True), arguments.get("hours"),
+                                     (ctx or {}).get("guard_conv") or "main")
     if name == "save_fact":
         db.add_fact(arguments.get("text", ""), arguments.get("tags") or [])
         return "fact saved"

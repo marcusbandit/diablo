@@ -6,7 +6,7 @@ import tempfile
 
 import httpx
 
-from . import settings, usage
+from . import saying, settings, usage
 
 CARTESIA_BASE = "https://api.cartesia.ai"
 
@@ -17,7 +17,7 @@ def _cartesia(text, language="en", origin="voice note"):
         headers={"X-API-Key": settings.get("tts_api_key"), "Cartesia-Version": "2026-08-14"},
         json={
             "model_id": settings.get("tts_model") or "sonic-latest",
-            "transcript": text,
+            "transcript": saying.for_speech(text),
             "voice": settings.get("tts_voice_id"),
             "speed": speed,
             "language": language,
@@ -34,7 +34,7 @@ def _openai(text):
     response = httpx.post(
         "https://api.openai.com/v1/audio/speech",
         headers={"Authorization": f"Bearer {settings.get('tts_api_key')}"},
-        json={"model": "tts-1", "input": text, "voice": "onyx", "response_format": "wav"},
+        json={"model": "tts-1", "input": saying.for_speech(text), "voice": "onyx", "response_format": "wav"},
         timeout=60,
     )
     response.raise_for_status()

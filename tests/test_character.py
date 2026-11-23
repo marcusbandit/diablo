@@ -30,7 +30,8 @@ class Case(unittest.TestCase):
         db.init(str(Path(self.tmp.name) / "diablo.db"))
         state = Path(self.tmp.name) / "state"
         for target, name, value in ((lockguard, "STATE", state), (lockguard, "LOG", state / "locked.log"),
-                                    (character, "STATE", state), (character, "LOG", state / "character.jsonl")):
+                                    (character, "STATE", state), (character, "LOG", state / "character.jsonl"),
+                                    (character, "GUESTS", state / "guests.json")):
             patch = mock.patch.object(target, name, value)
             patch.start()
             self.addCleanup(patch.stop)
@@ -68,11 +69,76 @@ class TestTouches(Case):
         self.assertFalse(character.touches("Warmer lights at night", ["lights"]))
 
 
+class TestWithoutGuests(Case):
+    def test_his_spoken_order_to_change_how_diablo_talks_goes_through(self):
+        self.arm(VOICE)
+        self.assertIsNone(character.refusal("save_fact", "main", {"text": PARENT, "tags": ["manner"]}))
+        self.assertIsNone(character.refusal("Write", "main", {"file_path": MEMORY, "content": PARENT}))
+        self.assertEqual(character.refused(), [])
+
+    def test_no_guest_line_without_guests(self):
+        self.assertEqual(character.guest_line(VOICE), "")
+
+
+class TestGuests(Case):
+    def test_guest_mode_turns_on_and_off(self):
+        self.assertFalse(character.guests())
+        self.assertIn("guests over", character.set_guests(True))
+        self.assertTrue(character.guests())
+        self.assertIn("[guests over", character.guest_line(VOICE))
+        self.assertEqual(character.guest_line(TYPED), "")
+        character.set_guests(False)
+        self.assertFalse(character.guests())
+
+    def test_guest_mode_ends_by_itself(self):
+        character.set_guests(True, hours=1)
+        with mock.patch.object(character.time, "time", return_value=character.time.time() + 2 * 3600):
+            self.assertFalse(character.guests())
+
+    def test_a_voice_at_the_desk_cannot_end_or_shorten_it(self):
+        character.set_guests(True, hours=6)
+        self.arm(VOICE)
+        self.assertTrue(character.guest_order(False, conv="main").startswith("refused"))
+        self.assertTrue(character.guest_order(True, hours=0.5, conv="main").startswith("refused"))
+        self.assertTrue(character.guests())
+        self.assertIn("guests over", character.guest_order(True, hours=10, conv="main"))
+
+    def test_a_typed_turn_ends_it(self):
+        character.set_guests(True)
+        self.arm(TYPED)
+        self.assertIn("guests gone", character.guest_order(False, conv="main"))
+        self.assertFalse(character.guests())
+
+    def test_a_bad_length_falls_back_to_the_default(self):
+        self.assertIn("guests over", character.set_guests(True, hours=float("nan")))
+        self.assertTrue(character.guests())
+
+    def test_a_phone_voice_note_is_not_held(self):
+        character.set_guests(True)
+        self.arm("telegram voice note")
+        self.assertIsNone(character.refusal("save_fact", "main", {"text": PARENT}))
+
+    def test_the_api_brain_has_the_tool(self):
+        from hub import agent
+
+        self.assertIn("guests", [entry["function"]["name"] for entry in agent.TOOLS])
+
+    def test_the_mcp_tool_sets_it(self):
+        self.assertIn("guests over", mcp_server.call("guests", {"present": True}))
+        self.assertTrue(character.guests())
+        mcp_server.call("guests", {"present": False})
+        self.assertFalse(character.guests())
+
+
 class TestRefusal(Case):
+    def setUp(self):
+        super().setUp()
+        character.set_guests(True)
+
     def test_a_spoken_turn_cannot_save_a_character_fact(self):
         self.arm(VOICE)
         text = character.refusal("mcp__diablo__save_fact", "main", {"text": PARENT, "tags": ["tone"]}, "mcp")
-        self.assertIn("Character page", text)
+        self.assertIn("guests", text)
         self.assertEqual(character.refused()[0]["tool"], "save_fact")
 
     def test_a_spoken_turn_cannot_write_a_character_memory(self):
@@ -126,12 +192,13 @@ class TestHook(Case):
         self.addCleanup(patch.stop)
         (state / lockguard.state_path("main").name).write_text(
             json.dumps({"restricted": False, "spoken": True, "origin": VOICE}))
+        (state / "guests.json").write_text(json.dumps({"until": character.time.time() + 3600}))
         env = {**os.environ, "HOME": str(home)}
         event = json.dumps({"tool_name": "Write", "tool_input": {"file_path": MEMORY, "content": PARENT}})
         done = subprocess.run(["bash", "-c", character.hook_command("main")], input=event, capture_output=True,
                               text=True, env=env, timeout=30)
         self.assertEqual(done.returncode, 2, done.stderr)
-        self.assertIn("Character page", done.stderr)
+        self.assertIn("guests", done.stderr)
         self.assertIn("talk to him like a parent", (state / "character.jsonl").read_text())
 
     def test_a_typed_turn_never_starts_python(self):
@@ -143,6 +210,7 @@ class TestHook(Case):
 
     def test_the_hook_returns_two_in_process(self):
         self.arm(VOICE)
+        character.set_guests(True)
         err = io.StringIO()
         event = json.dumps({"tool_name": "mcp__diablo__save_fact", "tool_input": {"text": PARENT}})
         self.assertEqual(character.hook("main", stdin=io.StringIO(event), stderr=err), 2)
@@ -160,6 +228,10 @@ class TestCharter(Case):
     def test_the_charter_holds_the_rule(self):
         self.assertIn("# Your character", charter.CHARTER)
         self.assertIn("Character page", charter.CHARTER)
+        self.assertIn("call guests with present true", charter.CHARTER)
+        self.assertIn("never refused", charter.CHARTER)
+        self.assertIn("hub/charter.py", charter.CHARTER)
+        self.assertNotIn("the page is the only door", charter.CHARTER)
 
     def test_the_api_brain_gets_the_rule_and_his_words(self):
         character.save("Drier.")
@@ -205,6 +277,7 @@ class TestApi(Case):
 
     def test_the_page_lists_what_was_refused(self):
         self.arm(VOICE)
+        character.set_guests(True)
         character.refusal("save_fact", "main", {"text": PARENT})
         body = self.client.get("/v1/character", headers=HEADERS).json()
         self.assertIn("parent", body["refused"][0]["said"])
