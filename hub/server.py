@@ -824,8 +824,9 @@ def ask_question(body: QuestionIn, caller: dict = Depends(require_token)):
         raise HTTPException(status_code=403, detail="only the hub token may ask")
     arguments = body.model_dump()
     conv = arguments.pop("conv", None) or brains.MAIN
+    origin = str(arguments.pop("origin", None) or "")[:160]
     try:
-        return {"question": questions.public(questions.ask(conv, arguments))}
+        return {"question": questions.public(questions.ask(conv, arguments, origin=origin))}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
 

@@ -29,7 +29,7 @@ MIN_W = 300
 PAD = 18
 HEAD_H = 66
 LINE_H = 25
-CHAR = 0.36
+CHAR = 0.45
 GAP = 40
 SPOKEN = ("One", "Two", "Three", "Four")
 
@@ -37,12 +37,17 @@ _lock = threading.Lock()
 _current = {"show": "", "question": ""}
 
 
-def from_desk(conv):
-    """Whether the turn that holds conv came from his desk."""
+def from_desk(question):
+    """Whether the turn that asked came from his desk: spoken at the desk machine, or sent from the
+    desktop app there. Unknown is no."""
     from . import lockguard
 
+    origin = str(question.get("origin") or "")
     try:
-        return bool(lockguard.kind_of(lockguard.turn_origin(lockguard.turn_path(conv))))
+        kind = lockguard.kind_of(origin)
+        if kind == "voice":
+            return lockguard.host_of(origin).lower() == lockguard.host().lower()
+        return kind == "desktop"
     except Exception:
         return False
 
@@ -103,7 +108,7 @@ def plan(question, screen=None, show=None):
     head_w = len(title) * diagram.TITLE_FONT * 0.56 + 40
     head = {"x": round(region["x"] + region["w"] / 2 - head_w / 2, 1), "y": round(top - diagram.TITLE_FONT - 64, 1),
             "w": round(head_w, 1), "h": round(diagram.TITLE_FONT + 20, 1)}
-    beats = [{"show": show, "n": 0, "count": count, "say": diagram.words(question.get("question"), 300),
+    beats = [{"show": show, "n": 0, "count": count, "say": title,
               "marks": [{"kind": "title", "text": title, "box": head, "size": diagram.TITLE_FONT}], "keep": True, "linger": LINGER}]
     for i, (option, box) in enumerate(zip(options, boxes)):
         card = {"kind": "choice", "text": diagram.words(option["label"], LABEL), "box": box, "size": FONT, "num": i + 1,
@@ -117,20 +122,31 @@ def plan(question, screen=None, show=None):
 
 
 def send(beats, publish=None):
+    """Every beat cleaned first, then all of them published, or none when one is refused."""
     from . import events
 
-    publish = publish or events.publish
-    for beat in beats:
-        cleaned = pointing.clean_payload(beat)
-        if isinstance(cleaned, str):
-            logger.info("choice beat refused: %s", cleaned)
-            return False
-        publish({"kind": "screen", "marks": cleaned})
+    cleaned = [pointing.clean_payload(beat) for beat in beats]
+    refused = next((c for c in cleaned if isinstance(c, str)), None)
+    if refused:
+        logger.info("choice beats refused: %s", refused)
+        return False
+    for beat in cleaned:
+        (publish or events.publish)({"kind": "screen", "marks": beat})
     return True
 
 
+def mine(question_id):
+    with _lock:
+        return bool(question_id) and _current["question"] == question_id
+
+
 def draw(question, screen_of=None, publish=None):
-    """Lays the question's cards out on the focused monitor and sends them."""
+    """Lays the question's cards out on the focused monitor and sends them, as long as the question
+    is still the one in flight: reading the monitor takes an ssh round trip, and an answer or a
+    newer question in the meantime means nothing is drawn."""
+    from . import events
+
+    publish = publish or events.publish
     if screen_of is None:
         from .mcp_server import desktop_screen as screen_of
     try:
@@ -138,9 +154,15 @@ def draw(question, screen_of=None, publish=None):
     except Exception:
         screen = None
     beats = plan(question, screen)
-    if beats and send(beats, publish):
-        with _lock:
-            _current.update(show=beats[0]["show"], question=question["id"])
+    if not beats or not mine(question["id"]):
+        return
+    if not send(beats, publish):
+        return
+    with _lock:
+        if _current["question"] == question["id"]:
+            _current["show"] = beats[0]["show"]
+            return
+    publish({"kind": "screen", "marks": {"clear": True}})
 
 
 def on_question(question, start=None, publish=None):
@@ -149,22 +171,25 @@ def on_question(question, start=None, publish=None):
     if question.get("state") != "pending":
         settle(question, publish)
         return
+    if question.get("action") or not from_desk(question):
+        return
     with _lock:
         if _current["question"] == question.get("id"):
             return
-    if question.get("action") or not from_desk(question.get("conv")):
-        return
+        _current.update(question=question["id"], show="")
     start = start or (lambda job: threading.Thread(target=job, daemon=True, name="choice-cards").start())
     start(lambda: draw(question, publish=publish))
 
 
 def settle(question, publish=None):
-    """The cards of a question that is no longer pending come down, unless another show replaced them."""
+    """The cards of a question that is no longer pending come down, unless another show replaced
+    them; one still being laid out is dropped before it goes up."""
     with _lock:
-        mine = bool(_current["question"]) and _current["question"] == question.get("id")
-        if mine:
-            _current.update(show="", question="")
-    if mine:
+        if not _current["question"] or _current["question"] != question.get("id"):
+            return
+        up = bool(_current["show"])
+        _current.update(show="", question="")
+    if up:
         from . import events
 
         (publish or events.publish)({"kind": "screen", "marks": {"clear": True}})
@@ -173,7 +198,7 @@ def settle(question, publish=None):
 def replaced(show):
     """Another marks show went up, so the cards on screen are no longer the question's."""
     with _lock:
-        if show != _current["show"]:
+        if _current["question"] and (not show or show != _current["show"]):
             _current.update(show="", question="")
 
 

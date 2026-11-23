@@ -54,7 +54,8 @@ def choice_beats(scene, screen=(1920, 1080)):
 
     question = dict(choices.SAMPLE)
     if scene == "choices-four":
-        question["options"] = question["options"] + [{"label": "Put it off a week", "description": "Gives the slides more time"}]
+        question["options"] = question["options"] + [{"label": "Put it off a week", "description": (
+            "Gives the slides more time, and the people who are away on Friday can join in person the week after")}]
         question["recommended"] = 1
     beats = choices.plan(question, {"x": 0, "y": 0, "w": screen[0], "h": screen[1]}, show="preview")
     return json.dumps([pointing.clean_payload(beat) for beat in beats])

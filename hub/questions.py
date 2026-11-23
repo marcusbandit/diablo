@@ -233,13 +233,14 @@ def public(question):
 turns = {}
 
 
-def ask(conv, arguments, now=None, turn=None, ttl_s=None, action=None):
+def ask(conv, arguments, now=None, turn=None, ttl_s=None, action=None, origin=""):
     """Store a new pending question in conv; any pending one there is superseded. Raises ValueError.
 
     turn names the brain turn that asked, so only that turn's reply carries it; in the hub process it
     comes from turns, which the brain fills while a turn holds the conversation. ttl_s overrides
     questions.ttl_s. action, like {"kind": "mail", "id": 4, "decisions": ["approve", "deny"]}, makes an
-    answer run that action (hub/deliver.py) instead of a brain turn."""
+    answer run that action (hub/deliver.py) instead of a brain turn. origin is where the turn that asked
+    came from, as its turn file says, so a listener can tell a question asked at his desk."""
     now = time.time() if now is None else now
     body = clean(arguments)
     conv = str(conv or "main")
@@ -250,6 +251,8 @@ def ask(conv, arguments, now=None, turn=None, ttl_s=None, action=None):
                     expires=now + (ttl_s or ttl()), claimed=False, message=None, section=None, threads=[])
     if action:
         question["action"] = action
+    if origin:
+        question["origin"] = str(origin)[:160]
     _put(question, now)
     _announce(question)
     return question

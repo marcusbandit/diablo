@@ -9,7 +9,7 @@ from hub import choices, pointing
 
 SCREEN = {"x": 0, "y": 0, "w": 1920, "h": 1080}
 QUESTION = {
-    "id": "q1", "conv": "main", "state": "pending", "header": "Venue", "question": "Which room for the demo?",
+    "id": "q1", "conv": "main", "state": "pending", "origin": "desktop app", "header": "Venue", "question": "Which room for the demo?",
     "options": [{"label": "Hall A", "description": "Seats forty"}, {"label": "Hall B", "description": "Has a projector"},
                 {"label": "Online", "description": ""}],
     "recommended": 0,
@@ -66,6 +66,10 @@ class TestPlan(unittest.TestCase):
         long_q = dict(QUESTION, question="Which of the rooms on the second floor should the whole team use for the demo on Friday?")
         self.assertEqual(choices.plan(long_q, SCREEN)[0]["marks"][0]["text"], "Venue")
 
+    def test_the_title_beat_says_only_the_title(self):
+        long_q = dict(QUESTION, question="Which of the rooms on the second floor should the whole team use for the demo on Friday?")
+        self.assertEqual(choices.plan(long_q, SCREEN)[0]["say"], "Venue")
+
     def test_choice_pieces_need_keep(self):
         beat = choices.plan(QUESTION, SCREEN)[1]
         self.assertEqual(pointing.clean_payload(dict(beat, keep=False))["marks"], [])
@@ -113,6 +117,74 @@ class TestListener(unittest.TestCase):
         choices.replaced(self.sent[0]["marks"]["show"])
         self.ask(dict(QUESTION, state="cancelled"))
         self.assertEqual(self.sent[-1]["marks"], {"clear": True})
+
+
+class TestFromDesk(unittest.TestCase):
+    def test_only_the_desk_counts(self):
+        from hub import devices, lockguard
+
+        with mock.patch.object(lockguard, "host", return_value="desk-box"):
+            self.assertTrue(choices.from_desk({"origin": devices.KINDS["desktop"]}))
+            self.assertTrue(choices.from_desk({"origin": devices.KINDS["voice"]}))
+            self.assertTrue(choices.from_desk({"origin": devices.SPOKEN_ON.format(host="desk-box")}))
+            self.assertFalse(choices.from_desk({"origin": devices.SPOKEN_ON.format(host="laptop-box")}))
+            self.assertFalse(choices.from_desk({"origin": "phone app"}))
+            self.assertFalse(choices.from_desk({}))
+
+
+class TestRaces(unittest.TestCase):
+    def setUp(self):
+        choices._current.update(show="", question="")
+        self.sent = []
+        self.jobs = []
+        desk = mock.patch.object(choices, "from_desk", return_value=True)
+        desk.start()
+        self.addCleanup(desk.stop)
+
+    def ask(self, question):
+        choices.on_question(question, start=self.jobs.append, publish=self.sent.append)
+
+    def run_jobs(self):
+        with mock.patch("hub.mcp_server.desktop_screen", return_value=SCREEN):
+            for job in self.jobs:
+                job()
+        self.jobs.clear()
+
+    def test_an_answer_while_the_screen_is_read_draws_nothing(self):
+        self.ask(QUESTION)
+        self.ask(dict(QUESTION, state="answered"))
+        self.run_jobs()
+        self.assertEqual(self.sent, [])
+
+    def test_a_newer_question_wins_over_one_still_being_laid_out(self):
+        self.ask(QUESTION)
+        self.ask(dict(QUESTION, id="q2", question="Which day?"))
+        self.run_jobs()
+        self.assertEqual({e["marks"]["show"] for e in self.sent if "show" in e["marks"]}, {self.sent[0]["marks"]["show"]})
+        self.assertEqual(self.sent[0]["marks"]["marks"][0]["text"], "Which day?")
+
+    def test_another_show_while_laying_out_keeps_its_place(self):
+        self.ask(QUESTION)
+        choices.replaced("dg1")
+        self.run_jobs()
+        self.assertEqual(self.sent, [])
+
+    def test_a_refused_beat_sends_none(self):
+        beats = choices.plan(QUESTION, SCREEN)
+        beats[2]["n"] = 99
+        self.assertFalse(choices.send(beats, self.sent.append))
+        self.assertEqual(self.sent, [])
+
+
+class TestOriginTravels(unittest.TestCase):
+    def test_ask_through_hub_sends_its_turn_origin(self):
+        from hub import mcp_server
+
+        post = mock.Mock(return_value=mock.Mock(status_code=200, json=lambda: {"question": {"id": "q9"}}))
+        with mock.patch.object(mcp_server, "turn_origin", return_value="desktop app"), \
+                mock.patch.object(mcp_server.questions, "ttl", return_value=3600):
+            mcp_server.ask_through_hub("ask_user", {"question": "Q?", "options": ["A", "B"]}, "main", post=post)
+        self.assertEqual(post.call_args.kwargs["json"]["origin"], "desktop app")
 
 
 if __name__ == "__main__":
