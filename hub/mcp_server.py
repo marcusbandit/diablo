@@ -340,7 +340,7 @@ def ask_through_hub(name, arguments, conv, post=None):
     post = post or httpx.post
     token = str(get_config().get("hub_token") or "")
     if name == "ask_user":
-        url, body = f"{devices.public_url()}/v1/questions", dict(arguments, conv=conv)
+        url, body = f"{devices.public_url()}/v1/questions", dict(arguments, conv=conv, origin=turn_origin())
     else:
         url, body = f"{devices.public_url()}/v1/questions/cancel", {"conv": conv, "id": arguments.get("id")}
     try:

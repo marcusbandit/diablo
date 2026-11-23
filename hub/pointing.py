@@ -23,7 +23,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 KINDS = ("ring", "underline", "arrow", "label", "spotlight", "highlight", "num", "check", "cross")
-DRAWN = ("node", "edge", "title")
+DRAWN = ("node", "edge", "title", "choice")
 SHAPES = ("box", "round", "diamond")
 MAX_BEATS = 8
 MAX_MARKS = 8
@@ -82,7 +82,8 @@ def font_size(raw):
 
 
 def clean_piece(raw):
-    """A diagram piece as presence draws it: a node or title box with its words, or an edge
+    """A diagram piece as presence draws it: a node or title box with its words, an option card
+    of a question with its number, description and whether it is the recommended one, or an edge
     between two points with an optional control point and label."""
     kind = raw["kind"]
     out = {"kind": kind}
@@ -99,12 +100,20 @@ def clean_piece(raw):
             out["text"] = text
     else:
         box = clean_box(raw.get("box"))
-        text = words(raw.get("text"), 28 if kind == "node" else 60)
+        text = words(raw.get("text"), {"node": 28, "choice": 48}.get(kind, 60))
         if not box or not text:
             return None
         out.update(box=box, text=text)
         if kind == "node":
             out["shape"] = raw.get("shape") if raw.get("shape") in SHAPES else "box"
+        if kind == "choice":
+            detail = words(raw.get("detail"), 140)
+            if detail:
+                out["detail"] = detail
+            num = number(raw.get("num"))
+            if num is not None and 1 <= num <= 9:
+                out["num"] = int(num)
+            out["pick"] = raw.get("pick") is True
     if font_size(raw):
         out["size"] = font_size(raw)
     return out

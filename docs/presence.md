@@ -292,6 +292,36 @@ Without `keep` a beat behaves exactly as before, and point_on_screen never carri
 `scripts/presence-shots.sh diagram-early diagram-last` draws the kernel sample from
 `diagram.SAMPLE` over the made-up document window, after two beats and after all five.
 
+## Choices drawn as cards
+
+A question asked with `ask_user` on a turn from his desk (spoken at his desk, or sent from the
+desktop app there) still goes to every app, Telegram and the spoken turn as before, and its options also come
+up over the real screen in the hand-drawn look of a diagram. hub/choices.py listens to every
+question change in the hub: a pending question whose asking turn came from the desk is laid out on
+the focused
+monitor, read from `diablo-hands front` like `draw_diagram`, and sent as one marks show with
+`keep`. The question comes first as a `title` (its header when the question runs past 60
+characters), then one `choice` piece per option, each its own beat whose line is "One, <label>.",
+so the cards come in one by one as the options are read out. The title's own line is just the
+title, so on a typed turn the first card is not held back by a long question.
+
+The MCP server sends the origin of its own turn (its turn file) with `ask_user`, and the hub keeps it
+on the question. Only the desktop app, or a turn spoken on the lock host, counts as the desk; ears on
+another box or an unknown origin draw nothing. Reading the monitor is an ssh round trip, so the
+question is marked in flight before it starts: an answer or a newer question in the meantime means
+the old cards are never sent, and every beat is checked before any of them goes out.
+
+A `choice` is a card: a dark fill inside an ember outline drawn on like a pen stroke, its number in
+a hand-drawn ring, the label in the hand font and the description under it. The recommended option
+gets a heavier outline, a second outline around it, and a `Recommended` tag on its top edge. Cards
+sit in one row while each keeps 300 px, else in two columns, centered in 70% of the monitor, all as
+tall as the longest description needs. They linger 120 s after the last beat; an answer, a
+withdrawal, a supersede or an expiry takes them down, unless another marks show has replaced them
+since.
+
+`scripts/presence-shots.sh choices-early choices-all choices-four` draws `choices.SAMPLE` over the
+made-up document window: the title and first card, all three, and a four card variant.
+
 ## Lists in the central card
 
 A list or checklist comes as `sections` (`[{title, items: [{text, done}]}]`, at most 160 items;

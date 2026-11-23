@@ -32,11 +32,11 @@ Item {
             readonly property int delay: index * marksRoot.stagger
 
             anchors.fill: parent
-            z: modelData.kind === "spotlight" ? -1 : modelData.kind === "highlight" ? -0.5 : modelData.kind === "node" ? 0.5 : 0
+            z: modelData.kind === "spotlight" ? -1 : modelData.kind === "highlight" ? -0.5 : modelData.kind === "node" || modelData.kind === "choice" ? 0.5 : 0
             sourceComponent: ({
                 ring: ringMark, underline: underlineMark, arrow: arrowMark, label: labelMark, spotlight: spotlightMark,
                 highlight: highlightMark, num: numMark, check: tickMark, cross: tickMark, node: nodeMark, edge: edgeMark,
-                title: titleMark
+                title: titleMark, choice: choiceMark
             })[modelData.kind] ?? null
         }
     }
@@ -503,6 +503,180 @@ Item {
                 font.family: marksRoot.hand
                 font.pixelSize: Math.round((node.mark.size ?? 17) * 1.45)
                 font.weight: Font.DemiBold
+            }
+        }
+    }
+
+    Component {
+        id: choiceMark
+
+        Drawn {
+            id: choice
+
+            readonly property bool pick: choice.mark.pick === true
+            readonly property real size: choice.mark.size ?? 20
+            readonly property real pad: Math.round(choice.size * 0.9)
+            readonly property var badge: ({ x: choice.box.x + choice.pad, y: choice.box.y + choice.pad, w: choice.size * 1.9, h: choice.size * 1.9 })
+            readonly property var sk: Mk.sketchNode(choice.box, "box", choice.mark.text ?? "")
+            readonly property var outer: Mk.sketchNode({ x: choice.box.x - 8, y: choice.box.y - 8, w: choice.box.w + 16, h: choice.box.h + 16 }, "box",
+                (choice.mark.text ?? "") + "|pick")
+            readonly property var ring: Mk.sketchNode(choice.badge, "round", `${choice.mark.num ?? ""}`)
+            readonly property real fill: Mk.phase(choice.t, 0.3, 0.7)
+            readonly property real words: Mk.phase(choice.t, 0.5, 0.9)
+            duration: 1100
+            easing: Easing.InOutSine
+
+            Shape {
+                anchors.fill: parent
+                preferredRendererType: Shape.CurveRenderer
+
+                ShapePath {
+                    fillColor: Qt.rgba(marksRoot.style.overlay.r, marksRoot.style.overlay.g, marksRoot.style.overlay.b, 0.94 * choice.fill)
+                    strokeColor: "transparent"
+                    strokeWidth: -1
+
+                    PathSvg {
+                        path: choice.sk.fill
+                    }
+                }
+
+                Pen {
+                    strokeColor: marksRoot.style.halo
+                    strokeWidth: 6
+                    trim.end: Mk.phase(choice.t, 0, 0.6)
+
+                    PathSvg {
+                        path: choice.sk.first
+                    }
+                }
+
+                Pen {
+                    strokeColor: marksRoot.style.ember
+                    strokeWidth: choice.pick ? 3.6 : 2.6
+                    trim.end: Mk.phase(choice.t, 0, 0.6)
+
+                    PathSvg {
+                        path: choice.sk.first
+                    }
+                }
+
+                Pen {
+                    strokeColor: Qt.rgba(marksRoot.style.ember.r, marksRoot.style.ember.g, marksRoot.style.ember.b, 0.7)
+                    strokeWidth: 1.6
+                    trim.end: Mk.phase(choice.t, 0.4, 0.9)
+
+                    PathSvg {
+                        path: choice.sk.second
+                    }
+                }
+
+                Pen {
+                    strokeColor: marksRoot.style.ember
+                    strokeWidth: 2.4
+                    trim.end: Mk.phase(choice.t, 0.35, 0.75)
+
+                    PathSvg {
+                        path: choice.ring.first
+                    }
+                }
+
+                Pen {
+                    strokeColor: marksRoot.style.halo
+                    strokeWidth: choice.pick ? 6 : 0
+                    trim.end: choice.pick ? Mk.phase(choice.t, 0.6, 1) : 0
+
+                    PathSvg {
+                        path: choice.outer.first
+                    }
+                }
+
+                Pen {
+                    strokeColor: marksRoot.style.ember
+                    strokeWidth: choice.pick ? 3 : 0
+                    trim.end: choice.pick ? Mk.phase(choice.t, 0.6, 1) : 0
+
+                    PathSvg {
+                        path: choice.outer.first
+                    }
+                }
+            }
+
+            Text {
+                x: choice.badge.x
+                y: choice.badge.y
+                width: choice.badge.w
+                height: choice.badge.h
+                opacity: choice.words
+                text: `${choice.mark.num ?? ""}`
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                color: marksRoot.style.ember
+                font.family: marksRoot.hand
+                font.pixelSize: Math.round(choice.size * 1.5)
+                font.weight: Font.Bold
+            }
+
+            Text {
+                id: choiceLabel
+
+                x: choice.badge.x + choice.badge.w + choice.pad * 0.7
+                y: choice.box.y + choice.pad * 0.6
+                width: choice.box.x + choice.box.w - choice.pad - x
+                height: choice.badge.h + choice.pad * 0.4
+                opacity: choice.words
+                text: choice.mark.text ?? ""
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                lineHeight: 0.85
+                fontSizeMode: Text.Fit
+                minimumPixelSize: 14
+                color: marksRoot.style.strong
+                font.family: marksRoot.hand
+                font.pixelSize: Math.round(choice.size * 1.6)
+                font.weight: Font.Bold
+            }
+
+            Text {
+                x: choice.box.x + choice.pad
+                y: choiceLabel.y + choiceLabel.height + choice.pad * 0.3
+                width: choice.box.w - choice.pad * 2
+                height: choice.box.y + choice.box.h - choice.pad * 0.7 - y
+                visible: text !== ""
+                opacity: choice.words * 0.92
+                text: choice.mark.detail ?? ""
+                wrapMode: Text.WordWrap
+                maximumLineCount: 4
+                lineHeight: 0.9
+                fontSizeMode: Text.Fit
+                minimumPixelSize: 15
+                color: marksRoot.style.ink
+                font.family: marksRoot.hand
+                font.pixelSize: Math.round(choice.size * 1.2)
+                font.weight: Font.DemiBold
+            }
+
+            Rectangle {
+                visible: choice.pick
+                x: choice.box.x + choice.box.w - width - choice.pad
+                y: choice.box.y - height / 2 - 8
+                width: pickWord.implicitWidth + 24
+                height: pickWord.implicitHeight + 4
+                radius: height / 2
+                rotation: -3
+                opacity: Mk.phase(choice.t, 0.75, 1)
+                color: marksRoot.style.ember
+
+                Text {
+                    id: pickWord
+
+                    anchors.centerIn: parent
+                    text: "Recommended"
+                    color: marksRoot.style.emberText
+                    font.family: marksRoot.hand
+                    font.pixelSize: Math.round(choice.size * 1.25)
+                    font.weight: Font.Bold
+                }
             }
         }
     }
