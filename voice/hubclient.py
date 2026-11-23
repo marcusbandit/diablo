@@ -103,6 +103,21 @@ def set_setting(cfg, key, value):
         return False
 
 
+def report_timing(cfg, body):
+    """Hands a spoken turn's timeline to the hub (POST /v1/voice/timing), on a thread so the next
+    turn never waits on it."""
+    if not body:
+        return
+
+    def send():
+        try:
+            httpx.post(f"{cfg['hub_url'].rstrip('/')}/v1/voice/timing", headers=_headers(cfg), json=body, timeout=5)
+        except (httpx.HTTPError, KeyError, ValueError) as error:
+            log.debug("timing report failed: %s", error)
+
+    threading.Thread(target=send, name="timing-report", daemon=True).start()
+
+
 def report_usage(cfg, service, model, unit, units, origin, ok=True):
     """Tells the hub about one paid call made here, on a thread so speech never waits on it."""
     body = {"service": service, "model": model, "unit": unit, "units": units, "origin": origin, "ok": ok}

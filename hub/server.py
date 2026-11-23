@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from . import deliver as delivery
-from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, newthread, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, tts, usage, voicemerge, watch
+from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, newthread, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, tts, usage, voicemerge, voicetimes, watch
 from . import settings as app_settings
 from .config import get_config
 
@@ -564,6 +564,7 @@ async def run_chat(body, caller, picking=None, on_say=None, on_brain=None, on_wo
     """One chat turn. picking is (question, choices, words) for a tap on a question card: the answer is
     recorded only once the request is known to be good, and the turn carries it."""
     answering = None
+    arrived = time.time()
     text = body.text.strip()
     try:
         attached = files.resolve(body.attachments)
@@ -674,7 +675,7 @@ async def run_chat(body, caller, picking=None, on_say=None, on_brain=None, on_wo
     hint = (answering.get("threads") or None) if answering is not None else None
     try:
         turn = await brains.ask(conv, said, origin=origin, notes=notes,
-                                images=images or None, on_step=on_step, message_id=user_id,
+                                images=images or None, on_step=on_step, message_id=user_id, arrived=arrived,
                                 **({"thread_hint": hint} if hint else {}),
                                 **({"on_say": early} if early else {}),
                                 **({"on_brain": beat} if beat else {}),
@@ -1731,6 +1732,32 @@ async def voice_merge(body: MergeIn, caller: dict = Depends(require_token)):
     """One spoken reply for a burst of spoken turns: {"turns": [{"heard", "reply"}], oldest first}
     gives {"say", "via", "ms"}. An empty say means the merge failed; the ears then make their own."""
     return await voicemerge.merge(body.turns)
+
+
+class VoiceTimingIn(BaseModel):
+    points: dict = {}
+    hub: Optional[dict] = None
+    kind: str = ""
+    outcome: str = ""
+    background: bool = False
+    burst: bool = False
+
+
+@app.post("/v1/voice/timing")
+def voice_timing_in(body: VoiceTimingIn, caller: dict = Depends(require_token)):
+    """A finished spoken turn's timeline from the ears: its stages go to the hub's log as one
+    JSON object and into the window GET /v1/voice/timing reads (hub/voicetimes.py)."""
+    if not caller.get("master"):
+        raise HTTPException(status_code=403, detail="only the hub token may report voice timings")
+    row = voicetimes.record(body.model_dump())
+    return {"ok": row is not None, "stages": (row or {}).get("stages") or {}}
+
+
+@app.get("/v1/voice/timing")
+def voice_timing(last: int = voicetimes.SUMMARY_TURNS, _: dict = Depends(require_token)):
+    """The last spoken turns' stages, with the median and 90th percentile of each, over every
+    turn and over the conversational ones that ran no tool."""
+    return voicetimes.report(min(max(last, 1), voicetimes.KEEP))
 
 
 @app.post("/v1/ears/report")
