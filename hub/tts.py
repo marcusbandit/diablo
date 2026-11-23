@@ -9,7 +9,7 @@ from . import settings, usage
 
 CARTESIA_BASE = "https://api.cartesia.ai"
 
-def _cartesia(text, language="en"):
+def _cartesia(text, language="en", origin="voice note"):
     speed = float(settings.get("speech_rate") or 1.0) if language.startswith("en") else 1.0
     response = httpx.post(
         f"{CARTESIA_BASE}/tts/bytes",
@@ -24,7 +24,7 @@ def _cartesia(text, language="en"):
         },
         timeout=60,
     )
-    usage.record_speech(settings.get("tts_model") or "sonic-latest", text, ok=response.is_success, origin="voice note")
+    usage.record_speech(settings.get("tts_model") or "sonic-latest", text, ok=response.is_success, origin=origin)
     response.raise_for_status()
     return response.content
 
@@ -67,10 +67,10 @@ def _to_opus(wav_bytes):
         pathlib.Path(target_path).unlink(missing_ok=True)
 
 
-def speak(text, voice_note=False, language="en"):
+def speak(text, voice_note=False, language="en", origin="voice note"):
     provider = settings.get("tts_provider")
     if provider == "cartesia":
-        audio = _cartesia(text, language)
+        audio = _cartesia(text, language, origin)
     elif provider == "openai":
         audio = _openai(text)
     else:
