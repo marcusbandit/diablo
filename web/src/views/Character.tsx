@@ -5,6 +5,9 @@ import { errorText, useHub } from "../lib/hub";
 import { routeHash } from "../lib/route";
 import { useToast } from "../lib/toast";
 
+/** character.LIMIT in the hub, which cuts anything longer. */
+const LIMIT = 4000;
+
 /** The words he would get, saved or else built in, as editable text in the box. */
 function shown(d: CharacterData) {
   return d.text || d.default;
@@ -31,7 +34,8 @@ export function Character() {
   const save = async () => {
     setSaving(true);
     try {
-      const d = await hub.saveCharacter(text);
+      // The built-in text saved back is the built-in butler, so it stores empty rather than a copy of it.
+      const d = await hub.saveCharacter(data && text.trim() === data.default ? "" : text);
       setData(d);
       setText(shown(d));
       toast(d.text ? "Saved. He speaks this way from his next turn." : "Saved. He is the plain butler again.");
@@ -55,8 +59,9 @@ export function Character() {
           className="charbox"
           spellCheck={false}
           value={text}
+          maxLength={LIMIT}
           onChange={(e) => setText(e.target.value)}
-          disabled={!data}
+          disabled={!data || saving}
         />
         <div className="buttons">
           <button type="button" className="button primary" onClick={save} disabled={!data || saving || !changed}>
