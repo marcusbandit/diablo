@@ -383,7 +383,7 @@ async def speech(body: SpeechIn, _: dict = Depends(require_token)):
     except Exception:
         logger.exception("speech failed")
         raise HTTPException(status_code=502, detail="the voice failed")
-    return Response(content=audio, media_type="audio/wav")
+    return Response(content=tts.whole_wav(audio), media_type="audio/wav")
 
 
 @app.get("/v1/desktop/release")

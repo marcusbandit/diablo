@@ -1,5 +1,6 @@
 import pathlib
 import shutil
+import struct
 import subprocess
 import tempfile
 
@@ -66,6 +67,28 @@ def _to_opus(wav_bytes):
     finally:
         pathlib.Path(source_path).unlink(missing_ok=True)
         pathlib.Path(target_path).unlink(missing_ok=True)
+
+
+def whole_wav(audio):
+    """A wav with its real sizes. Cartesia streams one with placeholder sizes (0xFFFFFFFF) that
+    Android's player refuses; the fmt chunk and every byte after the data header are kept."""
+    if len(audio) < 12 or audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
+        return audio
+    fmt, at = None, 12
+    while at + 8 <= len(audio):
+        kind, size = audio[at:at + 4], struct.unpack("<I", audio[at + 4:at + 8])[0]
+        body = at + 8
+        if kind == b"fmt ":
+            fmt = audio[body:body + size]
+        elif kind == b"data":
+            if fmt is None:
+                return audio
+            data = audio[body:body + min(size, len(audio) - body)]
+            data = data[:len(data) - len(data) % 2]
+            head = b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data))
+            return b"RIFF" + struct.pack("<I", 4 + len(head) + len(data)) + b"WAVE" + head + data
+        at = body + size + (size & 1)
+    return audio
 
 
 def speak(text, voice_note=False, language="en", origin="voice note"):
