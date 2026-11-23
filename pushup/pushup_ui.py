@@ -156,6 +156,7 @@ REST_BETWEEN_SETS = 30  # David rests 30 s to a minute between sets
 HOLD_W = 420  # the Log it button's width: 360 plus its padding
 PAIN_SCALE = 6  # the body map you click when it hurts: big enough to hit a forearm
 HURT_W = 150  # "It hurts" beside the skip; the two together are as wide as Log it
+BUBBLE_MARGIN = 24  # the rest bubble's gap from the screen's corner
 
 
 def css(accent, tier):
@@ -359,6 +360,18 @@ button.choice.picked:active, .tab.on:active {{ background-color: alpha({s['mid']
 .swatch.stretched {{ background-color: {STRETCHED}; }}
 .faint {{ color: {s['fg6']}; }}
 .rest-pill {{ background-color: alpha({WIN}, 0.12); color: {WIN}; border-radius: 999px; padding: 8px 18px; font-size: 16px; }}
+.backdrop.bare {{ background-color: transparent; background-image: none; }}
+.bubble {{
+    background-color: alpha({s['bg2']}, 0.94);
+    border: 1px solid {s['bg5']};
+    border-radius: 999px;
+    padding: 10px 14px 10px 10px;
+    margin: 8px;
+    box-shadow: 0 4px 10px alpha(black, 0.45);
+}}
+.bubble-next {{ color: {s['fg9']}; font-size: 16px; }}
+button.bubble-go {{ min-width: 0; padding: 10px 18px; font-size: 16px; border-radius: 999px; }}
+button.bubble-end {{ padding: 10px 16px; }}
 """
 
 
@@ -1173,6 +1186,45 @@ class TimelineChart(Gtk.DrawingArea):
                 text_at(cr, text, x, y, SLATE["fg10"] if i == n - 1 else SLATE["fg7"], 14, align=0.5 if i < n - 1 else 0.75)
 
 
+class RestRing(Gtk.DrawingArea):
+    """The rest's countdown: the seconds left in Monocraft inside a ring that drains as they go."""
+
+    SIZE, WIDTH = 84, 6
+
+    def __init__(self, total):
+        super().__init__()
+        self.total, self.left = total, total
+        self.number = PixelText(str(int(math.ceil(total))), 36, SLATE["fg10"])
+        self.set_content_width(self.SIZE)
+        self.set_content_height(self.SIZE)
+        self.set_draw_func(self.draw)
+
+    def show_left(self, left):
+        self.left = max(0.0, left)
+        self.number.set_text(str(int(math.ceil(self.left))))
+        self.queue_draw()
+
+    def draw(self, _area, cr, width, height):
+        r = (min(width, height) - self.WIDTH) / 2
+        cx, cy = width / 2, height / 2
+        cr.set_line_width(self.WIDTH)
+        cr.set_source_rgb(*rgb(SLATE["bg5"]))
+        cr.arc(cx, cy, r, 0, 2 * math.pi)
+        cr.stroke()
+        part = self.left / self.total
+        if part > 0:
+            cr.set_line_cap(cairo.LINE_CAP_ROUND)
+            cr.set_source_rgb(*rgb(STRETCHED if self.left > 5 else SLATE["fg10"]))
+            start = -math.pi / 2
+            cr.arc(cx, cy, r, start, start + part * 2 * math.pi)
+            cr.stroke()
+        layout = self.number.setup(PangoCairo.create_layout(cr))
+        w, h = layout.get_pixel_size()
+        cr.set_source_rgb(*rgb(SLATE["fg10"]))
+        cr.move_to(round(cx - w / 2), round(cy - h / 2))
+        PangoCairo.show_layout(cr, layout)
+
+
 def focused_connector():
     try:
         mons = json.loads(subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=3).stdout)
@@ -1208,7 +1260,7 @@ class Card:
         self.timer_state = None
         self.tier = min(args.skips, len(RAGE) - 1) if self.reminder_mode and not (args.calm or self.bonus or self.easy) else 0
         # Stretch cards wear the stretch colour everywhere, so the eyebrow isn't fighting a blue button.
-        self.accent = STRETCHED if self.stretching else RAGE[self.tier]
+        self.accent = STRETCHED if self.stretching or self.resting else RAGE[self.tier]
         self.history = [int(x) for x in args.history.split(",") if x.strip().isdigit()] if args.history else []
         self.done_today = [tuple(d) for d in json.loads(getattr(args, "done", "") or "[]")]
         self.stats = json.loads(args.stats) if getattr(args, "stats", "") else {}
@@ -1255,7 +1307,9 @@ class Card:
         else:
             card = self.reminder()
         self.card = card
-        card.add_css_class("card")
+        card.add_css_class("bubble" if self.resting else "card")
+        if self.resting:
+            self.backdrop.add_css_class("bare")
         if self.tier >= 4:
             card.add_css_class("shake")
         if self.args.opaque:
@@ -1312,11 +1366,20 @@ class Card:
             LayerShell.init_for_window(win)
             LayerShell.set_layer(win, LayerShell.Layer.OVERLAY)
             LayerShell.set_namespace(win, "pushup")
-            for edge in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM, LayerShell.Edge.LEFT, LayerShell.Edge.RIGHT):
-                LayerShell.set_anchor(win, edge, True)
-            LayerShell.set_exclusive_zone(win, -1)
-            mode = LayerShell.KeyboardMode.NONE if self.args.no_grab else LayerShell.KeyboardMode.EXCLUSIVE
-            LayerShell.set_keyboard_mode(win, mode)
+            if self.resting:
+                # The rest sits in the top right corner, clear of the bar, and leaves the keyboard
+                # with whatever had it, so the video behind it still takes its keys.
+                for edge in (LayerShell.Edge.TOP, LayerShell.Edge.RIGHT):
+                    LayerShell.set_anchor(win, edge, True)
+                    LayerShell.set_margin(win, edge, BUBBLE_MARGIN)
+                LayerShell.set_exclusive_zone(win, 0)
+                LayerShell.set_keyboard_mode(win, LayerShell.KeyboardMode.NONE)
+            else:
+                for edge in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM, LayerShell.Edge.LEFT, LayerShell.Edge.RIGHT):
+                    LayerShell.set_anchor(win, edge, True)
+                LayerShell.set_exclusive_zone(win, -1)
+                mode = LayerShell.KeyboardMode.NONE if self.args.no_grab else LayerShell.KeyboardMode.EXCLUSIVE
+                LayerShell.set_keyboard_mode(win, mode)
             name = focused_connector()
             monitors = Gdk.Display.get_default().get_monitors()
             for i in range(monitors.get_n_items()):
@@ -1329,6 +1392,8 @@ class Card:
                 # Headless screenshots: the size the browser grabbing it will have.
                 w, h = (int(v) for v in os.environ.get("SHOT_SIZE", "1600,1000").split(","))
                 win.set_default_size(w, h)
+            elif self.resting:
+                win.set_resizable(False)
             else:
                 win.set_default_size(1600, 1000)
                 win.maximize()
@@ -1423,36 +1488,35 @@ class Card:
         if (Gdk.keyval_name(keyval) or "") == "Escape":
             self.hold_stop()
 
-    # The rest between two sets of a session: a countdown, what comes next, and a way to go early.
+    # The rest between two sets of a session: a small bubble in the corner, so the video he was
+    # watching plays on behind it. A ring counts down, what comes next beside it, a way to go early.
 
     def rest_view(self):
         a = self.args
-        self.rest_ends = time.time() + float(a.rest_for)
-        self.eyebrow = PixelText("REST", 18, STRETCHED, spacing=4)
-        self.rest_count = PixelText(str(int(round(float(a.rest_for)))), 144, SLATE["fg10"])
-        self.rest_count.set_margin_top(24)
-        unit = PixelText("SECONDS", 27, SLATE["fg9"])
-        unit.set_margin_top(10)
-        nxt = headline(a.next or "")
-        nxt.set_margin_top(28)
-        go = keyed("Start next set", "Enter", "primary huge", lambda: self.finish(json.dumps({"result": "rested", "early": True})))
-        end = keyed("End session", "Esc", "pill", lambda: self.finish(json.dumps({"result": "end"})))
+        total = max(1.0, float(a.rest_for))
+        self.rest_ends = time.time() + total
+        self.rest_ring = RestRing(total)
+        brow = PixelText("REST", 18, STRETCHED, spacing=4, align=Pango.Alignment.LEFT)
+        brow.set_halign(Gtk.Align.START)
+        nxt = label(a.next or "", "bubble-next", xalign=0)
+        words = vbox(6, brow, nxt)
+        words.set_valign(Gtk.Align.CENTER)
+        go = button("Start next set", "primary bubble-go", lambda: self.finish(json.dumps({"result": "rested", "early": True})))
+        end = button("End session", "pill bubble-end", lambda: self.finish(json.dumps({"result": "end"})))
         self.armed += [go, end]
-        actions = hbox(16, go, end)
-        actions.set_halign(Gtk.Align.CENTER)
-        actions.set_margin_top(32)
-        card = vbox(0, self.eyebrow, self.rest_count, unit, nxt, actions)
-        card.set_size_request(900, -1)
+        actions = hbox(8, go, end)
+        actions.set_valign(Gtk.Align.CENTER)
+        card = hbox(18, self.rest_ring, words, actions, center=False)
 
         def tick():
             left = self.rest_ends - time.time()
             if left <= 0:
                 self.finish(json.dumps({"result": "rested"}))
                 return False
-            self.rest_count.set_text(str(int(math.ceil(left))))
+            self.rest_ring.show_left(left)
             return True
 
-        GLib.timeout_add(200, tick)
+        GLib.timeout_add(100, tick)
         return card
 
     # The reminder: the number, the slider, log. Nothing else while you should be on the floor.

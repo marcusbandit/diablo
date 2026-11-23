@@ -1330,10 +1330,12 @@ def next_offer(cfg, entries, exercise, now):
     return option(cfg, entries, exercise, catalog.loads(entries, now), now)
 
 
-def run_session(cfg, env, exercise, sid, week, paused=()):
+def run_session(cfg, env, exercise, sid, week, paused=None):
     """Sets 2 and on of a session: a counted rest, then the same move again, until its sets are done.
-    Esc on the rest, a skip, a hurt or a lock ends it early. Returns a line for the daemon log, and
-    whether the last card asked for the receipts."""
+    Ending it on the rest, a skip, a hurt or a lock ends it early. Returns a line for the daemon log,
+    and whether the last card asked for the receipts. The videos in paused play on through each rest
+    and the next set pauses whatever plays then, so paused always holds what the caller resumes."""
+    paused = [] if paused is None else paused
     wants = False
     total = session_sets(cfg, exercise, read_log(), time.time())  # the first set is in the log by now
     for k in range(2, total + 1):
@@ -1342,12 +1344,17 @@ def run_session(cfg, env, exercise, sid, week, paused=()):
         # Worked out once: the rest screen promises the same number the card then asks for.
         nxt = {**next_offer(cfg, entries, exercise, now), "set_of": total}
         line = f"Next: set {k} of {total}, {nxt['goal']} {catalog.unit(exercise, nxt['goal'])}"
+        # The rest is a bubble in the corner: whatever the set paused plays again until the next set.
+        resume(paused)
+        paused.clear()
         text = overlay(["--rest-for", str(cfg["rest_seconds"]), "--next", line, "--spice", cfg["spice"], "--arm-delay", "0.5"],
                        env, stop=session_locked)
         if text == "stopped":
+            paused.extend(pause_videos())
             return "locked", False
         if parse_answer(text).get("result") != "rested":
             return f"ended after set {k - 1} of {total}", wants
+        paused.extend(pause_videos())
         play_sound(cfg)
         entries = read_log()
         now = time.time()
