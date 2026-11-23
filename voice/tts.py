@@ -13,6 +13,7 @@ import httpx
 
 from . import chime, eyes, hubclient, interrupt, mouth, playback
 from . import state as vstate
+from hub import saying
 
 log = logging.getLogger("diablo.tts")
 
@@ -102,7 +103,7 @@ class Speaker:
                 },
                 json={
                     "model_id": cfg.get("tts_model") or "sonic-latest",
-                    "transcript": text,
+                    "transcript": saying.for_speech(text),
                     "voice": cfg.get("tts_voice_id") or "",
                     "speed": float(cfg.get("speech_rate") or 1.0)
                     if str(cfg.get("utterance_language") or "en").startswith("en")
@@ -123,7 +124,7 @@ class Speaker:
             response = httpx.post(
                 "https://api.openai.com/v1/audio/speech",
                 headers={"Authorization": f"Bearer {cfg.get('tts_api_key', '')}"},
-                json={"model": "tts-1", "input": text, "voice": "onyx", "response_format": "wav"},
+                json={"model": "tts-1", "input": saying.for_speech(text), "voice": "onyx", "response_format": "wav"},
                 timeout=60,
             )
             response.raise_for_status()

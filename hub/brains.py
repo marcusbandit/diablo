@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import busy as busy_turns
-from . import agent, charter, context, db, events, hue, jev, lockguard, modules, questions, route, sentences, settings, standby, t3link, threads, usage
+from . import agent, character, charter, context, db, events, hue, jev, lockguard, modules, questions, route, sentences, settings, standby, t3link, threads, usage
 from . import learn, showcase, skillbook
 
 logger = logging.getLogger(__name__)
@@ -1470,6 +1470,9 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
     pre["guarded"] = time.time()
     if guard.line:
         notes = [guard.line] + list(notes or [])
+    guest_line = character.guest_line(origin)
+    if guest_line:
+        notes = [guest_line] + list(notes or [])
     if decision is not None and decision.background:
         if guard.restricted:
             logger.info("%s: no background run for %r while the desk is locked", conv, said[:80])

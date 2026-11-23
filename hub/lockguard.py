@@ -47,7 +47,7 @@ SAFE_HOUSE = {
     "hue_light", "phone_status", "fleet_where", "emit_object", "recall_facts",
     "t3_where", "list_devices", "watch_t3_thread", "workout_stats", "workout_exercises",
     "list_reminders", "add_reminder", "now", "update_task", "ask_user", "cancel_question",
-    "show_on_screen", "open_settings", "keep_sound_up",
+    "show_on_screen", "open_settings", "keep_sound_up", "guests",
 }
 LATER_TURNS = {"add_reminder"}
 SAFE_T3 = {

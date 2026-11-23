@@ -68,6 +68,18 @@ EXTRA = [
         },
     },
     {
+        "name": "guests",
+        "description": "Guest mode. Call it with present true when Marcus says guests or friends are over, or that someone else is in the room, and with present false when he says they have left. While guests are over, a spoken order to change how you speak or who you are waits; everything else works as usual. It ends by itself after hours (12 by default).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "present": {"type": "boolean", "description": "true: guests are over; false: they have left"},
+                "hours": {"type": "number", "description": "how long guest mode lasts, when he says (default 12)"},
+            },
+            "required": ["present"],
+        },
+    },
+    {
         "name": "focus_window",
         "description": "Focus a window on Marcus's desktop by its app name or part of its title, when he says focus, switch to or go to an app. It switches workspace if needed and moves his cursor to the window. It never stages, centers or resizes anything.",
         "inputSchema": {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]},
@@ -820,6 +832,8 @@ def call(name, arguments):
         return open_settings(arguments)
     if name == "keep_sound_up":
         return keep_sound_up(arguments)
+    if name == "guests":
+        return character.set_guests(arguments.get("present", True), arguments.get("hours"))
     if name in ("focus_window", "stage_window"):
         return window_verb(name.split("_")[0], arguments)
     if name in HANDS_COMMANDS:
