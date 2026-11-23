@@ -312,11 +312,17 @@ def update_task(arguments, writer=None):
     if links:
         fields["links"] = links
     if arguments.get("question"):
-        ask = tasks.clean_ask({"question": arguments["question"], "options": arguments.get("options") or [],
+        options = arguments.get("options")
+        if not isinstance(options, list) or not 2 <= len(options) <= tasks.OPTIONS_MAX:
+            return "a question needs a list of two to four options"
+        if fields.get("state", "waiting") != "waiting":
+            return "a question goes on a waiting card; leave state out or give waiting"
+        ask = tasks.clean_ask({"question": arguments["question"], "options": options,
                                "recommended": arguments.get("recommended")})
-        if not ask or len(ask["options"]) < 2:
-            return "a question needs two to four options"
+        if not ask or len(ask["options"]) != len(options):
+            return "a question needs two to four options, each a short label"
         fields["ask"] = ask
+        fields["state"] = "waiting"
     known = db.get_task(task_id) if task_id else None
     state = fields.get("state") or (known or {}).get("state")
     if state == "waiting" and not fields.get("ask") and not (known or {}).get("ask"):

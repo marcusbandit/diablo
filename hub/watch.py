@@ -30,7 +30,9 @@ def judge(watch, data):
     pending = int(thread.get("pendingRequestCount") or 0)
     if pending and watch["state"] != "asking":
         return "asking", f"it waits on {pending} pending request{'s' if pending != 1 else ''} (an approval or a question)"
-    busy = bool(thread.get("activeRunId")) or str(thread.get("status") or "") in ACTIVE | {"waiting"}
+    from .t3threads import waits_on_itself
+
+    busy = bool(thread.get("activeRunId")) or str(thread.get("status") or "") in ACTIVE or waits_on_itself(thread)
     if not pending and watch["state"] == "asking" and busy:
         return "open", None
     if busy or not runs:
@@ -114,6 +116,8 @@ async def check_once(deliver):
             for card in await asyncio.to_thread(tasks.sweep):
                 if card.get("expired"):
                     logger.warning("waiting task card %s (%s) expired: %s, %s", card["id"], card["title"], card["step"], card["result"])
+                elif card.get("result"):
+                    logger.info("task card %s (%s) finished: %s, %s", card["id"], card["title"], card["step"], card["result"])
         except Exception:
             logger.exception("task sweep failed")
 

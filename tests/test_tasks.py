@@ -150,9 +150,12 @@ class TestThreadState(unittest.TestCase):
     def test_table(self):
         rows = [
             ({"pendingRequestCount": 1, "activeRunId": "r"}, {"status": "running"}, ("waiting", None)),
-            ({"status": "waiting"}, {"status": "completed"}, ("working", None)),
-            ({"status": "waiting", "pendingRequestCount": 0, "pendingBackgroundTasks": [{"taskId": "b1"}]},
+            ({"status": "waiting"}, {"status": "completed"}, ("done", None)),
+            ({"status": "waiting", "pendingRequestCount": 0, "pendingBackgroundTasks": [{"taskId": "b1", "awaited": True}]},
              {"status": "completed"}, ("working", None)),
+            ({"status": "waiting", "pendingBackgroundTasks": [{"taskId": "b2", "awaited": False}]},
+             {"status": "completed"}, ("done", None)),
+            ({"status": "waiting", "blockedOnThreadWait": True}, {"status": "completed"}, ("working", None)),
             ({"activeRunId": "r"}, {"status": "running"}, ("working", None)),
             ({}, {"status": "starting"}, ("working", None)),
             ({}, {"status": "queued"}, ("queued", None)),
@@ -362,6 +365,25 @@ class TestWatchLoop(DbCase):
         self.assertEqual((card["state"], card["ask"]), ("working", None))
         self.assertNotIn("ask", card["links"])
 
+    def test_a_thread_left_waiting_with_nothing_to_wait_on_is_done(self):
+        db.add_watch("t34", "box-a", "Idle", "main")
+        delivered, ask = self.run_loop(fake_t3(ANIBEAM, completed=time.time() + 5, status="waiting",
+                                               background=[{"taskId": "b3", "awaited": False}]))
+        self.assertFalse(db.watch_is_open("t34"))
+        self.assertEqual(db.get_task("t34")["state"], "done")
+        self.assertEqual(delivered, ["Done, sir."])
+
+    def test_a_rewatch_held_at_waiting_does_not_invent_an_approval(self):
+        db.add_watch("t35", "box-a", "Again", "main")
+        tasks.save("t35", {"title": "Again", "state": "waiting", "source": "t3:t35"})
+        old = time.time() - 3600
+        call = fake_t3(ANIBEAM, completed=old + 600, started=old, requests={})
+        with mock.patch("hub.t3link.call_tool", side_effect=call) as calls:
+            tasks.observe(db.open_watches()[0], call("box-a", "t3_thread_read", {"threadId": "t35"}))
+        self.assertEqual(db.get_task("t35")["state"], "waiting")
+        self.assertIsNone(db.get_task("t35")["ask"])
+        self.assertNotIn("t3_pending_request", [c.args[1] for c in calls.call_args_list])
+
     def test_an_explicit_kind_beats_the_project(self):
         db.add_watch("t6", "nemurenai", "For himself", "main")
         tasks.save("t6", {"title": "For himself", "kind": "self_improvement"})
@@ -438,7 +460,7 @@ class TestSweep(DbCase):
         tasks.save("t26", {"title": "Asks", "state": "waiting", "source": "t3:t26"}, now=now - 20 * 3600)
         db.set_watch("t26", "done")
         finished = tasks.sweep(now=now)
-        self.assertEqual([(t["id"], t["expired"]) for t in finished], [("t26", True)])
+        self.assertEqual([(t["id"], t["expired"]) for t in finished], [("t26", False)])
         card = db.get_task("t26")
         self.assertEqual((card["state"], card["step"], card["finished_at"]), ("done", tasks.UNWATCHED_STEP, now))
         self.assertIn("t26", [t["id"] for t in tasks.listing(now=now)])
@@ -468,6 +490,20 @@ class TestSweep(DbCase):
                 mock.patch.object(watch.brains, "ask", mock.AsyncMock()):
             asyncio.run(watch.check_once(mock.AsyncMock()))
         self.assertIn("task-e", logged.output[0])
+
+    def test_an_asked_tool_card_expires_once_unanswered_for_long(self):
+        now = time.time()
+        ask = {"question": "Which hall?", "options": ["A", "B"]}
+        tasks.save("task-h", {"title": "Hall", "state": "waiting", "ask": ask}, now=now - tasks.ASKED_KEPT_S - 1)
+        finished = tasks.sweep(now=now)
+        self.assertEqual([(t["id"], t["expired"]) for t in finished], [("task-h", True)])
+        self.assertEqual(db.get_task("task-h")["step"], tasks.UNANSWERED_STEP)
+
+    def test_a_closed_watch_is_not_logged_as_expired(self):
+        db.add_watch("t28", "box-a", "Asks", "main")
+        tasks.save("t28", {"title": "Asks", "state": "waiting", "source": "t3:t28"})
+        db.set_watch("t28", "done")
+        self.assertEqual([t["expired"] for t in tasks.sweep()], [False])
 
     def test_the_bare_wait_follows_the_setting(self):
         db.set_setting("tasks.waiting_bare_s", "120")
@@ -619,6 +655,11 @@ class TestAsk(DbCase):
         self.assertEqual([o["recommended"] for o in named["options"]], [True, False])
         numbered = tasks.clean_ask({"question": "Q?", "options": ["A", "B"], "recommended": 1})
         self.assertEqual([o["recommended"] for o in numbered["options"]], [False, True])
+        suffixed = tasks.clean_ask({"question": "Q?", "options": ["Hall A", "Hall B"], "recommended": "Hall B (Recommended)"})
+        self.assertEqual([o["recommended"] for o in suffixed["options"]], [False, True])
+        long_name = "A very long option label that runs well past the limit of the card"
+        trimmed = tasks.clean_ask({"question": "Q?", "options": ["Short", long_name], "recommended": long_name})
+        self.assertEqual([o["recommended"] for o in trimmed["options"]], [False, True])
         plain = tasks.clean_ask({"question": "Q?", "options": ["A", "B"]})
         self.assertEqual([o["recommended"] for o in plain["options"]], [False, False])
 
@@ -656,6 +697,15 @@ class TestUpdateTaskAsks(DbCase):
         self.assertEqual(db.list_tasks(), [])
         self.assertIn("two to four options", mcp_server.call("update_task", {"title": "Venue", "state": "waiting",
                                                                              "question": "Which?", "options": ["A"]}))
+
+    def test_a_question_makes_the_card_waiting_and_bad_options_are_refused(self):
+        reply = mcp_server.call("update_task", {"title": "Venue", "question": "Which hall?", "options": ["Hall A", "Hall B"]})
+        self.assertIn("saved: waiting", reply)
+        self.assertIsNotNone(db.get_task(reply.split()[1])["ask"])
+        self.assertIn("list of two to four", mcp_server.call("update_task", {"title": "x", "question": "Q?", "options": "Yes, No"}))
+        self.assertIn("list of two to four", mcp_server.call("update_task", {"title": "x", "question": "Q?", "options": list("abcde")}))
+        self.assertIn("goes on a waiting card", mcp_server.call("update_task", {"title": "x", "state": "working",
+                                                                               "question": "Q?", "options": ["A", "B"]}))
 
     def test_a_waiting_card_with_its_question_is_saved(self):
         reply = mcp_server.call("update_task", {"title": "Venue", "state": "waiting", "question": "Which hall?",

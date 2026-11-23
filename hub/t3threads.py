@@ -38,13 +38,21 @@ def open_link(thread):
     return f"t3code://threads/{quote(unquote(found.group(1)), safe='')}/{quote(unquote(found.group(2)), safe='')}"
 
 
+def waits_on_itself(thread):
+    """T3 says waiting while a thread waits on a background job it awaits or on a child thread:
+    that is still work, not a question for Marcus."""
+    if str(thread.get("status") or "") != "waiting":
+        return False
+    jobs = [j for j in thread.get("pendingBackgroundTasks") or [] if isinstance(j, dict) and j.get("awaited") is not False]
+    return bool(jobs or thread.get("blockedOnThreadWait"))
+
+
 def state_of(thread, run):
-    """waiting only while the thread holds a request for Marcus. T3 also says waiting while a thread
-    waits on its own background jobs or child threads; that is still work, not a question."""
+    """waiting only while the thread holds a request for Marcus."""
     if int(thread.get("pendingRequestCount") or 0):
         return "waiting"
     status = str((run or {}).get("status") or thread.get("status") or "")
-    if thread.get("activeRunId") or status in WORKING or str(thread.get("status") or "") == "waiting":
+    if thread.get("activeRunId") or status in WORKING or waits_on_itself(thread):
         return "working"
     if status == "failed":
         return "failed"

@@ -421,7 +421,7 @@ ones waiting on Marcus at the top. `{"threads": [...], "now": <hub time>}`, each
 | --- | --- |
 | `id`, `env` | the thread id, and the machine it runs on (`nemurenai`, `banditbox`, `diablo-pi`, `kangaeru`) |
 | `title` | the thread's title in T3 |
-| `state` | `working`, `waiting` (an approval or a question for Marcus), `finished`, `failed`, `stopped`, or `unknown` when it has never been read. A thread T3 calls waiting while it waits on its own background jobs or child threads, with no request for Marcus, is `working` |
+| `state` | `working`, `waiting` (an approval or a question for Marcus), `finished`, `failed`, `stopped`, or `unknown` when it has never been read. A thread T3 calls waiting while it waits on a background job it awaits or on a child thread, with no request for Marcus, is `working` |
 | `pending` | how many requests wait on Marcus |
 | `started`, `finished` | unix times of the latest run; `finished` is null while it runs |
 | `pr` | `{number, url, state}` of the newest pull request, or null |
@@ -486,9 +486,11 @@ A waiting card never outlives its reason. A T3 card follows its thread while the
 goes back to working, done, failed or `Stopped` the poll after the thread does. After every poll
 the hub finishes a waiting T3 card whose watch has closed, and a waiting card with no `ask` that
 has not changed for `tasks.waiting_bare_s` seconds (default 3600) is done with the step
-`Expired: nothing was asked`. Both finish at that moment, so `list_tasks` still reports them for 12
+`Expired: nothing was asked`; an `update_task` card whose question has gone unanswered for 12
+hours is done with `Expired: no answer came`. A T3 card with an open request stays while its watch
+does, up to 36 hours. They finish at that moment, so `list_tasks` still reports them for 12
 hours, and the hub logs each one. `update_task` refuses `waiting` without a question and two to four
-options.
+options, and a question on any other state; a question with no state makes the card waiting.
 
 ## Block kinds
 

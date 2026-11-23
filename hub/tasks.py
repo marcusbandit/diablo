@@ -37,7 +37,9 @@ UNTRACKED_S = 6 * 3600
 UNWATCHED_STEP = "No longer watched"
 UNTRACKED_STEP = "No update in a while"
 EXPIRED_STEP = "Expired: nothing was asked"
+UNANSWERED_STEP = "Expired: no answer came"
 WAITING_BARE_S = 3600
+ASKED_KEPT_S = 12 * 3600
 ASK_KINDS = ("question", "approval")
 QUESTION_CHARS = 300
 HEADER_CHARS = 24
@@ -98,6 +100,7 @@ def clean_ask(ask):
     if not question:
         return None
     wanted = ask.get("recommended")
+    wanted_name = RECOMMENDED.sub("", wanted).strip().lower() if isinstance(wanted, str) else None
     options, pick = [], None
     for raw in ask.get("options") or ask.get("choices") or []:
         if len(options) == OPTIONS_MAX:
@@ -106,12 +109,13 @@ def clean_ask(ask):
             raw = {"label": raw}
         if not isinstance(raw, dict):
             continue
-        label = str(raw.get("label") or raw.get("title") or raw.get("value") or "")
-        marked = bool(RECOMMENDED.search(label)) or raw.get("recommended") is True
-        label = line(RECOMMENDED.sub("", label), LABEL_CHARS)
+        full = str(raw.get("label") or raw.get("title") or raw.get("value") or "")
+        marked = bool(RECOMMENDED.search(full)) or raw.get("recommended") is True
+        full = " ".join(RECOMMENDED.sub("", full).split())
+        label = line(full, LABEL_CHARS)
         if not label:
             continue
-        if pick is None and (marked or (isinstance(wanted, str) and wanted.strip().lower() == label.lower())):
+        if pick is None and (marked or (wanted_name and wanted_name == full.lower())):
             pick = len(options)
         options.append({"label": label, "description": line(raw.get("description") or "", DESCRIPTION_CHARS)})
     if pick is None and isinstance(wanted, int) and not isinstance(wanted, bool) and 0 <= wanted < len(options):
@@ -340,11 +344,12 @@ def bare_wait_s():
 def sweep(now=None):
     """Finishes the cards nothing keeps true any more, so none stays working or waiting forever:
     a T3 thread's card whose watch is closed, a card made with update_task that has had no update
-    for UNTRACKED_S, and a card that has waited on Marcus with no question on it for bare_wait_s.
+    for UNTRACKED_S, a card that has waited on Marcus with no question on it for bare_wait_s, and
+    an update_task card whose question has gone unanswered for ASKED_KEPT_S.
     Each card is read again under the write lock, so one rewritten meanwhile (a new watch, a fresh
     update) stays. A running card's finish time is its last update, so an old card does not show
     as just finished; a waiting card that expires finishes now, so list_tasks reports it.
-    Returns the finished cards; the expired waiting ones carry expired=True."""
+    Returns the finished cards; the waiting ones that expired carry expired=True."""
     now = time.time() if now is None else now
     bare = bare_wait_s()
     finished = []
@@ -357,14 +362,17 @@ def sweep(now=None):
             from_t3 = str(task.get("source") or "").startswith("t3:")
             watched = from_t3 and db.watch_is_open(task["id"])
             if task["state"] == "waiting":
+                waited = taken({"started_at": last}, now)
                 if from_t3 and not watched:
-                    fields = {"step": UNWATCHED_STEP, "result": "It waited on you when its watch closed"}
+                    fields, expired = {"step": UNWATCHED_STEP, "result": "It waited on you when its watch closed"}, False
                 elif not task.get("ask") and now - last >= bare:
-                    fields = {"step": EXPIRED_STEP, "result": f"Waited {taken({'started_at': last}, now)} with no question on it"}
+                    fields, expired = {"step": EXPIRED_STEP, "result": f"Waited {waited} with no question on it"}, True
+                elif not from_t3 and now - last >= ASKED_KEPT_S:
+                    fields, expired = {"step": UNANSWERED_STEP, "result": f"Waited {waited} with no answer"}, True
                 else:
                     continue
                 shown = _save(task["id"], dict(fields, state="done", finished_at=now), now)
-                finished.append(dict(shown, expired=True))
+                finished.append(dict(shown, expired=expired))
                 continue
             if from_t3:
                 if watched:
@@ -493,19 +501,18 @@ _asks = {}
 
 
 def read_ask(env, thread, timeout=15):
-    """What a thread waiting on Marcus asks him, read once for each set of pending requests. A
-    request that is not a question (an approval) or that cannot be read still gets a question, so a
-    waiting card never shows a bare line."""
+    """What a thread waiting on Marcus asks him. The pending requests are listed on every call and
+    a request is read once. A request that is not a question (an approval) or that cannot be read
+    still gets a question, so a waiting card never shows a bare line."""
     from . import t3link
 
     thread_id = thread.get("threadId") or thread.get("id") or ""
-    key = (int(thread.get("pendingRequestCount") or 0), str(thread.get("updatedAt") or ""))
     known = _asks.get(thread_id)
-    if known and known[0] == key:
-        return known[1]
     try:
         listed = t3link.call_tool(env, "t3_pending_request", {"action": "list", "threadId": thread_id}, timeout)
         ids = [str(i) for i in (listed or {}).get("requestIds") or []] if isinstance(listed, dict) else []
+        if known and known[0] == tuple(ids):
+            return known[1]
         if ids:
             body = t3link.call_tool(env, "t3_pending_request", {"action": "read", "threadId": thread_id, "requestId": ids[0]}, timeout)
             ask = ask_of_request(ids[0], body) or clean_ask(dict(REQUEST_ASK, id=ids[0]))
@@ -517,7 +524,7 @@ def read_ask(env, thread, timeout=15):
         return (known[1] if known else None) or clean_ask(REQUEST_ASK)
     if len(_asks) > 200:
         _asks.clear()
-    _asks[thread_id] = (key, ask)
+    _asks[thread_id] = (tuple(ids), ask)
     return ask
 
 
@@ -548,7 +555,8 @@ def observe(watch, data, step=None, ask=None):
     pending = int(thread.get("pendingRequestCount") or 0)
     if state == "waiting":
         fields["step"] = f"Waits on {pending} request{'s' if pending != 1 else ''} from you" if pending else "Waits on you"
-        fields["ask"] = ask or read_ask(watch.get("env"), dict(thread, threadId=watch["thread_id"]))
+        if ask or pending:
+            fields["ask"] = ask or read_ask(watch.get("env"), dict(thread, threadId=watch["thread_id"]))
     elif fixed:
         fields["step"] = fixed
     elif step:
