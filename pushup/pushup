@@ -1353,6 +1353,8 @@ def run_session(cfg, env, exercise, sid, week, paused=None):
             paused.extend(pause_videos())
             return "locked", False
         if parse_answer(text).get("result") != "rested":
+            if wants:
+                paused.extend(pause_videos())
             return f"ended after set {k - 1} of {total}", wants
         paused.extend(pause_videos())
         play_sound(cfg)

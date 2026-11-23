@@ -366,7 +366,7 @@ button.choice.picked:active, .tab.on:active {{ background-color: alpha({s['mid']
     border: 1px solid {s['bg5']};
     border-radius: 999px;
     padding: 10px 14px 10px 10px;
-    margin: 8px;
+    margin: 6px 14px 18px 14px;
     box-shadow: 0 4px 10px alpha(black, 0.45);
 }}
 .bubble-next {{ color: {s['fg9']}; font-size: 16px; }}
@@ -1194,7 +1194,7 @@ class RestRing(Gtk.DrawingArea):
     def __init__(self, total):
         super().__init__()
         self.total, self.left = total, total
-        self.number = PixelText(str(int(math.ceil(total))), 36, SLATE["fg10"])
+        self.number = PixelText(str(int(math.ceil(total))), 36 if total < 100 else 27, SLATE["fg10"])
         self.set_content_width(self.SIZE)
         self.set_content_height(self.SIZE)
         self.set_draw_func(self.draw)

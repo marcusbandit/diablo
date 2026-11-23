@@ -100,6 +100,16 @@ class TestDeskSessions(unittest.TestCase):
         self.assertEqual(self.playing, [{"name": "mpv", "url": ""}])
         self.assertEqual(paused, [])
 
+    def test_ending_on_the_rest_before_the_receipts_pauses_the_video(self):
+        self.m.log_answer({"result": "done", "did": 12, "exercise": "squats", "goal": 12}, None, {"session_id": "desk-8", "set_no": 1})
+        paused = [{"name": "mpv", "url": ""}]
+        patch, _ = self.answers({"result": "rested"}, {"result": "done", "did": 11, "exercise": "squats", "receipts": True},
+                                {"result": "end"})
+        with patch:
+            _, wants = self.m.run_session(self.cfg, None, "squats", "desk-8", None, paused)
+        self.assertTrue(wants)
+        self.assertEqual((self.playing, paused), ([], [{"name": "mpv", "url": ""}]))
+
     def test_a_lock_on_the_rest_pauses_the_video_until_unlock(self):
         self.m.log_answer({"result": "done", "did": 12, "exercise": "squats", "goal": 12}, None, {"session_id": "desk-7", "set_no": 1})
         paused = [{"name": "mpv", "url": ""}]
