@@ -376,7 +376,7 @@ async def speech(body: SpeechIn, _: dict = Depends(require_token)):
         raise HTTPException(status_code=400, detail="empty text")
     if len(text) > SPEECH_MAX_CHARS:
         raise HTTPException(status_code=413, detail="text too long")
-    if app_settings.get("tts_provider") in (None, "", "none"):
+    if app_settings.get("tts_provider") not in ("cartesia", "openai"):
         raise HTTPException(status_code=503, detail="no voice set up")
     try:
         audio = await asyncio.to_thread(tts.speak, text, False, body.language or "en", "phone")

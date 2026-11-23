@@ -6,6 +6,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.UUID
 
@@ -71,7 +72,7 @@ object HubLink {
   /** The reply in his own voice, the one the hub and the desk speak with, as a wav. */
   fun speech(context: Context, text: String): ByteArray {
     val body = JSONObject().put("text", text).toString().toByteArray()
-    return postBytes(context, "/v1/speech", "application/json", body, readMs = 60_000)
+    return postBytes(context, "/v1/speech", "application/json", body, readMs = 60_000, retrySlow = false)
   }
 
   /** A clip transcribed by the hub's speech to text, the way the desk's ears do it. */
@@ -96,6 +97,7 @@ object HubLink {
     data: ByteArray,
     readMs: Int,
     extra: Map<String, String> = emptyMap(),
+    retrySlow: Boolean = true,
   ): ByteArray {
     val token = token(context) ?: throw Failure("Pair me in the app first, sir.")
     val bases = hubs(context)
@@ -118,6 +120,11 @@ object HubLink {
         if (code == 403) throw Failure("The hub no longer knows this phone. Pair me again in the app.")
         if (code !in 200..299) throw Failure("The hub answered $code.")
         return bytes
+      } catch (e: SocketTimeoutException) {
+        // A hub that took the request but answered too slowly may still be doing it: asking the next would do it twice.
+        val connecting = e.message?.contains("connect", ignoreCase = true) == true
+        if (!retrySlow && !connecting) throw Failure("The hub took too long.")
+        last = e
       } catch (e: IOException) {
         // This hub did not answer: try the next one.
         last = e

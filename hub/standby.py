@@ -31,6 +31,7 @@ WRITABLE = {
     ("POST", "/v1/facts"),
     ("POST", "/v1/messages"),
     ("POST", "/v1/act"),
+    ("POST", "/v1/speech"),
 }
 ALWAYS_OPEN = {"/v1/standby/status"}
 

@@ -29,13 +29,14 @@ def _cartesia(text, language="en", origin="voice note"):
     return response.content
 
 
-def _openai(text):
+def _openai(text, origin="voice note"):
     response = httpx.post(
         "https://api.openai.com/v1/audio/speech",
         headers={"Authorization": f"Bearer {settings.get('tts_api_key')}"},
         json={"model": "tts-1", "input": text, "voice": "onyx", "response_format": "wav"},
         timeout=60,
     )
+    usage.record_speech("tts-1", text, ok=response.is_success, origin=origin)
     response.raise_for_status()
     return response.content
 
@@ -72,7 +73,7 @@ def speak(text, voice_note=False, language="en", origin="voice note"):
     if provider == "cartesia":
         audio = _cartesia(text, language, origin)
     elif provider == "openai":
-        audio = _openai(text)
+        audio = _openai(text, origin)
     else:
         raise RuntimeError("no tts provider configured")
     if voice_note:

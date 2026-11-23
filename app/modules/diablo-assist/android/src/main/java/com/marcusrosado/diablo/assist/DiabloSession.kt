@@ -27,10 +27,18 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
   private val leave = Runnable { if (floating?.typing != true) hide() }
   private val closer: (Talk.Now) -> Unit = { now -> plan(now) }
 
+  /** A reply finished while the typing bar was open: closing the bar without sending lets him go. */
+  private var missed = false
+
   private fun plan(now: Talk.Now) {
     ui.removeCallbacks(leave)
-    if (floating?.typing == true) return
-    Talk.closeAfter(now)?.let { ui.postDelayed(leave, it) }
+    val wait = Talk.closeAfter(now)
+    if (floating?.typing == true) {
+      missed = wait != null
+      return
+    }
+    missed = false
+    wait?.let { ui.postDelayed(leave, it) }
   }
 
   override fun onCreate() {
@@ -88,8 +96,9 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
 
   override fun onHide() {
     Talk.unlisten(closer)
-    ui.removeCallbacks(leave)
     floating?.closeTyping()
+    ui.removeCallbacks(leave)
+    missed = false
     Talk.stopHearing()
     // A turn still running lingers in the overlay, when he may draw over apps.
     if (Talk.busy) Overlay.show(context)
@@ -98,7 +107,11 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
 
   override fun typing(open: Boolean) {
     floating?.requestLayout()
-    if (open) ui.removeCallbacks(leave) else plan(Talk.now)
+    if (open) {
+      ui.removeCallbacks(leave)
+    } else if (missed) {
+      plan(Talk.now)
+    }
   }
 
   companion object {

@@ -58,6 +58,7 @@ object Talk {
 
   private val main = Handler(Looper.getMainLooper())
   private val work = Executors.newSingleThreadExecutor()
+  private val voice = Executors.newSingleThreadExecutor()
   private val listeners = LinkedHashSet<(Now) -> Unit>()
 
   var now = Now(Phase.RESTING, "", "")
@@ -301,14 +302,17 @@ object Talk {
       }
       Unit
     }
-    val words = plain(reply)
+    val words = spoken(plain(reply))
     if (words.isEmpty()) {
       done(false)
       return
     }
-    work.execute {
+    voice.execute {
+      if (mine != turn) return@execute
       val file = try {
-        File(context.cacheDir, "diablo-reply.wav").apply { writeBytes(HubLink.speech(context, words)) }
+        val wav = HubLink.speech(context, words)
+        if (mine != turn) return@execute
+        File(context.cacheDir, "diablo-reply.wav").apply { writeBytes(wav) }
       } catch (e: Exception) {
         null
       }
@@ -322,7 +326,10 @@ object Talk {
     stopPlayer()
     val manager = context.getSystemService(AudioManager::class.java)
     val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK).setAudioAttributes(speech).build()
-    manager?.requestAudioFocus(request)
+    if (manager == null || manager.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+      done(false)
+      return
+    }
     audio = manager
     focus = request
     val p = MediaPlayer()
@@ -363,6 +370,16 @@ object Talk {
   fun stopSpeaking() {
     stopPlayer()
     if (now.phase == Phase.SPEAKING) set(now.copy(phase = Phase.RESTING))
+  }
+
+  private const val SPOKEN_MAX = 3800
+
+  /** The hub renders at most 4000 characters: a longer reply is said up to the last full sentence that fits. */
+  private fun spoken(words: String): String {
+    if (words.length <= SPOKEN_MAX) return words
+    val cut = words.substring(0, SPOKEN_MAX)
+    val end = maxOf(cut.lastIndexOf(". "), cut.lastIndexOf("? "), cut.lastIndexOf("! "), cut.lastIndexOf('\n'))
+    return if (end > SPOKEN_MAX / 2) cut.substring(0, end + 1).trim() else cut.substringBeforeLast(' ').trim()
   }
 
   /** Markdown and links read badly aloud. */
