@@ -20,8 +20,8 @@ Window {
     readonly property var diagram: { try { return JSON.parse(args[5] ?? "[]"); } catch (e) { return []; } }
 
     readonly property bool panelScene: scene.startsWith("panel")
-    readonly property bool marksScene: scene.startsWith("marks") || scene.startsWith("diagram")
-    readonly property bool diagramScene: scene.startsWith("diagram")
+    readonly property bool marksScene: scene.startsWith("marks") || scene.startsWith("diagram") || scene.startsWith("choices")
+    readonly property bool diagramScene: scene.startsWith("diagram") || scene.startsWith("choices")
     width: s.screen?.[0] ?? (panelScene || marksScene ? 1280 : 760)
     height: s.screen?.[1] ?? (panelScene ? 860 : marksScene ? 800 : 560)
     visible: true
@@ -91,7 +91,10 @@ Window {
             marks: [{ kind: "ring", box: d.boxOf(d.fileMenu) }, { kind: "num", n: 1, box: d.boxOf(d.fileMenu) },
                 { kind: "arrow", box: d.boxOf(d.fileMenu) }] }) },
         "diagram-early": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 2 },
-        "diagram-last": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 99 }
+        "diagram-last": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 99 },
+        "choices-early": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 2 },
+        "choices-all": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 99 },
+        "choices-four": { mood: "speaking", at: [1500, 900], cards: [], screen: [1920, 1080], upTo: 99 }
     })
     readonly property var s: scenes[scene] ?? scenes["card-below"]
     // Made-up task cards, timed from now, in the shape busy.py prints them.

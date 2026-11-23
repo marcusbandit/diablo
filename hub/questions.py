@@ -233,13 +233,14 @@ def public(question):
 turns = {}
 
 
-def ask(conv, arguments, now=None, turn=None, ttl_s=None, action=None):
+def ask(conv, arguments, now=None, turn=None, ttl_s=None, action=None, origin=""):
     """Store a new pending question in conv; any pending one there is superseded. Raises ValueError.
 
     turn names the brain turn that asked, so only that turn's reply carries it; in the hub process it
     comes from turns, which the brain fills while a turn holds the conversation. ttl_s overrides
     questions.ttl_s. action, like {"kind": "mail", "id": 4, "decisions": ["approve", "deny"]}, makes an
-    answer run that action (hub/deliver.py) instead of a brain turn."""
+    answer run that action (hub/deliver.py) instead of a brain turn. origin is where the turn that asked
+    came from, as its turn file says, so a listener can tell a question asked at his desk."""
     now = time.time() if now is None else now
     body = clean(arguments)
     conv = str(conv or "main")
@@ -250,6 +251,8 @@ def ask(conv, arguments, now=None, turn=None, ttl_s=None, action=None):
                     expires=now + (ttl_s or ttl()), claimed=False, message=None, section=None, threads=[])
     if action:
         question["action"] = action
+    if origin:
+        question["origin"] = str(origin)[:160]
     _put(question, now)
     _announce(question)
     return question
@@ -566,7 +569,8 @@ ASK_TOOL = {
     "description": (
         "Ask Marcus one question with two to four choices and wait for his pick, the way a form does, instead of "
         "asking in prose. Use it when a choice is genuinely his. The hub shows it as buttons in his apps and a "
-        "keyboard on Telegram and reads it aloud on a spoken turn; his answer comes back as a new turn "
+        "keyboard on Telegram and reads it aloud on a spoken turn, and on a turn from his desk also draws the options "
+        "on his screen as cards, one per option, the recommended one marked; his answer comes back as a new turn "
         "[answer to question <id>: <label>]. One question at a time: a new one replaces any still open. After "
         "calling it, end your turn with at most one short line."
     ),

@@ -1,6 +1,6 @@
 .pragma library
 
-const KINDS = ["ring", "underline", "arrow", "label", "spotlight", "highlight", "num", "check", "cross", "node", "edge", "title"];
+const KINDS = ["ring", "underline", "arrow", "label", "spotlight", "highlight", "num", "check", "cross", "node", "edge", "title", "choice"];
 const POINTS = ["fromPoint", "start", "end", "via"];
 
 function finite(v) {
