@@ -95,6 +95,34 @@ class TestGuests(Case):
         with mock.patch.object(character.time, "time", return_value=character.time.time() + 2 * 3600):
             self.assertFalse(character.guests())
 
+    def test_a_voice_at_the_desk_cannot_end_or_shorten_it(self):
+        character.set_guests(True, hours=6)
+        self.arm(VOICE)
+        self.assertTrue(character.guest_order(False, conv="main").startswith("refused"))
+        self.assertTrue(character.guest_order(True, hours=0.5, conv="main").startswith("refused"))
+        self.assertTrue(character.guests())
+        self.assertIn("guests over", character.guest_order(True, hours=10, conv="main"))
+
+    def test_a_typed_turn_ends_it(self):
+        character.set_guests(True)
+        self.arm(TYPED)
+        self.assertIn("guests gone", character.guest_order(False, conv="main"))
+        self.assertFalse(character.guests())
+
+    def test_a_bad_length_falls_back_to_the_default(self):
+        self.assertIn("guests over", character.set_guests(True, hours=float("nan")))
+        self.assertTrue(character.guests())
+
+    def test_a_phone_voice_note_is_not_held(self):
+        character.set_guests(True)
+        self.arm("telegram voice note")
+        self.assertIsNone(character.refusal("save_fact", "main", {"text": PARENT}))
+
+    def test_the_api_brain_has_the_tool(self):
+        from hub import agent
+
+        self.assertIn("guests", [entry["function"]["name"] for entry in agent.TOOLS])
+
     def test_the_mcp_tool_sets_it(self):
         self.assertIn("guests over", mcp_server.call("guests", {"present": True}))
         self.assertTrue(character.guests())

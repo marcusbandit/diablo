@@ -833,7 +833,8 @@ def call(name, arguments):
     if name == "keep_sound_up":
         return keep_sound_up(arguments)
     if name == "guests":
-        return character.set_guests(arguments.get("present", True), arguments.get("hours"))
+        return character.guest_order(arguments.get("present", True), arguments.get("hours"),
+                                     os.environ.get("DIABLO_CONVERSATION") or "main")
     if name in ("focus_window", "stage_window"):
         return window_verb(name.split("_")[0], arguments)
     if name in HANDS_COMMANDS:

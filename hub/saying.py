@@ -28,10 +28,8 @@ def _table(raw):
 
 
 def table():
-    raw = localenv.get("DIABLO_SAY_AS")
-    if not raw:
-        raw = localenv.load().get("DIABLO_SAY_AS", "")
-    return _table(raw)
+    """localenv read local.env at import, so a change to the list takes a restart of the hub or ears."""
+    return _table(localenv.get("DIABLO_SAY_AS"))
 
 
 def for_speech(text):
