@@ -17,6 +17,22 @@ class TestDeskSessions(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.m = load_pushup(Path(self.tmp.name))
         self.cfg = {**self.m.load_config(), "sound": False}
+        self.playing = []
+        self.media = []
+
+        def pause():
+            out, self.playing[:] = list(self.playing), []
+            self.media.append(("pause", [p["name"] for p in out]))
+            return out
+
+        def resume(ps):
+            self.playing.extend(ps)
+            self.media.append(("play", [p["name"] for p in ps]))
+
+        for name, fn in (("pause_videos", pause), ("resume", resume)):
+            patch = mock.patch.object(self.m, name, side_effect=fn)
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def answers(self, *texts):
         replies = iter(json.dumps(t) for t in texts)
@@ -59,11 +75,48 @@ class TestDeskSessions(unittest.TestCase):
         self.m.log_answer({"result": "done", "did": 12, "exercise": "squats", "goal": 12}, None, {"session_id": "desk-4", "set_no": 1})
         patch, calls = self.answers({"result": "rested"}, {"result": "done", "did": 11, "exercise": "squats", "receipts": True},
                                     {"result": "end"})
-        with patch, mock.patch.object(self.m, "pretty_player", side_effect=lambda p: p):
-            said, wants = self.m.run_session(self.cfg, None, "squats", "desk-4", None, ["a video"])
+        with patch, mock.patch.object(self.m, "pretty_player", side_effect=lambda p: p["name"]):
+            said, wants = self.m.run_session(self.cfg, None, "squats", "desk-4", None, [{"name": "a video"}])
         self.assertEqual(said, "ended after set 2 of 3")
         self.assertTrue(wants)
         self.assertEqual(calls[1][calls[1].index("--paused") + 1], "a video")
+
+    def test_the_video_plays_through_the_rest_and_pauses_for_the_next_set(self):
+        self.m.log_answer({"result": "done", "did": 12, "exercise": "squats", "goal": 12}, None, {"session_id": "desk-5", "set_no": 1})
+        paused = [{"name": "mpv", "url": ""}]
+        patch, _ = self.answers({"result": "rested"}, {"result": "done", "did": 11, "exercise": "squats"},
+                                {"result": "rested"}, {"result": "done", "did": 10, "exercise": "squats"})
+        with patch:
+            self.m.run_session(self.cfg, None, "squats", "desk-5", None, paused)
+        self.assertEqual(self.media, [("play", ["mpv"]), ("pause", ["mpv"]), ("play", ["mpv"]), ("pause", ["mpv"])])
+        self.assertEqual(paused, [{"name": "mpv", "url": ""}])
+
+    def test_ending_on_the_rest_leaves_the_video_playing(self):
+        self.m.log_answer({"result": "done", "did": 12, "exercise": "squats", "goal": 12}, None, {"session_id": "desk-6", "set_no": 1})
+        paused = [{"name": "mpv", "url": ""}]
+        patch, _ = self.answers({"result": "end"})
+        with patch:
+            self.m.run_session(self.cfg, None, "squats", "desk-6", None, paused)
+        self.assertEqual(self.playing, [{"name": "mpv", "url": ""}])
+        self.assertEqual(paused, [])
+
+    def test_ending_on_the_rest_before_the_receipts_pauses_the_video(self):
+        self.m.log_answer({"result": "done", "did": 12, "exercise": "squats", "goal": 12}, None, {"session_id": "desk-8", "set_no": 1})
+        paused = [{"name": "mpv", "url": ""}]
+        patch, _ = self.answers({"result": "rested"}, {"result": "done", "did": 11, "exercise": "squats", "receipts": True},
+                                {"result": "end"})
+        with patch:
+            _, wants = self.m.run_session(self.cfg, None, "squats", "desk-8", None, paused)
+        self.assertTrue(wants)
+        self.assertEqual((self.playing, paused), ([], [{"name": "mpv", "url": ""}]))
+
+    def test_a_lock_on_the_rest_pauses_the_video_until_unlock(self):
+        self.m.log_answer({"result": "done", "did": 12, "exercise": "squats", "goal": 12}, None, {"session_id": "desk-7", "set_no": 1})
+        paused = [{"name": "mpv", "url": ""}]
+        with mock.patch.object(self.m, "overlay", return_value="stopped"):
+            said, _ = self.m.run_session(self.cfg, None, "squats", "desk-7", None, paused)
+        self.assertEqual(said, "locked")
+        self.assertEqual((self.playing, paused), ([], [{"name": "mpv", "url": ""}]))
 
     def test_a_short_last_set_is_a_pass_not_a_skip(self):
         self.m.log_answer({"result": "done", "did": 12, "exercise": "squats", "goal": 12}, None, {"session_id": "desk-3", "set_no": 1})

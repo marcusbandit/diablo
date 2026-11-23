@@ -46,10 +46,11 @@ overlay layer, so it lands on top of fullscreen video and games.
   have it looked at. `pushup hurt off arms` when it's better.
 
 - A card is a session: three sets of the same move. The card says which set it is ("SET 1 OF 3")
-  and how many. Log the set and a rest screen counts down 90 seconds, then the next set comes with
-  its goal worked out again, since a tired arm does fewer. Enter on the rest starts the next set
-  early, Esc ends the session there, and a short or skipped set later in a session is a pass, never
-  a skip. Sessions come every two to three hours. `sets`, `rest_seconds`, `session_every_min` and
+  and how many. Log the set and a small bubble in the top right corner counts down a 90 second rest,
+  then the next set comes with its goal worked out again, since a tired arm does fewer. The bubble
+  takes no keyboard and covers nothing else, and the videos the set paused play again until the
+  next set. Its buttons start the next set early or end the session there, and a short or skipped
+  set later in a session is a pass, never a skip. Sessions come every two to three hours. `sets`, `rest_seconds`, `session_every_min` and
   `session_every_max` in the config change it; `sets = 1` brings back one set a card.
 - Every 45 to 70 minutes a card asks for a number of reps (one set a card). The first sets are random within your
   level (10 to 20 on normal). After that the goal follows what you log. Fresh, it's what you can
