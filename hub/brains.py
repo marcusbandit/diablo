@@ -180,8 +180,8 @@ def host_line():
 
 def mail_note(conv, machine, guard):
     """Important mail Marcus has not opened, for a turn he is part of. Never on a locked screen, where someone else
-    may hear it, never on the standby, and never in a turn of its own that a mail started. A mail named in a turn
-    that never finished comes back a few hours later while it stays unread."""
+    may hear it, never on the standby, and never in a turn of its own that a mail started. Each mail is named once,
+    ever (hub/mailack.py)."""
     if machine or guard.restricted or str(conv).startswith("mail-") or standby.is_standby():
         return ""
     try:
