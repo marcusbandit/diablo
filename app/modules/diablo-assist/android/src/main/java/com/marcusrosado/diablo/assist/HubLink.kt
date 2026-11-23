@@ -38,8 +38,11 @@ object HubLink {
 
   fun paired(context: Context) = token(context) != null && hubs(context).isNotEmpty()
 
+  /** His answer, and whether it waits on Marcus: a question card he asked, or a line ending in a question. */
+  data class Reply(val text: String, val asks: Boolean)
+
   /** One turn in the main conversation. Returns his reply. Blocks: call it off the main thread. */
-  fun chat(context: Context, text: String, screen: ScreenRead?): String {
+  fun chat(context: Context, text: String, screen: ScreenRead?): Reply {
     val body = JSONObject()
       .put("text", text)
       .put("source", "phone")
@@ -51,8 +54,24 @@ object HubLink {
         body.put("images", JSONArray().put(JSONObject().put("data", shot).put("media_type", "image/jpeg")))
       }
     }
-    val out = post(context, "/v1/chat", "application/json", body.toString().toByteArray(), readMs = 10 * 60_000)
-    return JSONObject(out).optString("reply", "")
+    val out = JSONObject(post(context, "/v1/chat", "application/json", body.toString().toByteArray(), readMs = 10 * 60_000))
+    val reply = out.optString("reply", "")
+    return Reply(reply, asksQuestion(out.optJSONArray("objects")) || reply.trimEnd().endsWith("?"))
+  }
+
+  private fun asksQuestion(objects: JSONArray?): Boolean {
+    if (objects == null) return false
+    for (i in 0 until objects.length()) {
+      val o = objects.optJSONObject(i) ?: continue
+      if (o.optString("kind") == "question" && o.optString("state", "pending") == "pending") return true
+    }
+    return false
+  }
+
+  /** The reply in his own voice, the one the hub and the desk speak with, as a wav. */
+  fun speech(context: Context, text: String): ByteArray {
+    val body = JSONObject().put("text", text).toString().toByteArray()
+    return postBytes(context, "/v1/speech", "application/json", body, readMs = 60_000)
   }
 
   /** A clip transcribed by the hub's speech to text, the way the desk's ears do it. */
@@ -68,7 +87,16 @@ object HubLink {
     data: ByteArray,
     readMs: Int,
     extra: Map<String, String> = emptyMap(),
-  ): String {
+  ): String = postBytes(context, path, type, data, readMs, extra).toString(Charsets.UTF_8)
+
+  private fun postBytes(
+    context: Context,
+    path: String,
+    type: String,
+    data: ByteArray,
+    readMs: Int,
+    extra: Map<String, String> = emptyMap(),
+  ): ByteArray {
     val token = token(context) ?: throw Failure("Pair me in the app first, sir.")
     val bases = hubs(context)
     if (bases.isEmpty()) throw Failure("Pair me in the app first, sir.")
@@ -86,10 +114,10 @@ object HubLink {
         conn.outputStream.use { it.write(data) }
         val code = conn.responseCode
         val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-        val text = stream?.use { s -> ByteArrayOutputStream().also { s.copyTo(it) }.toString("UTF-8") } ?: ""
+        val bytes = stream?.use { s -> ByteArrayOutputStream().also { s.copyTo(it) }.toByteArray() } ?: ByteArray(0)
         if (code == 403) throw Failure("The hub no longer knows this phone. Pair me again in the app.")
         if (code !in 200..299) throw Failure("The hub answered $code.")
-        return text
+        return bytes
       } catch (e: IOException) {
         // This hub did not answer: try the next one.
         last = e

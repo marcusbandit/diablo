@@ -6,6 +6,8 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.service.voice.VoiceInteractionSession
 import android.view.View
 import android.view.WindowManager
@@ -14,12 +16,22 @@ import java.util.concurrent.Executors
 /**
  * What holding power opens: he floats over the app in front and listens at once. Android hands
  * the session that app's text and a screenshot, which go to the hub with the first line. Only
- * his own pieces take touches; the app underneath stays usable.
+ * his own pieces take touches; the app underneath stays usable. Once a command is answered he
+ * goes by himself after a beat to read it, unless the reply waits on Marcus or he is typing.
  */
 class DiabloSession(context: Context) : VoiceInteractionSession(context), Floating.Host {
   private var floating: Floating? = null
   private var typeFirst = false
   private val encode = Executors.newSingleThreadExecutor()
+  private val ui = Handler(Looper.getMainLooper())
+  private val leave = Runnable { if (floating?.typing != true) hide() }
+  private val closer: (Talk.Now) -> Unit = { now -> plan(now) }
+
+  private fun plan(now: Talk.Now) {
+    ui.removeCallbacks(leave)
+    if (floating?.typing == true) return
+    Talk.closeAfter(now)?.let { ui.postDelayed(leave, it) }
+  }
 
   override fun onCreate() {
     super.onCreate()
@@ -42,6 +54,7 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
     Overlay.hide(context)
     Talk.begin()
     typeFirst = args?.getBoolean(TYPE) == true
+    Talk.listen(closer)
     val view = floating ?: return
     if (typeFirst) {
       view.post { view.openTyping() }
@@ -74,6 +87,8 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
   }
 
   override fun onHide() {
+    Talk.unlisten(closer)
+    ui.removeCallbacks(leave)
     floating?.closeTyping()
     Talk.stopHearing()
     // A turn still running lingers in the overlay, when he may draw over apps.
@@ -83,6 +98,7 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
 
   override fun typing(open: Boolean) {
     floating?.requestLayout()
+    if (open) ui.removeCallbacks(leave) else plan(Talk.now)
   }
 
   companion object {
