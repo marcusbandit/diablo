@@ -248,6 +248,11 @@ median from his last word (`speech_end`) to each of them and to the end of the s
 the last 200 turns or `--last N`, counting only the turns that reached that point. Turns logged
 before these points existed show up as not measured.
 
+Each spoken turn the hub answered aloud also goes to the hub once it is saved, its points and the
+hub's split but never its words (`POST /v1/voice/timing`, docs/api.md). `diablo-ears timings --hub`
+reads back the hub's stages of the last 20 such turns, with the median and p90 of each, over every
+turn and over the conversational ones.
+
 ## Letting him breathe
 
 A breath or a moment to think is quiet in the middle of a sentence, and the ears used to

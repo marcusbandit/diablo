@@ -2140,6 +2140,7 @@ def run():
     cfg = load_config()
     REPORT = HubReport(cfg)
     atexit.register(REPORT.stop)
+    timeline.ON_SAVE.append(lambda row: hubclient.report_timing(cfg, timeline.hub_report(row)))
     settings = Settings(cfg)
     PENDING.merger = lambda turns: burst.merge(settings.get(), turns)
     # Jev straight from here for speech control and early ends, on the hub's own rules.
@@ -2454,7 +2455,7 @@ The setup and the meter live in the desktop app: Settings, then Voice.
   diablo-ears retrain     learn again from the takes already saved
   diablo-ears chimes      play every sound he makes, one after another
   diablo-ears mouth       tune his mouth to his voice by eye (show, set MS)
-  diablo-ears timings     where each recent turn's time went (--last N, --html FILE, --medians)
+  diablo-ears timings     where each recent turn's time went (--last N, --html FILE, --medians, --hub)
   diablo-ears said        what he heard, said aloud and wrote in each recent turn (--last N, --json)
   diablo-ears tour        play the "show me what you can do" tour once, here
   diablo-ears recordings  the last turns' recordings and what was heard (a number shows more)
@@ -2487,7 +2488,7 @@ def recheck_cli(clip):
 
 def timings_cli(args):
     """The last turns as a waterfall: in the terminal, or as a page with --html FILE."""
-    last, page, medians = None, None, False
+    last, page, medians, hub = None, None, False, False
     rest = list(args)
     while rest:
         flag = rest.pop(0)
@@ -2497,9 +2498,13 @@ def timings_cli(args):
             page = rest.pop(0)
         elif flag == "--medians":
             medians = True
+        elif flag == "--hub":
+            hub = True
         else:
-            print("usage: diablo-ears timings [--last N] [--html FILE] [--medians]")
+            print("usage: diablo-ears timings [--last N] [--html FILE] [--medians] [--hub]")
             return 1
+    if hub:
+        return hub_timings(last or 20)
     rows = timeline.load(last=last or (200 if medians else 10))
     if medians:
         print(timeline.latency_report(rows))
@@ -2509,6 +2514,23 @@ def timings_cli(args):
         print(f"{len(rows)} turns written to {page}")
         return 0
     print(timeline.text_report(rows))
+    return 0
+
+
+def hub_timings(last):
+    """The hub's stages of the last spoken turns, from the end of his speech: medians and p90."""
+    from hub import voicetimes
+
+    cfg = load_config()
+    try:
+        response = httpx.get(f"{cfg['hub_url'].rstrip('/')}/v1/voice/timing", params={"last": last},
+                             headers={"X-Diablo-Token": cfg.get("hub_token", "")}, timeout=10)
+        response.raise_for_status()
+        found = response.json()
+    except (httpx.HTTPError, KeyError, ValueError) as error:
+        print(f"could not read the hub's timings: {error}")
+        return 1
+    print(voicetimes.text(found), end="")
     return 0
 
 

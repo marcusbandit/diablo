@@ -30,7 +30,7 @@ _diablo-ears() {
   elif [[ $words[2] == mouth && $words[3] == set ]]; then
     _message 'milliseconds, later is positive'
   elif [[ $words[2] == timings ]]; then
-    _arguments '--last[how many turns]:number' '--html[write the waterfall as a page]:file:_files' '--medians[median time from the end of his speech to his first sound]'
+    _arguments '--last[how many turns]:number' '--html[write the waterfall as a page]:file:_files' '--medians[median time from the end of his speech to his first sound]' '--hub[the hub stages of the last spoken turns, median and p90]'
   elif [[ $words[2] == said ]]; then
     _arguments '--last[how many turns]:number' '--json[the rows as JSON]'
   fi

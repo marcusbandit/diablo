@@ -53,6 +53,10 @@ class Turn:
     first_text_at: float = 0.0
     said: list = field(default_factory=list)
     first_said_at: float = 0.0
+    marks: dict = field(default_factory=dict)
+
+    def mark(self, name):
+        self.marks.setdefault(name, time.time())
 
 
 def home():
@@ -127,6 +131,15 @@ def model_for(name):
 
 def effort():
     return str(settings.get("brain.claude.effort") or "medium")
+
+
+def spoken_model():
+    """The model a line said aloud runs on, for priming a waiting session; empty when route.spoken is off."""
+    try:
+        found = route.spoken_brain()
+    except Exception:
+        return ""
+    return found[0] if found else ""
 
 
 def session_key(name, conv):
@@ -213,16 +226,19 @@ def prefix(origin, notes=None):
     return head
 
 
-def usage_log(turn, conv, origin, started, decision=None, extra=None):
+def usage_log(turn, conv, origin, started, decision=None, extra=None, arrived=None):
     # The split a client can show: how long Jev took, and the whole turn on the hub.
     jev_ms = (decision.jev or {}).get("ms") if decision is not None and decision.jev else None
     turn.timing = {"brain_ms": round((time.time() - started) * 1000), "jev_ms": jev_ms,
                    "backend": turn.backend, "model": turn.model, "tools": len(turn.steps),
                    "tier": decision.tier if decision is not None else None}
+    if decision is not None and decision.effort:
+        turn.timing["effort"] = decision.effort
     if turn.first_text_at:
         turn.timing["first_text_ms"] = round((turn.first_text_at - started) * 1000)
     if turn.first_said_at:
         turn.timing["first_say_ms"] = round((turn.first_said_at - started) * 1000)
+    turn.timing.update(stage_times(turn, started, arrived))
     try:
         STATE.mkdir(parents=True, exist_ok=True)
         row = {
@@ -240,6 +256,20 @@ def usage_log(turn, conv, origin, started, decision=None, extra=None):
             handle.write(json.dumps(row) + "\n")
     except OSError:
         pass
+
+
+def stage_times(turn, started, arrived=None):
+    """The hub's own stages of a turn in ms from the moment the request arrived: when the brain
+    started on it, the thread pick, the line written to the model, its first token of any kind
+    (thinking counts) and its first written word, and the first sentence handed on to be said."""
+    base = arrived or started
+    out = {"hub_start_ms": round((started - base) * 1000)}
+    for name in ("guarded", "picked", "locked", "context", "warmed", "sent", "first_token", "first_text_token"):
+        if name in turn.marks:
+            out[f"{name}_ms"] = round((turn.marks[name] - base) * 1000)
+    if turn.first_said_at:
+        out["said_ms"] = round((turn.first_said_at - base) * 1000)
+    return out
 
 
 def collect_object(turn, name, arguments):
@@ -435,6 +465,23 @@ class ClaudeSession:
             await self.control({"subtype": "apply_flag_settings", "settings": {"effortLevel": effort_level}})
             self.effort_level = effort_level
 
+    async def prime(self, model):
+        """Switches the idle process to model and straight back. A fresh claude CLI takes most of a
+        second over its first switch to another model and a few ms over every one after (0.7 s and
+        3 ms, measured 2026-11-23), so a spare primed for the spoken model pays that while it waits,
+        not while Marcus does. It is left on its own model."""
+        if not model or model == self.model or not self.alive() or self.busy:
+            return False
+        keep = self.model
+        try:
+            await self.control({"subtype": "set_model", "model": model})
+            await self.control({"subtype": "set_model", "model": keep})
+        except Exception as error:
+            logger.warning("could not prime %s for %s (%s), closing it", self.conv, model, error)
+            self.kill()
+            return False
+        return True
+
     async def warm(self, model, effort_level, switch=True):
         fresh, signature = self.current()
         if fresh:
@@ -458,10 +505,12 @@ class ClaudeSession:
 
     async def turn(self, content, model, effort_level, on_step=None, on_say=None):
         await self.warm(model, effort_level)
+        warmed = time.time()
         self.used = True
         if not self.side:
             settings.set_setting(session_key("claude", self.conv), self.session_id)
         result = Turn(backend="claude", model=model, session_id=self.session_id)
+        result.marks["warmed"] = warmed
         message = {"type": "user", "message": {"role": "user", "content": content}}
         self.busy = True
         self.stopping = False
@@ -469,6 +518,7 @@ class ClaudeSession:
         try:
             self.proc.stdin.write((json.dumps(message) + "\n").encode())
             await self.proc.stdin.drain()
+            result.mark("sent")
             await asyncio.wait_for(self._read(result, on_step, on_say), timeout=TURN_SECONDS)
         except asyncio.TimeoutError:
             self.kill()
@@ -525,7 +575,9 @@ class ClaudeSession:
                 step = inner.get("type")
                 if step == "content_block_delta":
                     delta = inner.get("delta") or {}
+                    result.mark("first_token")
                     if delta.get("type") == "text_delta" and delta.get("text"):
+                        result.mark("first_text_token")
                         # Each sentence is said aloud the moment it ends, while he writes on.
                         await say(splitter.feed(delta["text"]))
                 elif step == "content_block_start" or step == "content_block_stop":
@@ -626,6 +678,7 @@ class Lanes:
                 return False
             session = ClaudeSession(self.conv, lane=True)
             await session.warm(model, effort_level, switch=False)
+            await session.prime(spoken_model())
             self.spare = session
             return True
 
@@ -880,6 +933,7 @@ async def keep_warm():
     async with lock(MAIN):
         try:
             if await session.warm(model_for("claude"), effort(), switch=False):
+                await session.prime(spoken_model())
                 logger.info("main claude session warmed")
         except Exception:
             logger.exception("could not warm the main claude session")
@@ -1343,8 +1397,9 @@ _background = set()
 
 
 async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=None, machine=False, message_id=None,
-               thread_hint=None, desktop=None, on_say=None, on_brain=None):
+               thread_hint=None, desktop=None, on_say=None, on_brain=None, arrived=None):
     started = time.time()
+    pre = {}
     looking = asyncio.create_task(asyncio.to_thread(lockguard.for_turn, origin))
     chosen = backend()
     said = text
@@ -1391,7 +1446,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
         turn = run_desktop(conv, text, act)
         if picking is not None:
             background(file_when_picked(picking, message_id))
-        usage_log(turn, conv, origin, started, decision)
+        usage_log(turn, conv, origin, started, decision, arrived=arrived)
         return turn
     if decision is not None and decision.direct and not tour:
         turn = await run_direct(conv, text, decision, event)
@@ -1401,7 +1456,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
             if picking is not None:
                 background(file_when_picked(picking, message_id))
             refresh_panels(turn)
-            usage_log(turn, conv, origin, started, decision)
+            usage_log(turn, conv, origin, started, decision, arrived=arrived)
             return turn
     if chosen == "claude" and on_brain is not None:
         # No plain command and no direct answer: the full brain has the turn, and the ears can
@@ -1412,6 +1467,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
         except Exception:
             logger.exception("the brain hook failed")
     guard = await looking
+    pre["guarded"] = time.time()
     if guard.line:
         notes = [guard.line] + list(notes or [])
     if decision is not None and decision.background:
@@ -1426,6 +1482,8 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
     if guard.restricted and chosen == "opencode":
         chosen = "api"
     picked = await picking if picking is not None else None
+    if picked is not None:
+        pre["picked"] = started + picked.ms / 1000 if picked.ms else time.time()
     if picked is not None and picked.attach:
         threads.attach_message(message_id, picked.attach)
     handover = take_handover(conv)
@@ -1439,6 +1497,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
     running_said[conv].append(said)
     try:
         async with (contextlib.nullcontext() if beside else lock(conv)):
+            pre["locked"] = time.time()
             lockguard.arm(conv, guard)
             if not beside:
                 lockguard.note_turn(lockguard.turn_path(conv), origin)
@@ -1460,6 +1519,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
             kept = [remembered.text] if remembered is not None and remembered.text else []
             notes = ([handover] if handover else []) + ([retrieved] if retrieved else []) + kept + list(notes or []) or None
             message = prefix(origin, notes) + "\n" + text
+            pre["context"] = time.time()
             if notes:
                 text = "\n".join(notes) + "\n" + text
             if beside:
@@ -1478,6 +1538,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                 turn = await run_api(conv, text, origin)
                 turn.first_text, turn.first_text_at = failed.first_text, failed.first_text_at
                 turn.said, turn.first_said_at = failed.said, failed.first_said_at
+                turn.marks = {**failed.marks, **turn.marks}
                 turn.note = f"{chosen} failed ({failed.error[:160]}), the api brain answered instead"
     except BaseException:
         mail_heard(mail_ids, False)
@@ -1518,7 +1579,9 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
         learn.facts_seen(remembered, turn.session_id)
     learn.after_turn(conv, said, turn, machine, started=started)
     refresh_panels(turn)
-    usage_log(turn, conv, origin, started, decision, extra)
+    for name, at in pre.items():
+        turn.marks.setdefault(name, at)
+    usage_log(turn, conv, origin, started, decision, extra, arrived=arrived)
     return turn
 
 

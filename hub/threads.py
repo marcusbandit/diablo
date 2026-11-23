@@ -11,6 +11,7 @@ Per turn, on the hot path, pick() decides which threads the new line touches:
     otherwise                one Haiku call through a pre-spawned claude process: the line, an
                              index of the open threads and the last three turns in, strict JSON out
     timeout or failure       keyword overlap with the descriptors, else the last turn's thread
+    a spoken line            never waits on Haiku: the line above it at once, Haiku's answer refiles it late
 
 assemble() then builds the only history the brain gets for the turn: the picked threads'
 descriptors and last turns, a few always-true lines (lamps, running T3 threads) and stored
@@ -285,6 +286,9 @@ def parse_answer(raw, known):
     return relevant, attach, new, bool(data.get("m")), bool(data.get("f"))
 
 
+VOICE_PICK_WAIT_S = 0.0
+
+
 def fallback(text, shown, last):
     """The pick when Haiku is off, slow or wrong: keyword overlap, else the last turn's thread, else a new one."""
     match = best_match(text, shown)
@@ -346,7 +350,7 @@ async def pick(text, spoken=False, skip=None, now=None, wait=True, hint=None):
         shown = index(text, now)
         known = {t["id"] for t in shown}
         call = asyncio.create_task(quick_pick.ask(pick_prompt(text, shown, recent, spoken)))
-        limit = _num("threads.pick_timeout_voice", 1.6) if spoken else _num("threads.pick_timeout", 2.6)
+        limit = _num("threads.pick_timeout_voice", VOICE_PICK_WAIT_S) if spoken else _num("threads.pick_timeout", 2.6)
         done, _ = await asyncio.wait({call}, timeout=limit if wait else 0)
         if call in done:
             try:

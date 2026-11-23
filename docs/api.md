@@ -45,6 +45,18 @@ last report is under a minute old.
 `{"turns": [{"heard", "reply"}]}`, oldest first, gives `{"say", "via", "ms"}`. Haiku writes it through
 the claude CLI, newest order first; nothing is stored. An empty `say` means it failed. docs/ears.md.
 
+Each spoken turn's timing goes to the hub once it is over. The ears send `POST /v1/voice/timing`
+with the turn's points on their clock and the `timing` the hub's reply carried, never its words; the
+hub token only. hub/voicetimes.py turns that into stages in ms from the end of his speech
+(`transcript`, `hub_in`, `first_token` with thinking counted, `first_text`, `first_sentence`,
+`tts_audio`, `playback`, and `beat` when the acknowledgement played), logs it as one `voice turn {...}`
+JSON line in the hub's journal and keeps it in `~/.local/state/diablo/voice-turns.jsonl`.
+`GET /v1/voice/timing?last=20` gives those turns with the median and p90 of every stage, over all of
+them and over the conversational ones that ran no tool; `diablo-ears timings --hub` prints the same.
+The hub's own split rides in the reply's `timing`: `guarded_ms`, `picked_ms`, `locked_ms`,
+`context_ms`, `warmed_ms`, `sent_ms`, `first_token_ms`, `first_text_token_ms` and `said_ms`, all from
+the moment the request arrived.
+
 ## One memory, many sections
 
 Sections are places to talk, each with a focus: Diablo, Workout, Projects, Home. They share one

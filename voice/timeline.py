@@ -14,6 +14,7 @@ from pathlib import Path
 
 LOG = Path.home() / ".local" / "state" / "diablo" / "turns.jsonl"
 KEEP = 2000
+ON_SAVE = []
 
 # The steps of a turn, as (label, from point, to point), drawn in this order. A step whose
 # points are missing is left out, so a loop line (no wake) or a reply cut off still draws.
@@ -73,17 +74,38 @@ class Timeline:
         return {**self.info, "points": dict(self.points)}
 
     def save(self, path=None):
-        """Appends the turn; the file keeps its newest KEEP turns."""
+        """Appends the turn; the file keeps its newest KEEP turns. Then each ON_SAVE hook gets the row."""
         path = Path(path or LOG)
+        row = self.row()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a") as handle:
-                handle.write(json.dumps(self.row()) + "\n")
+                handle.write(json.dumps(row) + "\n")
             lines = path.read_text().splitlines()
             if len(lines) > KEEP + 200:
                 path.write_text("\n".join(lines[-KEEP:]) + "\n")
         except OSError:
             pass
+        for hook in list(ON_SAVE):
+            try:
+                hook(row)
+            except Exception:
+                pass
+
+
+def hub_report(row):
+    """The body for the hub's POST /v1/voice/timing, for a turn whose words went to the hub and
+    were answered aloud; None for any other turn. Only the points and the hub's split go, never
+    what was said."""
+    points = row.get("points") or {}
+    if "speech_end" not in points or "hub_sent" not in points or "first_audio" not in points:
+        return None
+    hub = row.get("hub") if isinstance(row.get("hub"), dict) else None
+    if not hub or not str(hub.get("backend") or "").strip() or str(hub.get("backend")).startswith("control"):
+        return None
+    return {"points": dict(points), "hub": hub, "kind": str(row.get("kind") or ""),
+            "outcome": str(row.get("outcome") or "")[:80], "background": bool(row.get("background")),
+            "burst": bool(row.get("burst"))}
 
 
 def load(path=None, last=20):
