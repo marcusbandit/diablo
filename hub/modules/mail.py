@@ -49,6 +49,23 @@ TOOLS = [
         },
     },
     {
+        "name": "mail_acknowledge",
+        "description": (
+            "Mark mail as seen so it never comes up again, on any channel. Call it whenever Marcus says he has seen, "
+            "read, opened or dealt with a mail, or tells you to stop mentioning it: give the #numbers from the mail "
+            "note in ids, or a few words naming it (sender, service, subject) in description, or all true when he "
+            "says he has seen all of it. Mail you already named once is acknowledged on its own."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}, "description": "the #numbers from the mail note"},
+                "description": {"type": "string", "description": "a few words naming the mail, like the sender or the service"},
+                "all": {"type": "boolean", "description": "every important mail he has not heard about yet"},
+            },
+        },
+    },
+    {
         "name": "mail_approvals",
         "description": "Requests from allowlisted agents like Jorbis that wait for Marcus, and the latest decided ones.",
         "inputSchema": {"type": "object", "properties": {}},
@@ -81,6 +98,9 @@ def call(name, arguments):
             f"#{row['id']} {row['status']}: {mailbox.agent_name(row['sender'])} asks {row['task']} ({row['task_kind']})"
             for row in rows
         )
+    if name == "mail_acknowledge":
+        return mailbox.acknowledge(arguments.get("ids") or [], str(arguments.get("description") or ""),
+                                   bool(arguments.get("all")))
     if name == "mail_agent":
         try:
             return mailbox.send_to_agent(arguments.get("to") or "Jorbis", arguments.get("subject"), arguments.get("text"))

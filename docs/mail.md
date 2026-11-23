@@ -38,10 +38,21 @@ own. Code: `hub/mailbox.py` (the handler), `hub/modules/mail.py` (panel, taps, b
    asks IMAP what is still unread since the oldest open nudge; a mail he opened, moved or deleted closes its
    nudge. When the list is too long to read in full, nothing closes. A ping that fails tries again ten minutes later.
 7. Until he opens it, the brain's next turn carries one bracket line naming it, so Diablo says it in
-   conversation, five at most and a count of the rest. Each mail is named once, and again six hours later while
-   still unread; never while his desk screen is locked, never in a mail task's own turn. Mail text is stripped of
+   conversation, five at most and a count of the rest, each with its `#number`. Each mail is named once, ever;
+   never while his desk screen is locked, never in a mail task's own turn. Mail text is stripped of
    brackets and line breaks so it stays inside the line.
-8. `agent` mail to the `gmail` account follows the
+8. Mail he already heard about is kept in `mail-acks.db` beside `mail.db` (`hub/mailack.py`), shared by the hub and
+   the diablo MCP server and kept across restarts. A mail goes in once the turn whose bracket line named it has
+   answered (a failed turn gives it back to the next one), when its "Still unread" ping goes out, or when he says
+   he has seen it and the brain calls `mail_acknowledge` (by `#number`, a few words, or all). It is matched by its
+   row, its Message-ID, and for three days by sender plus subject without `Re:`, `Fwd:`, case or punctuation, so
+   the same notice sent again counts too; a different number in the subject, or the same subject weeks later, is
+   new mail. A mail in the store is never named again and gets no "Still unread" ping, except that a mail only
+   named in passing keeps the ping before its deadline. The first time the store opens, every mail that already
+   pinged goes in, so turning it on brings nothing old back.
+9. Pull request mail from GitHub (a `/pull/` Message-ID, `(PR #N)` or "pull request" in the subject) is filed
+   without a model and never pinged, nudged or named.
+10. `agent` mail to the `gmail` account follows the
    protocol in the vault note jorbis-mail-protocol:
    - an acknowledgement gets no answer and no ping
    - a question, information or a `[For Marcus]` message gets an answer Diablo writes himself (Opus,

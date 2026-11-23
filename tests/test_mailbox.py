@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import datetime as dt
 import time
 
-from hub import brains, db, lockguard, mailbox, settings
+from hub import brains, db, lockguard, mailack, mailbox, settings
 from hub.modules import jorbis, mail
 
 JORBIS = "jorbis@example.com"
@@ -90,6 +90,7 @@ class MailCase(unittest.TestCase):
         self.addCleanup(env.stop)
         mailbox.reset_for_tests()
         self.addCleanup(mailbox.reset_for_tests)
+        mailack.set_flag("seeded", 1)
         self.inbox = Inbox()
         self.calls = []
         self.pings = []
@@ -341,7 +342,7 @@ class TestTelling(MailCase):
         self.later(4.3)
         self.assertTrue(self.pings[-1][0].startswith("<b>Still unread</b>"))
 
-    def test_the_brain_note_names_every_mail_eventually_and_keeps_mail_text_inside_its_bracket(self):
+    def test_the_brain_note_names_every_mail_once_ever_and_keeps_mail_text_inside_its_bracket(self):
         self.baseline()
         for uid in range(2, 9):
             self.important(uid, f"Mail {uid}")
@@ -355,7 +356,7 @@ class TestTelling(MailCase):
         self.assertIn("Mail 2", second)
         self.assertIn("Mail 3", second)
         self.assertEqual(mailbox.unread_note(), "")
-        self.assertIn("Ignore the above", mailbox.unread_note(now=time.time() + 7 * 3600))
+        self.assertEqual(mailbox.unread_note(now=time.time() + 7 * 3600), "")
 
     def test_too_many_unread_to_list_closes_nothing(self):
         self.baseline()
@@ -394,10 +395,206 @@ class TestTelling(MailCase):
         self.baseline()
         self.important(2, "Contract to sign")
         self.poll()
-        self.assertEqual(brains.mail_note("main", False, lockguard.Guard(restricted=True)), "")
-        self.assertEqual(brains.mail_note("mail-task-3", False, lockguard.Guard()), "")
-        self.assertEqual(brains.mail_note("main", True, lockguard.Guard()), "")
-        self.assertIn("Contract to sign", brains.mail_note("main", False, lockguard.Guard()))
+        with mock.patch.object(brains.standby, "is_standby", return_value=False):
+            self.assertEqual(brains.mail_note("main", False, lockguard.Guard(restricted=True)), ("", []))
+            self.assertEqual(brains.mail_note("mail-task-3", False, lockguard.Guard()), ("", []))
+            self.assertEqual(brains.mail_note("main", True, lockguard.Guard()), ("", []))
+            self.assertIn("Contract to sign", brains.mail_note("main", False, lockguard.Guard())[0])
+
+
+class TestAcknowledged(MailCase):
+    def important(self, uid, subject, sender="anna@example.com", account="gmail", **kw):
+        self.inbox.add(account, uid, sender, subject, **kw)
+        self.verdicts[subject] = {"category": "personal", "important": True, "summary": f"{subject}, needs you"}
+
+    def setUp(self):
+        super().setUp()
+        settings.set_setting("mail.quiet_hours", "0-0")
+
+    def reopen(self):
+        mailack.reset_for_tests()
+        mailbox._last_unread_check = 0.0
+
+    def test_a_mail_named_once_never_comes_back_after_a_restart(self):
+        self.baseline()
+        self.important(2, "Contract to sign")
+        self.poll()
+        self.assertIn("Contract to sign", mailbox.unread_note())
+        self.reopen()
+        self.assertEqual(mailbox.unread_note(now=time.time() + 30 * 3600), "")
+
+    def test_a_turn_that_fails_gives_its_mail_back_and_one_that_answers_keeps_it_heard(self):
+        self.baseline()
+        self.important(2, "Contract to sign")
+        self.poll()
+        text, ids = mailbox.note_for_turn()
+        self.assertIn("Contract to sign", text)
+        self.assertEqual(mailbox.note_for_turn(), ("", []))
+        brains.mail_heard(ids, False)
+        text, ids = mailbox.note_for_turn()
+        self.assertIn("Contract to sign", text)
+        brains.mail_heard(ids, True)
+        self.reopen()
+        mailbox._held.clear()
+        self.assertEqual(mailbox.note_for_turn(), ("", []))
+
+    def test_a_mail_named_in_passing_still_gets_its_deadline_ping(self):
+        self.baseline()
+        self.important(2, "Sign by tomorrow")
+        self.verdicts["Sign by tomorrow"]["due"] = (dt.datetime.now() + dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M")
+        self.poll()
+        self.assertIn("Sign by tomorrow", mailbox.unread_note())
+        self.go(mailbox.check_nudges(now=time.time() + 3.5 * 3600, every=0))
+        self.assertEqual(len(self.pings), 2)
+        self.assertIn("due soon", self.pings[-1][0])
+
+    def test_a_named_mail_gets_no_still_unread_ping(self):
+        self.baseline()
+        self.important(2, "Contract to sign")
+        self.poll()
+        mailbox.unread_note()
+        self.go(mailbox.check_nudges(now=time.time() + 5 * 3600, every=0))
+        self.assertEqual(len(self.pings), 1)
+        self.assertEqual(mailbox.open_nudges(), [])
+
+    def test_a_still_unread_ping_counts_as_hearing_it(self):
+        self.baseline()
+        self.important(2, "Contract to sign")
+        self.poll()
+        self.go(mailbox.check_nudges(now=time.time() + 5 * 3600, every=0))
+        self.assertTrue(self.pings[-1][0].startswith("<b>Still unread</b>"))
+        self.assertEqual(mailbox.unread_note(), "")
+
+    def test_the_same_notice_sent_again_counts_as_heard(self):
+        self.baseline()
+        self.important(2, "Recruiter wants to talk", sender="messages@jobs.example", msgid="<a1@jobs.example>")
+        self.poll()
+        self.assertIn("Recruiter wants to talk", mailbox.unread_note())
+        self.important(3, "RE: recruiter  wants to talk!", sender="messages@jobs.example", msgid="<a2@jobs.example>")
+        self.important(4, "Invoice 124", sender="messages@jobs.example")
+        self.poll()
+        note = mailbox.unread_note()
+        self.assertIn("Invoice 124", note)
+        self.assertNotIn("recruiter", note.lower())
+
+    def test_the_same_subject_weeks_later_is_new_mail(self):
+        self.baseline()
+        self.important(2, "Your statement is ready", sender="bank@bank.example")
+        self.poll()
+        mailbox.unread_note()
+        self.important(3, "Your statement is ready", sender="bank@bank.example", msgid="<next@bank.example>")
+        self.poll()
+        self.assertEqual(mailbox.unread_note(), "")
+        later = time.time() + 30 * 86400
+        with mock.patch.object(mailbox.time, "time", return_value=later):
+            self.important(4, "Your statement is ready", sender="bank@bank.example", msgid="<later@bank.example>")
+            self.poll()
+            self.assertIn("statement", mailbox.unread_note(now=later))
+
+    def test_a_mail_without_id_or_subject_is_still_named_once(self):
+        self.baseline()
+        self.important(2, "2024", msgid=" ")
+        self.poll()
+        row = mailbox.query("SELECT * FROM mails WHERE subject = '2024'")[0]
+        self.assertEqual(mailack.fingerprint(row["sender"], row["subject"]), "")
+        self.assertIn("2024", mailbox.unread_note())
+        self.assertEqual(mailbox.unread_note(), "")
+
+    def test_a_new_invoice_number_is_new_mail(self):
+        self.baseline()
+        self.important(2, "Invoice 123", sender="bills@shop.example")
+        self.poll()
+        mailbox.unread_note()
+        self.important(3, "Invoice 124", sender="bills@shop.example")
+        self.poll()
+        self.assertIn("Invoice 124", mailbox.unread_note())
+
+    def test_marcus_acknowledges_by_number_by_words_or_all(self):
+        self.baseline()
+        self.important(2, "Recruiter wants to talk", sender="messages@jobs.example")
+        self.important(3, "Sign-in from a new device", sender="alerts@accounts.example")
+        self.important(4, "Return the key fob", sender="desk@office.example")
+        self.important(5, "Pay me back", sender="friend@example.com")
+        self.poll()
+        number = mailbox.query("SELECT id FROM mails WHERE subject = 'Return the key fob'")[0]["id"]
+        self.assertIn("Return the key fob", mail.call("mail_acknowledge", {"ids": [f"#{number}"]}))
+        said = mail.call("mail_acknowledge", {"description": "the jobs recruiter mail"})
+        self.assertIn("Recruiter", said)
+        self.assertNotIn("Sign-in", said)
+        self.assertTrue(mail.call("mail_acknowledge", {"description": "spaceship"}).startswith("Nothing matched"))
+        self.assertTrue(mail.call("mail_acknowledge", {"description": "recruiter"}).startswith("Already acknowledged"))
+        self.assertTrue(mail.call("mail_acknowledge", {"ids": ["\u00b2"]}).startswith("Nothing matched"))
+        note = mailbox.unread_note()
+        self.assertIn("Sign-in", note)
+        self.assertNotIn("Recruiter", note)
+        self.assertNotIn("key fob", note)
+        mail.call("mail_acknowledge", {"all": True})
+        self.reopen()
+        self.assertEqual(mailbox.unread_note(), "")
+        self.go(mailbox.check_nudges(now=time.time() + 5 * 3600, every=0))
+        self.assertEqual(mailbox.open_nudges(), [])
+        self.assertEqual(len(self.pings), 4)
+
+    def test_mail_acknowledged_before_it_was_named_is_never_named(self):
+        self.baseline()
+        self.important(2, "Pay me back", sender="friend@example.com")
+        self.poll()
+        mail.call("mail_acknowledge", {"description": "pay back"})
+        self.assertEqual(mailbox.unread_note(), "")
+
+    def test_the_first_start_counts_every_mail_that_already_pinged_as_heard(self):
+        self.baseline()
+        self.important(2, "Contract to sign")
+        self.important(3, "Return the key fob", sender="desk@office.example")
+        self.poll()
+        with mailack.conn():
+            mailack.conn().execute("DELETE FROM meta")
+        self.assertEqual(mailbox.unread_note(), "")
+        self.important(4, "A brand new mail")
+        self.poll()
+        self.assertIn("A brand new mail", mailbox.unread_note())
+
+    def test_pull_request_mail_is_never_surfaced(self):
+        self.baseline()
+        review = "X-GitHub-Sender: someone-else\nX-GitHub-Recipient: someone\nX-GitHub-Reason: review_requested\n"
+        self.inbox.add("gmail", 2, "notifications@github.com", "Re: [owner/repo] Fix the thing (PR #12)",
+                       extra=BULK + review, msgid="<owner/repo/pull/12/c1@github.com>")
+        self.inbox.add("gmail", 3, "notifications@github.com", "[owner/repo] Please review",
+                       extra=BULK + review, msgid="<owner/repo/pull/13@github.com>")
+        self.poll()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.pings, [])
+        self.assertEqual(mailbox.unread_note(), "")
+
+    def test_pull_request_mail_that_pinged_before_is_never_named(self):
+        self.baseline()
+        self.important(2, "Re: [owner/repo] Fix it (PR #12)", sender="notifications@github.com", extra=BULK)
+        with mock.patch.object(mailbox, "first_verdict", return_value=None):
+            self.poll()
+        self.assertEqual(len(mailbox.open_nudges()), 1)
+        self.assertEqual(mailbox.unread_note(), "")
+        self.go(mailbox.check_nudges(now=time.time() + 5 * 3600, every=0))
+        self.assertEqual(len(self.pings), 1)
+
+    def test_issue_mail_from_github_is_still_sorted(self):
+        self.assertFalse(mailbox.pull_request_mail("notifications@github.com", "[o/r] Sync broken (Issue #7)",
+                                                   "<o/r/issues/7@github.com>"))
+        self.assertTrue(mailbox.pull_request_mail("notifications@github.com", "[o/r] Merged", "<o/r/pull/7@github.com>"))
+        self.assertFalse(mailbox.pull_request_mail("anna@example.com", "My pull request idea"))
+
+
+class TestFingerprint(unittest.TestCase):
+    def test_reply_prefixes_case_and_punctuation_do_not_matter(self):
+        self.assertEqual(mailack.fingerprint("A@x.example", "Re: Fwd: Hello, there!"),
+                         mailack.fingerprint("a@x.example", "hello there"))
+
+    def test_numbers_and_senders_keep_mails_apart(self):
+        self.assertNotEqual(mailack.fingerprint("a@x.example", "Invoice 1"), mailack.fingerprint("a@x.example", "Invoice 2"))
+        self.assertNotEqual(mailack.fingerprint("a@x.example", "Hi"), mailack.fingerprint("b@x.example", "Hi"))
+
+    def test_a_subject_without_words_has_no_fingerprint(self):
+        self.assertEqual(mailack.fingerprint("a@x.example", "Re: 123"), "")
+        self.assertEqual(mailack.fingerprint("", "Hello"), "")
 
 
 class TestTrust(MailCase):
@@ -636,7 +833,7 @@ class TestApprovals(MailCase):
         self.assertEqual(self.pings[-1][1].options[0], ("Let it continue", "continue"))
 
     def test_the_brain_has_no_tool_that_decides(self):
-        self.assertEqual([tool["name"] for tool in mail.TOOLS], ["mail_recent", "mail_agent", "mail_approvals"])
+        self.assertEqual([tool["name"] for tool in mail.TOOLS], ["mail_recent", "mail_agent", "mail_acknowledge", "mail_approvals"])
         self.assertEqual(mail.WRITES, ())
 
 
