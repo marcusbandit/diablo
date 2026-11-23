@@ -1,5 +1,6 @@
 import pathlib
 import shutil
+import struct
 import subprocess
 import tempfile
 
@@ -9,7 +10,7 @@ from . import settings, usage
 
 CARTESIA_BASE = "https://api.cartesia.ai"
 
-def _cartesia(text, language="en"):
+def _cartesia(text, language="en", origin="voice note"):
     speed = float(settings.get("speech_rate") or 1.0) if language.startswith("en") else 1.0
     response = httpx.post(
         f"{CARTESIA_BASE}/tts/bytes",
@@ -24,7 +25,7 @@ def _cartesia(text, language="en"):
         },
         timeout=60,
     )
-    usage.record_speech(settings.get("tts_model") or "sonic-latest", text, ok=response.is_success, origin="voice note")
+    usage.record_speech(settings.get("tts_model") or "sonic-latest", text, ok=response.is_success, origin=origin)
     response.raise_for_status()
     return response.content
 
@@ -67,10 +68,33 @@ def _to_opus(wav_bytes):
         pathlib.Path(target_path).unlink(missing_ok=True)
 
 
-def speak(text, voice_note=False, language="en"):
+def whole_wav(audio):
+    """A wav with its real sizes. Cartesia streams one with placeholder sizes (0xFFFFFFFF) that
+    Android's player refuses; the fmt chunk and every byte after the data header are kept."""
+    if len(audio) < 12 or audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
+        return audio
+    fmt, at = None, 12
+    while at + 8 <= len(audio):
+        kind, size = audio[at:at + 4], struct.unpack("<I", audio[at + 4:at + 8])[0]
+        body = at + 8
+        if kind == b"fmt ":
+            fmt = audio[body:body + size]
+        elif kind == b"data":
+            if fmt is None:
+                return audio
+            data = audio[body:body + min(size, len(audio) - body)]
+            block = struct.unpack("<H", fmt[12:14])[0] if len(fmt) >= 14 else 2
+            data = data[:len(data) - len(data) % max(block, 1)]
+            head = b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data))
+            return b"RIFF" + struct.pack("<I", 4 + len(head) + len(data)) + b"WAVE" + head + data
+        at = body + size + (size & 1)
+    return audio
+
+
+def speak(text, voice_note=False, language="en", origin="voice note"):
     provider = settings.get("tts_provider")
     if provider == "cartesia":
-        audio = _cartesia(text, language)
+        audio = _cartesia(text, language, origin)
     elif provider == "openai":
         audio = _openai(text)
     else:

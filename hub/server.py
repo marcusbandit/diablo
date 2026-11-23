@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from . import deliver as delivery
-from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, newthread, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, usage, voicemerge, watch
+from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, newthread, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, tts, usage, voicemerge, watch
 from . import settings as app_settings
 from .config import get_config
 
@@ -357,6 +357,33 @@ async def stt_transcribe(request: Request, _: dict = Depends(require_token)):
     except stt.TranscriptionError as error:
         raise HTTPException(status_code=503, detail=str(error))
     return {"text": text, "language": language, "backend": backend}
+
+
+SPEECH_MAX_CHARS = 4000
+
+
+class SpeechIn(BaseModel):
+    text: str
+    language: str = "en"
+
+
+@app.post("/v1/speech")
+async def speech(body: SpeechIn, _: dict = Depends(require_token)):
+    """His reply in his own voice, the one the desk speaks with (tts_provider, tts_voice_id), as a wav.
+    The phone plays this instead of whatever voice Android would pick."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="empty text")
+    if len(text) > SPEECH_MAX_CHARS:
+        raise HTTPException(status_code=413, detail="text too long")
+    if app_settings.get("tts_provider") not in ("cartesia", "openai"):
+        raise HTTPException(status_code=503, detail="no voice set up")
+    try:
+        audio = await asyncio.to_thread(tts.speak, text, False, body.language or "en", "phone")
+    except Exception:
+        logger.exception("speech failed")
+        raise HTTPException(status_code=502, detail="the voice failed")
+    return Response(content=tts.whole_wav(audio), media_type="audio/wav")
 
 
 @app.get("/v1/desktop/release")

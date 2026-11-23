@@ -10,8 +10,9 @@ import android.view.WindowManager
 
 /**
  * Draw over other apps: when the session closes while he is still thinking or speaking, his face
- * and the card stay floating over whatever is in front until he is done, then a while longer,
- * the way he lingers on the desktop. Tapping him opens the session again, typing.
+ * and the card stay floating over whatever is in front until he is done, then the same beat the
+ * session gives a finished reply. A reply that waits on Marcus stays longer. Tapping him opens
+ * the session again, typing.
  */
 object Overlay {
   private const val LINGER_MS = 25_000L
@@ -20,7 +21,9 @@ object Overlay {
   private val gone = Runnable { remove() }
   private val follow: (Talk.Now) -> Unit = { now ->
     ui.removeCallbacks(gone)
-    if (now.phase == Talk.Phase.RESTING || now.phase == Talk.Phase.TROUBLE) ui.postDelayed(gone, LINGER_MS)
+    val resting = now.phase == Talk.Phase.RESTING || now.phase == Talk.Phase.TROUBLE
+    val wait = Talk.closeAfter(now) ?: if (resting) LINGER_MS else null
+    if (wait != null) ui.postDelayed(gone, wait)
   }
 
   fun allowed(context: Context) = Settings.canDrawOverlays(context)
@@ -35,6 +38,15 @@ object Overlay {
         remove()
         DiabloAssistService.reopen(type = true)
       }
+
+      override val besideCloses = true
+
+      override fun outside() {
+        ui.post {
+          Talk.quiet()
+          remove()
+        }
+      }
     })
     // A window only as tall as his pieces, at the bottom, so the rest of the screen stays the app's.
     val params = WindowManager.LayoutParams(
@@ -42,7 +54,7 @@ object Overlay {
       WindowManager.LayoutParams.WRAP_CONTENT,
       WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
       WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
       PixelFormat.TRANSLUCENT,
     ).apply {
       gravity = Gravity.BOTTOM

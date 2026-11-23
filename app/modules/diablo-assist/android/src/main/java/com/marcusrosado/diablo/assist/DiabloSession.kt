@@ -6,20 +6,50 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.service.voice.VoiceInteractionSession
+import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.Window
 import android.view.WindowManager
 import java.util.concurrent.Executors
 
 /**
  * What holding power opens: he floats over the app in front and listens at once. Android hands
  * the session that app's text and a screenshot, which go to the hub with the first line. Only
- * his own pieces take touches; the app underneath stays usable.
+ * his own pieces take touches; the app underneath stays usable. Once a command is answered he
+ * goes by himself after a beat to read it, unless the reply waits on Marcus or he is typing. A tap
+ * on the app underneath reaches that app and closes him.
  */
 class DiabloSession(context: Context) : VoiceInteractionSession(context), Floating.Host {
   private var floating: Floating? = null
   private var typeFirst = false
   private val encode = Executors.newSingleThreadExecutor()
+  private val ui = Handler(Looper.getMainLooper())
+  private val leave = Runnable {
+    pending = false
+    if (floating?.typing != true) hide()
+  }
+  /** The close timer is running. */
+  private var pending = false
+  private val closer: (Talk.Now) -> Unit = { now -> plan(now) }
+
+  /** A reply finished while the typing bar was open: closing the bar without sending lets him go. */
+  private var missed = false
+
+  private fun plan(now: Talk.Now) {
+    ui.removeCallbacks(leave)
+    val wait = Talk.closeAfter(now)
+    if (floating?.typing == true) {
+      missed = wait != null
+      return
+    }
+    missed = false
+    pending = wait != null
+    wait?.let { ui.postDelayed(leave, it) }
+  }
 
   override fun onCreate() {
     super.onCreate()
@@ -28,6 +58,20 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
       w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
       w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
       w.setDecorFitsSystemWindows(false)
+      // Only as tall as his pieces, at the bottom: a touch above reaches the app and closes him.
+      w.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
+      w.setGravity(Gravity.BOTTOM)
+      w.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+      val inner = w.callback ?: return@let
+      w.callback = object : Window.Callback by inner {
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+          if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+            outside()
+            return true
+          }
+          return inner.dispatchTouchEvent(event)
+        }
+      }
     }
   }
 
@@ -42,6 +86,7 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
     Overlay.hide(context)
     Talk.begin()
     typeFirst = args?.getBoolean(TYPE) == true
+    Talk.listen(closer)
     val view = floating ?: return
     if (typeFirst) {
       view.post { view.openTyping() }
@@ -64,8 +109,12 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
     super.onComputeInsets(outInsets)
     val view = floating ?: return
     outInsets.contentInsets.top = view.height
-    outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
-    view.touchable(outInsets.touchableRegion)
+    if (view.typing) {
+      outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_FRAME
+    } else {
+      outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
+      view.touchable(outInsets.touchableRegion)
+    }
   }
 
   override fun onBackPressed() {
@@ -74,15 +123,45 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
   }
 
   override fun onHide() {
+    Talk.unlisten(closer)
     floating?.closeTyping()
+    ui.removeCallbacks(leave)
+    pending = false
+    missed = false
     Talk.stopHearing()
     // A turn still running lingers in the overlay, when he may draw over apps.
     if (Talk.busy) Overlay.show(context)
     super.onHide()
   }
 
+  override fun outside() {
+    // Tapping him away means away: no reply read out later, no overlay coming back.
+    Talk.quiet()
+    hide()
+  }
+
   override fun typing(open: Boolean) {
+    // Typing needs the whole screen so the keyboard can lift the bar; a tap beside him then closes him.
+    // Taps on the keyboard land in another window, so watching for outside touches stops meanwhile.
+    window?.window?.let { w ->
+      w.setLayout(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        if (open) WindowManager.LayoutParams.MATCH_PARENT else WindowManager.LayoutParams.WRAP_CONTENT,
+      )
+      if (open) {
+        w.clearFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+      } else {
+        w.addFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+      }
+    }
     floating?.requestLayout()
+    if (open) {
+      if (pending) missed = true
+      pending = false
+      ui.removeCallbacks(leave)
+    } else if (missed) {
+      plan(Talk.now)
+    }
   }
 
   companion object {

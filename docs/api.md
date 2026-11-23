@@ -30,6 +30,11 @@ answers `{"text", "language", "backend"}`, transcribed the way voice notes are. 
 is a 503. Ears on a box without a GPU use it (`stt_via = "hub"`), and the desk's ears send a clip
 here with `X-Stt-Skip: local` when gvoice failed, so Groq transcribes it.
 
+`POST /v1/speech {"text", "language"}` with a token answers his reply as `audio/wav`, rendered with
+the voice the desk speaks with (`tts_provider`, `tts_voice_id`, `speech_rate`). The phone's
+assistant plays this, so it never speaks in a voice Android picks. No voice set up is a 503, the
+provider failing a 502, an empty text a 400 and over 4000 characters a 413.
+
 Spoken turns carry `host` in `POST /v1/chat` and `POST /v1/voice/control`, the box whose ears heard
 them. Left out or `banditbox`, the origin stays his desk; any other box is named in the origin, and the
 lock guard asks that box whether its screen is locked. `POST /v1/ears/report` carries `host` too:

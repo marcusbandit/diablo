@@ -29,7 +29,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "Diablo next",
   slug: "diablo-next",
-  version: "0.8.4",
+  version: "0.8.5",
   scheme: "diablo-next",
   orientation: "default",
   userInterfaceStyle: "dark",
@@ -37,7 +37,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   icon: "./assets/images/icon.png",
   android: {
     package: "com.marcusrosado.diablo.next",
-    versionCode: 16,
+    versionCode: 17,
     allowBackup: false,
     predictiveBackGestureEnabled: true,
     softwareKeyboardLayoutMode: "resize",

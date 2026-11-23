@@ -4,7 +4,11 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.MediaPlayer
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Bundle
@@ -13,27 +17,48 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.sqrt
 
 /**
  * One conversation with him on the phone, shared by the assistant session and the overlay so a
  * turn keeps going when the session closes. Voice first: a session opens listening, what he
- * hears goes to the hub with the screen, and the reply is shown and spoken.
+ * hears goes to the hub with the screen, and the reply is shown and spoken in his own voice, the
+ * one the hub renders for the desk, never a voice Android picks.
  */
 object Talk {
   enum class Phase { RESTING, LISTENING, THINKING, SPEAKING, TROUBLE }
 
-  data class Now(val phase: Phase, val heard: String, val reply: String)
+  /** asks: the reply waits on Marcus. spoken: he said it aloud, so it was heard, not only read. */
+  data class Now(val phase: Phase, val heard: String, val reply: String, val asks: Boolean = false, val spoken: Boolean = false)
+
+  private const val HEARD_MS = 2_500L
+  private const val READ_MS = 2_000L
+  private const val PER_CHAR_MS = 50L
+  private const val MAX_READ_MS = 10_000L
+  private const val TROUBLE_MS = 4_000L
+
+  /**
+   * How long a finished reply stays on screen before he goes, or null while he still has
+   * something to do or the reply waits on Marcus.
+   */
+  fun closeAfter(n: Now): Long? {
+    if (n.reply.isEmpty()) return null
+    val read = minOf(READ_MS + n.reply.length * PER_CHAR_MS, MAX_READ_MS)
+    return when (n.phase) {
+      Phase.RESTING -> if (n.asks) null else if (n.spoken) HEARD_MS else read
+      Phase.TROUBLE -> maxOf(read, TROUBLE_MS)
+      else -> null
+    }
+  }
 
   private val main = Handler(Looper.getMainLooper())
   private val work = Executors.newSingleThreadExecutor()
+  private val voice = Executors.newCachedThreadPool()
   private val listeners = LinkedHashSet<(Now) -> Unit>()
 
   var now = Now(Phase.RESTING, "", "")
@@ -48,8 +73,13 @@ object Talk {
   private var recognizer: SpeechRecognizer? = null
   private var recording: Thread? = null
   @Volatile private var stopRecording = false
-  private var tts: TextToSpeech? = null
-  private var ttsReady = false
+  private var player: MediaPlayer? = null
+  private var audio: AudioManager? = null
+  private var focus: AudioFocusRequest? = null
+  private val speech = AudioAttributes.Builder()
+    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+    .build()
 
   fun listen(fn: (Now) -> Unit) {
     listeners.add(fn)
@@ -156,6 +186,7 @@ object Talk {
   private fun throughHub(context: Context) {
     set(Now(Phase.LISTENING, "", ""))
     stopRecording = false
+    val mine = turn
     val thread = Thread {
       val wav = try {
         record()
@@ -175,7 +206,8 @@ object Talk {
         trouble(e)
         return@Thread
       }
-      if (text.isEmpty()) set(Now(Phase.RESTING, "", "")) else main.post { send(context, text) }
+      if (mine != turn) return@Thread
+      if (text.isEmpty()) set(Now(Phase.RESTING, "", "")) else main.post { if (mine == turn) send(context, text) }
     }
     recording = thread
     thread.start()
@@ -245,7 +277,6 @@ object Talk {
     val withScreen = if (screenSent) null else screen
     screenSent = true
     set(Now(Phase.THINKING, line, ""))
-    warmVoice(app)
     work.execute {
       val reply = try {
         HubLink.chat(app, line, withScreen)
@@ -254,7 +285,7 @@ object Talk {
         return@execute
       }
       if (mine != turn) return@execute
-      main.post { say(app, reply.ifBlank { "Done, sir." }) }
+      main.post { say(app, reply.text.ifBlank { "Done, sir." }, reply.asks, mine) }
     }
   }
 
@@ -263,42 +294,107 @@ object Talk {
     set(Now(Phase.TROUBLE, now.heard, why))
   }
 
-  private fun warmVoice(context: Context) {
-    if (tts != null) return
-    tts = TextToSpeech(context) { status ->
-      ttsReady = status == TextToSpeech.SUCCESS
-      if (ttsReady) tts?.setLanguage(Locale.UK)
+  /** Shows the reply at once and speaks it in the voice the hub renders; without it, he stays silent. */
+  private fun say(context: Context, reply: String, asks: Boolean, mine: Int) {
+    if (mine != turn) return
+    set(Now(Phase.SPEAKING, now.heard, reply, asks))
+    val done = { spoken: Boolean ->
+      main.post {
+        if (mine == turn && now.phase == Phase.SPEAKING && now.reply == reply) set(Now(Phase.RESTING, now.heard, reply, asks, spoken))
+      }
+      Unit
+    }
+    val words = spoken(plain(reply))
+    if (words.isEmpty()) {
+      done(false)
+      return
+    }
+    voice.execute {
+      if (mine != turn) return@execute
+      val file = try {
+        val wav = HubLink.speech(context, words)
+        if (mine != turn) return@execute
+        File(context.cacheDir, "diablo-reply.wav").apply { writeBytes(wav) }
+      } catch (e: Exception) {
+        null
+      }
+      main.post {
+        if (file == null || mine != turn || now.phase != Phase.SPEAKING) done(false) else play(context, file, done)
+      }
     }
   }
 
-  private fun say(context: Context, reply: String) {
-    set(Now(Phase.SPEAKING, now.heard, reply))
-    warmVoice(context)
-    val voice = tts
-    val spoken = plain(reply)
-    val done = { main.post { if (now.phase == Phase.SPEAKING && now.reply == reply) set(Now(Phase.RESTING, now.heard, reply)) } }
-    if (voice == null) {
-      done()
+  private fun play(context: Context, file: File, done: (Boolean) -> Unit) {
+    stopPlayer()
+    val manager = context.getSystemService(AudioManager::class.java)
+    val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+      .setAudioAttributes(speech)
+      .setOnAudioFocusChangeListener({ change ->
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) stopSpeaking()
+      }, main)
+      .build()
+    if (manager == null || manager.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+      done(false)
       return
     }
-    voice.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-      override fun onStart(utteranceId: String?) {}
-      override fun onDone(utteranceId: String?) { done() }
-      @Deprecated("Deprecated in Java")
-      override fun onError(utteranceId: String?) { done() }
-    })
-    // The engine may still be starting: speak once it is ready.
-    fun go(tries: Int) {
-      if (ttsReady) voice.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, "reply")
-      else if (tries > 0) main.postDelayed({ go(tries - 1) }, 150)
-      else done()
+    audio = manager
+    focus = request
+    val p = MediaPlayer()
+    player = p
+    val finish = { ok: Boolean ->
+      if (player === p) stopPlayer()
+      done(ok)
     }
-    go(20)
+    try {
+      p.setAudioAttributes(speech)
+      p.setDataSource(file.path)
+      p.setOnPreparedListener { if (player === p) it.start() }
+      p.setOnCompletionListener { finish(true) }
+      p.setOnErrorListener { _, _, _ ->
+        finish(false)
+        true
+      }
+      p.prepareAsync()
+    } catch (e: Exception) {
+      finish(false)
+    }
+  }
+
+  private fun stopPlayer() {
+    player?.let {
+      player = null
+      try {
+        it.stop()
+      } catch (_: IllegalStateException) {
+        // Never started: nothing to stop.
+      }
+      it.release()
+    }
+    focus?.let { audio?.abandonAudioFocusRequest(it) }
+    focus = null
+  }
+
+  /** He was sent away: whatever he was hearing, thinking or saying ends here, and a late reply stays unsaid. */
+  fun quiet() {
+    turn++
+    stopHearing()
+    stopSpeaking()
+    if (now.phase != Phase.RESTING) set(Now(Phase.RESTING, "", ""))
   }
 
   fun stopSpeaking() {
-    tts?.stop()
-    if (now.phase == Phase.SPEAKING) set(Now(Phase.RESTING, now.heard, now.reply))
+    stopPlayer()
+    if (now.phase == Phase.SPEAKING) set(now.copy(phase = Phase.RESTING))
+  }
+
+  private const val SPOKEN_MAX = 3800
+
+  /** The hub renders at most 4000 characters: a longer reply is said up to the last full sentence that fits. */
+  private fun spoken(words: String): String {
+    if (words.length <= SPOKEN_MAX) return words
+    val cut = words.substring(0, SPOKEN_MAX)
+    val end = maxOf(cut.lastIndexOf(". "), cut.lastIndexOf("? "), cut.lastIndexOf("! "), cut.lastIndexOf('\n'))
+    return if (end > SPOKEN_MAX / 2) cut.substring(0, end + 1).trim() else cut.substringBeforeLast(' ').trim()
   }
 
   /** Markdown and links read badly aloud. */
