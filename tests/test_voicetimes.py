@@ -172,6 +172,60 @@ class TestHubMarks(unittest.TestCase):
                                  "first_text_token_ms": 3000, "said_ms": 3250})
 
 
+class ControlProc:
+    """A claude process that answers every control request at once and keeps what it was sent."""
+
+    def __init__(self):
+        self.returncode = None
+        self.sent = []
+        self.stdin = self
+        self.stdout = self
+
+    def write(self, data):
+        self.sent.append(json.loads(data))
+
+    async def drain(self):
+        return None
+
+    async def readline(self):
+        asked = self.sent[-1]
+        return (json.dumps({"type": "control_response", "response": {
+            "subtype": "success", "request_id": asked["request_id"], "response": {}}}) + "\n").encode()
+
+
+class TestPrime(unittest.TestCase):
+    def session(self, model="model-big"):
+        session = brains.ClaudeSession("bench")
+        session.proc = ControlProc()
+        session.model = model
+        return session
+
+    def test_a_waiting_session_switches_to_the_spoken_model_and_back(self):
+        session = self.session()
+        self.assertTrue(asyncio.run(session.prime("model-small")))
+        asked = [m["request"] for m in session.proc.sent]
+        self.assertEqual(asked, [{"subtype": "set_model", "model": "model-small"},
+                                 {"subtype": "set_model", "model": "model-big"}])
+        self.assertEqual(session.model, "model-big")
+
+    def test_nothing_to_prime_on_the_same_model_a_busy_or_a_dead_session(self):
+        session = self.session("model-small")
+        self.assertFalse(asyncio.run(session.prime("model-small")))
+        busy = self.session()
+        busy.busy = True
+        self.assertFalse(asyncio.run(busy.prime("model-small")))
+        dead = self.session()
+        dead.proc.returncode = 0
+        self.assertFalse(asyncio.run(dead.prime("model-small")))
+        self.assertEqual(session.proc.sent + busy.proc.sent + dead.proc.sent, [])
+
+    def test_the_spoken_model_comes_from_the_route(self):
+        with mock.patch.object(brains.route, "spoken_brain", return_value=("model-small", "high")):
+            self.assertEqual(brains.spoken_model(), "model-small")
+        with mock.patch.object(brains.route, "spoken_brain", return_value=None):
+            self.assertEqual(brains.spoken_model(), "")
+
+
 class TestEarsReport(unittest.TestCase):
     def test_an_answered_hub_turn_is_reported_without_its_words(self):
         row = {"kind": "wake", "text": "secret words", "points": POINTS, "hub": HUB, "outcome": "answered by claude",

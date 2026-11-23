@@ -40,7 +40,7 @@ STAGES = ("speech_end", "transcript", "hub_in", "first_token", "first_text", "fi
 HUB_STAGES = {"first_token": "first_token_ms", "first_text": "first_text_token_ms"}
 EARS_POINTS = {"transcript": ("text",), "hub_in": ("hub_sent",), "first_sentence": ("first_sentence",),
                "tts_audio": ("ack_ready", "tts_ready"), "playback": ("first_audio",), "beat": ("beat_audio",)}
-HUB_KEPT = ("hub_start_ms", "picked_ms", "sent_ms", "first_token_ms", "first_text_token_ms", "said_ms", "brain_ms",
+HUB_KEPT = ("hub_start_ms", "guarded_ms", "picked_ms", "locked_ms", "context_ms", "warmed_ms", "sent_ms", "first_token_ms", "first_text_token_ms", "said_ms", "brain_ms",
             "jev_ms", "backend", "model", "effort", "tier", "tools")
 
 

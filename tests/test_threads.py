@@ -155,6 +155,26 @@ class TestPick(Case):
         self.assertLess(time.monotonic() - started, 1.5)
         self.assertIn("spoken", seen["prompt"])
 
+    def test_a_spoken_line_never_waits_on_haiku(self):
+        async def slow(self_, prompt):
+            await asyncio.sleep(5)
+            return "{}"
+
+        async def run():
+            started = time.monotonic()
+            result = await threads.pick("export the TTML lyrics", spoken=True)
+            waited = time.monotonic() - started
+            late = result.late
+            late.cancel()
+            return result, waited, late
+
+        with mock.patch.object(threads.Quick, "ask", slow):
+            result, waited, late = asyncio.run(run())
+        self.assertLess(waited, 0.5)
+        self.assertEqual(result.source, "fallback")
+        self.assertEqual(result.attach, [self.ttml])
+        self.assertIsNotNone(late)
+
     def test_off_and_standby_pick_nothing(self):
         db.set_setting("threads.enabled", "off")
         self.assertEqual(self.pick("export the TTML lyrics").source, "off")
@@ -336,6 +356,10 @@ class FakeSession:
     async def warm(self, *args, **kwargs):
         return True
 
+    async def prime(self, model):
+        self.primed = model
+        return True
+
 
 class TestLanes(unittest.TestCase):
     def run_lanes(self, steps, keep=0, cap=80000):
@@ -358,6 +382,11 @@ class TestLanes(unittest.TestCase):
         out, _ = self.run_lanes([("a", 50000), ("a", 52000), ("a", 54000)])
         self.assertEqual([seeded for _, seeded, _ in out], [True, False, False])
         self.assertEqual(len({sid for *_, sid in out}), 1)
+
+    def test_the_spare_waits_primed_for_the_spoken_model(self):
+        with mock.patch.object(brains.route, "spoken_brain", return_value=("model-small", "high")):
+            out, _ = self.run_lanes([("a", 50000)])
+        self.assertEqual(out[0][2].primed, "model-small")
 
     def test_a_switch_takes_the_spare_and_seeds(self):
         out, lanes = self.run_lanes([("a", 50000), ("b", 48000), ("a", 49000)])
