@@ -25,6 +25,7 @@ two meet at hub_in, so the network hop the request took is the only part counted
 import json
 import logging
 import statistics
+import threading
 import time
 from pathlib import Path
 
@@ -34,6 +35,8 @@ STATE = Path.home() / ".local" / "state" / "diablo"
 LOG_NAME = "voice-turns.jsonl"
 KEEP = 500
 SUMMARY_TURNS = 20
+MODEL_BACKENDS = ("claude", "api", "opencode")
+_writing = threading.Lock()
 
 STAGES = ("speech_end", "transcript", "hub_in", "first_token", "first_text", "first_sentence",
           "tts_audio", "playback", "beat")
@@ -75,8 +78,9 @@ def stages(points, hub=None):
         offset = _ms(hub.get(key))
         if sent is not None and offset is not None and sent + offset >= end:
             out[stage] = sent + offset - end
-    if "first_sentence" not in out and sent is not None and _ms(hub.get("said_ms")) is not None:
-        out["first_sentence"] = sent + _ms(hub["said_ms"]) - end
+    said = _ms(hub.get("said_ms"))
+    if "first_sentence" not in out and sent is not None and said is not None and sent + said >= end:
+        out["first_sentence"] = sent + said - end
     return {stage: out[stage] for stage in STAGES if stage in out}
 
 
@@ -102,12 +106,13 @@ def record(report, now=None):
 def _keep(row):
     path = log_path()
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a") as handle:
-            handle.write(json.dumps(row) + "\n")
-        lines = path.read_text().splitlines()
-        if len(lines) > KEEP + 100:
-            path.write_text("\n".join(lines[-KEEP:]) + "\n")
+        with _writing:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a") as handle:
+                handle.write(json.dumps(row) + "\n")
+            lines = path.read_text().splitlines()
+            if len(lines) > KEEP + 100:
+                path.write_text("\n".join(lines[-KEEP:]) + "\n")
     except OSError:
         logger.exception("could not keep the voice turn timing")
 
@@ -149,8 +154,9 @@ def summary(rows):
 
 
 def conversational(row):
-    """A turn that ran no tool."""
-    return (row.get("hub") or {}).get("tools") == 0
+    """A turn a model answered without running a tool; a direct light or desktop change is not one."""
+    hub = row.get("hub") or {}
+    return hub.get("tools") == 0 and hub.get("backend") in MODEL_BACKENDS
 
 
 def report(last=SUMMARY_TURNS):

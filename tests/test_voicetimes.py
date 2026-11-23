@@ -48,6 +48,10 @@ class TestStages(unittest.TestCase):
         points = {k: v for k, v in POINTS.items() if k != "first_sentence"}
         self.assertEqual(voicetimes.stages(points, HUB)["first_sentence"], 1210 + 3750)
 
+    def test_a_hub_sentence_before_the_end_of_speech_is_left_out(self):
+        points = {"speech_end": 4000, "text": 3000, "hub_sent": 3010, "first_audio": 6000}
+        self.assertNotIn("first_sentence", voicetimes.stages(points, {"said_ms": 500}))
+
     def test_no_end_of_speech_means_nothing_to_count(self):
         self.assertEqual(voicetimes.stages({"hub_sent": 10, "first_audio": 500}, HUB), {})
 
@@ -100,6 +104,11 @@ class TestSummary(StateCase):
         self.assertEqual(found["counted"], {"all": 20, "conversational": 10})
         self.assertEqual(found["conversational"]["playback"]["median_ms"], 2000)
         self.assertIn("p90", voicetimes.text(found))
+
+    def test_a_direct_change_is_not_a_conversational_turn(self):
+        self.assertTrue(voicetimes.conversational({"hub": {"backend": "claude", "tools": 0}}))
+        self.assertFalse(voicetimes.conversational({"hub": {"backend": "direct", "tools": 0}}))
+        self.assertFalse(voicetimes.conversational({"hub": {"backend": "claude", "tools": 2}}))
 
     def test_percentile_is_the_nearest_rank(self):
         self.assertEqual(voicetimes.percentile([5, 1, 3], 0.9), 5)
@@ -218,6 +227,17 @@ class TestPrime(unittest.TestCase):
         dead.proc.returncode = 0
         self.assertFalse(asyncio.run(dead.prime("model-small")))
         self.assertEqual(session.proc.sent + busy.proc.sent + dead.proc.sent, [])
+
+    def test_a_prime_that_fails_closes_the_process(self):
+        session = self.session()
+        session.proc.kill = mock.MagicMock()
+
+        async def broken(request):
+            raise TimeoutError()
+
+        with mock.patch.object(session, "control", side_effect=broken):
+            self.assertFalse(asyncio.run(session.prime("model-small")))
+        session.proc.kill.assert_called_once()
 
     def test_the_spoken_model_comes_from_the_route(self):
         with mock.patch.object(brains.route, "spoken_brain", return_value=("model-small", "high")):

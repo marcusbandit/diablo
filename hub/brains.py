@@ -477,7 +477,8 @@ class ClaudeSession:
             await self.control({"subtype": "set_model", "model": model})
             await self.control({"subtype": "set_model", "model": keep})
         except Exception as error:
-            logger.warning("could not prime %s for %s (%s)", self.conv, model, error)
+            logger.warning("could not prime %s for %s (%s), closing it", self.conv, model, error)
+            self.kill()
             return False
         return True
 
@@ -1482,7 +1483,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
         chosen = "api"
     picked = await picking if picking is not None else None
     if picked is not None:
-        pre["picked"] = time.time()
+        pre["picked"] = started + picked.ms / 1000 if picked.ms else time.time()
     if picked is not None and picked.attach:
         threads.attach_message(message_id, picked.attach)
     handover = take_handover(conv)
@@ -1537,6 +1538,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                 turn = await run_api(conv, text, origin)
                 turn.first_text, turn.first_text_at = failed.first_text, failed.first_text_at
                 turn.said, turn.first_said_at = failed.said, failed.first_said_at
+                turn.marks = {**failed.marks, **turn.marks}
                 turn.note = f"{chosen} failed ({failed.error[:160]}), the api brain answered instead"
     except BaseException:
         mail_heard(mail_ids, False)
