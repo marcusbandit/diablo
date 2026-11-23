@@ -311,6 +311,22 @@ def update_task(arguments, writer=None):
     links = {key: arguments[key] for key in ("pr", "issue", "thread") if arguments.get(key)}
     if links:
         fields["links"] = links
+    if arguments.get("question"):
+        options = arguments.get("options")
+        if not isinstance(options, list) or not 2 <= len(options) <= tasks.OPTIONS_MAX:
+            return "a question needs a list of two to four options"
+        if fields.get("state", "waiting") != "waiting":
+            return "a question goes on a waiting card; leave state out or give waiting"
+        ask = tasks.clean_ask({"question": arguments["question"], "options": options,
+                               "recommended": arguments.get("recommended")})
+        if not ask or len(ask["options"]) != len(options):
+            return "a question needs two to four options, each a short label"
+        fields["ask"] = ask
+        fields["state"] = "waiting"
+    known = db.get_task(task_id) if task_id else None
+    state = fields.get("state") or (known or {}).get("state")
+    if state == "waiting" and not fields.get("ask") and not (known or {}).get("ask"):
+        return "a waiting card needs the question it waits on: give question, options and recommended"
     if not task_id:
         fields.setdefault("kind", "partner")
         fields.setdefault("source", "tool")

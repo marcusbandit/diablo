@@ -58,6 +58,7 @@ DEFAULTS = {
     "workout.per_day": "3",
     "workout.window": "10:00-20:00",
     "workout.rest_day": "sun",
+    "tasks.waiting_bare_s": "3600",
 }
 
 

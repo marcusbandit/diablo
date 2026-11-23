@@ -232,6 +232,7 @@ class TaskIn(BaseModel):
     links: Optional[dict] = None
     source: Optional[str] = None
     kind_source: Optional[str] = None
+    ask: Optional[dict] = None
 
 
 class ChatIn_(BaseModel):

@@ -380,7 +380,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "update_task",
-            "description": "Create or update a task card for work that is not a watched T3 thread, like an errand that takes a while or a job on another machine. Marcus sees every card live in his apps, so the card is the report: never narrate the same thing in your reply. Without id it creates a card and answers its id; with id it updates that card. Watched T3 threads keep their own cards, do not make one for them.",
+            "description": "Create or update a task card for work that is not a watched T3 thread, like an errand that takes a while or a job on another machine. Marcus sees every card live in his apps, so the card is the report: never narrate the same thing in your reply. Without id it creates a card and answers its id; with id it updates that card. Watched T3 threads keep their own cards, do not make one for them. A card that waits on him carries its question and options; one left waiting with no question expires within the hour.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -394,6 +394,9 @@ TOOLS = [
                     "pr": {"type": "string", "description": "a pull request url"},
                     "issue": {"type": "string", "description": "an issue url"},
                     "thread": {"type": "string", "description": "a link that opens the work"},
+                    "question": {"type": "string", "description": "what you wait on him for, needed with state waiting; the apps show it with its options as buttons"},
+                    "options": {"type": "array", "description": "two to four short option labels for the question", "items": {"type": "string"}},
+                    "recommended": {"type": "string", "description": "the label of the option you recommend"},
                 },
             },
         },

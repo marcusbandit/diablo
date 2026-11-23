@@ -36,6 +36,19 @@ PRUNE_EVERY_S = 3600
 UNTRACKED_S = 6 * 3600
 UNWATCHED_STEP = "No longer watched"
 UNTRACKED_STEP = "No update in a while"
+EXPIRED_STEP = "Expired: nothing was asked"
+UNANSWERED_STEP = "Expired: no answer came"
+WAITING_BARE_S = 3600
+ASKED_KEPT_S = 12 * 3600
+ASK_KINDS = ("question", "approval")
+QUESTION_CHARS = 300
+HEADER_CHARS = 24
+LABEL_CHARS = 48
+DESCRIPTION_CHARS = 140
+OPTIONS_MAX = 4
+RECOMMENDED = re.compile(r"\s*\(recommended\)\s*$", re.IGNORECASE)
+APPROVAL_ASK = {"kind": "approval", "question": "It asks you to approve a step in T3"}
+REQUEST_ASK = {"kind": "question", "question": "It asks you something in T3"}
 
 _write = threading.Lock()
 _pruned = [0.0]
@@ -73,7 +86,68 @@ def public(task):
         "links": links,
         "result": task.get("result") or "",
         "source": task.get("source") or "tool",
+        "ask": task.get("ask") if task.get("state") == "waiting" and task.get("ask") else None,
     }
+
+
+def clean_ask(ask):
+    """A question as its card carries it, or None: kind, request id, header, the question, up to
+    OPTIONS_MAX options with a label, a description and whether it is the recommended one, whether
+    more than one may be picked, and how many more questions wait behind this one."""
+    if not isinstance(ask, dict):
+        return None
+    question = line(ask.get("question") or ask.get("prompt") or ask.get("text") or "", QUESTION_CHARS)
+    if not question:
+        return None
+    wanted = ask.get("recommended")
+    wanted_name = RECOMMENDED.sub("", wanted).strip().lower() if isinstance(wanted, str) else None
+    options, pick = [], None
+    for raw in ask.get("options") or ask.get("choices") or []:
+        if len(options) == OPTIONS_MAX:
+            break
+        if isinstance(raw, str):
+            raw = {"label": raw}
+        if not isinstance(raw, dict):
+            continue
+        full = str(raw.get("label") or raw.get("title") or raw.get("value") or "")
+        marked = bool(RECOMMENDED.search(full)) or raw.get("recommended") is True
+        full = " ".join(RECOMMENDED.sub("", full).split())
+        label = line(full, LABEL_CHARS)
+        if not label:
+            continue
+        if pick is None and (marked or (wanted_name and wanted_name == full.lower())):
+            pick = len(options)
+        options.append({"label": label, "description": line(raw.get("description") or "", DESCRIPTION_CHARS)})
+    if pick is None and isinstance(wanted, int) and not isinstance(wanted, bool) and 0 <= wanted < len(options):
+        pick = wanted
+    for index, option in enumerate(options):
+        option["recommended"] = index == pick
+    try:
+        more = max(0, int(ask.get("more") or 0))
+    except (TypeError, ValueError):
+        more = 0
+    return {
+        "kind": ask.get("kind") if ask.get("kind") in ASK_KINDS else "question",
+        "id": line(ask.get("id") or ask.get("requestId") or "", 120),
+        "header": line(ask.get("header") or "", HEADER_CHARS),
+        "question": question,
+        "options": options,
+        "multi": ask.get("multi") is True or ask.get("multiSelect") is True,
+        "more": more,
+    }
+
+
+def ask_line(ask):
+    """The question and its options in one line, the recommended one marked."""
+    if not ask:
+        return ""
+    labels = [o["label"] + (" (recommended)" if o.get("recommended") else "") for o in ask.get("options") or []]
+    text = ask["question"]
+    if labels:
+        text += " Options: " + "; ".join(labels) + "."
+    if ask.get("more"):
+        text += f" {ask['more']} more after this."
+    return text
 
 
 def clean(fields):
@@ -93,6 +167,8 @@ def clean(fields):
         out["machine"] = line(fields["machine"], 40)
     if fields.get("source"):
         out["source"] = line(fields["source"], 300)
+    if "ask" in fields:
+        out["ask"] = clean_ask(fields["ask"])
     links = fields.get("links")
     if isinstance(links, dict):
         kept = {}
@@ -133,7 +209,7 @@ def _save(task_id, fields, now=None):
     task = dict(before) if before else {
         "id": task_id, "title": "Untitled", "kind": "partner", "kind_source": "guess", "machine": "",
         "state": "working", "step": "", "started_at": now, "finished_at": None, "seen_at": None,
-        "updated_at": now, "links": blank_links(), "result": "", "source": "tool",
+        "updated_at": now, "links": blank_links(), "result": "", "source": "tool", "ask": None,
     }
     links = dict(task.get("links") or {})
     links.update(changes.pop("links", {}))
@@ -148,6 +224,8 @@ def _save(task_id, fields, now=None):
     for key in ("started_at", "finished_at"):
         if fields.get(key):
             task[key] = float(fields[key])
+    if task["state"] != "waiting":
+        task["ask"] = None
     if task["state"] in FINISHED and not task.get("finished_at"):
         task["finished_at"] = now
     if not task.get("started_at"):
@@ -229,7 +307,9 @@ def spoken_listing(state=None, now=None):
     rows = []
     for task in shown:
         parts = [f"{task['state']}: {task['title']}"]
-        if task["step"]:
+        if task["ask"]:
+            parts.append("asks: " + ask_line(task["ask"]))
+        elif task["step"]:
             parts.append(task["step"])
         elif task["state"] == "waiting":
             parts.append("waits on Marcus")
@@ -253,23 +333,49 @@ def prune(now=None):
 RUNNING = ("queued", "working")
 
 
+def bare_wait_s():
+    from . import settings
+    try:
+        return max(60.0, float(settings.get("tasks.waiting_bare_s") or WAITING_BARE_S))
+    except (TypeError, ValueError):
+        return float(WAITING_BARE_S)
+
+
 def sweep(now=None):
-    """Finishes the running cards nothing keeps up to date any more, so none stays working
-    forever: a T3 thread's card whose watch is closed, and a card made with update_task that has
-    had no update for UNTRACKED_S. A card waiting on Marcus is left as it is. Each card is read
-    again under the write lock, so one rewritten meanwhile (a new watch, a fresh update) stays.
-    Its finish time is its last update, so an old card does not show as just finished.
-    Returns the finished cards."""
+    """Finishes the cards nothing keeps true any more, so none stays working or waiting forever:
+    a T3 thread's card whose watch is closed, a card made with update_task that has had no update
+    for UNTRACKED_S, a card that has waited on Marcus with no question on it for bare_wait_s, and
+    an update_task card whose question has gone unanswered for ASKED_KEPT_S.
+    Each card is read again under the write lock, so one rewritten meanwhile (a new watch, a fresh
+    update) stays. A running card's finish time is its last update, so an old card does not show
+    as just finished; a waiting card that expires finishes now, so list_tasks reports it.
+    Returns the finished cards; the waiting ones that expired carry expired=True."""
     now = time.time() if now is None else now
+    bare = bare_wait_s()
     finished = []
-    for listed in db.list_tasks(RUNNING, limit=500):
+    for listed in db.list_tasks(RUNNING + ("waiting",), limit=500):
         with _write:
             task = db.get_task(listed["id"])
-            if not task or task.get("state") not in RUNNING or task.get("updated_at") != listed.get("updated_at"):
+            if not task or task.get("state") != listed.get("state") or task.get("updated_at") != listed.get("updated_at"):
                 continue
             last = float(task.get("updated_at") or now)
-            if str(task.get("source") or "").startswith("t3:"):
-                if db.watch_is_open(task["id"]):
+            from_t3 = str(task.get("source") or "").startswith("t3:")
+            watched = from_t3 and db.watch_is_open(task["id"])
+            if task["state"] == "waiting":
+                waited = taken({"started_at": last}, now)
+                if from_t3 and not watched:
+                    fields, expired = {"step": UNWATCHED_STEP, "result": "It waited on you when its watch closed"}, False
+                elif not task.get("ask") and now - last >= bare:
+                    fields, expired = {"step": EXPIRED_STEP, "result": f"Waited {waited} with no question on it"}, True
+                elif not from_t3 and now - last >= ASKED_KEPT_S:
+                    fields, expired = {"step": UNANSWERED_STEP, "result": f"Waited {waited} with no answer"}, True
+                else:
+                    continue
+                shown = _save(task["id"], dict(fields, state="done", finished_at=now), now)
+                finished.append(dict(shown, expired=expired))
+                continue
+            if from_t3:
+                if watched:
                     continue
                 step = UNWATCHED_STEP
             elif now - last >= UNTRACKED_S:
@@ -378,8 +484,53 @@ def kind_at_watch(env, thread_id, timeout=10):
     return (kind, "project") if kind else ("partner", "guess")
 
 
-def observe(watch, data, step=None):
-    """Bring a watched thread's task card up to date from a t3_thread_read answer. Returns the task."""
+def ask_of_request(request_id, body):
+    """The first question of a T3 pending request read with t3_pending_request, as a card ask."""
+    if isinstance(body, dict) and isinstance(body.get("request"), dict):
+        body = body["request"]
+    if not isinstance(body, dict):
+        return None
+    questions = body.get("questions")
+    questions = [q for q in questions if isinstance(q, dict)] if isinstance(questions, list) else [body]
+    if not questions:
+        return None
+    return clean_ask(dict(questions[0], id=request_id, kind="question", more=len(questions) - 1))
+
+
+_asks = {}
+
+
+def read_ask(env, thread, timeout=15):
+    """What a thread waiting on Marcus asks him. The pending requests are listed on every call and
+    a request is read once. A request that is not a question (an approval) or that cannot be read
+    still gets a question, so a waiting card never shows a bare line."""
+    from . import t3link
+
+    thread_id = thread.get("threadId") or thread.get("id") or ""
+    known = _asks.get(thread_id)
+    try:
+        listed = t3link.call_tool(env, "t3_pending_request", {"action": "list", "threadId": thread_id}, timeout)
+        ids = [str(i) for i in (listed or {}).get("requestIds") or []] if isinstance(listed, dict) else []
+        if known and known[0] == tuple(ids):
+            return known[1]
+        if ids:
+            body = t3link.call_tool(env, "t3_pending_request", {"action": "read", "threadId": thread_id, "requestId": ids[0]}, timeout)
+            ask = ask_of_request(ids[0], body) or clean_ask(dict(REQUEST_ASK, id=ids[0]))
+            ask["more"] += len(ids) - 1
+        else:
+            ask = clean_ask(APPROVAL_ASK)
+    except Exception as error:
+        logger.info("pending requests of %s on %s not readable: %s", thread_id, env, error)
+        return (known[1] if known else None) or clean_ask(REQUEST_ASK)
+    if len(_asks) > 200:
+        _asks.clear()
+    _asks[thread_id] = (tuple(ids), ask)
+    return ask
+
+
+def observe(watch, data, step=None, ask=None):
+    """Bring a watched thread's task card up to date from a t3_thread_read answer, with what it
+    asks when it waits on Marcus (read here when not given). Returns the task."""
     from .t3threads import newest_pr, open_link
     from .watch import parse_time
 
@@ -404,6 +555,8 @@ def observe(watch, data, step=None):
     pending = int(thread.get("pendingRequestCount") or 0)
     if state == "waiting":
         fields["step"] = f"Waits on {pending} request{'s' if pending != 1 else ''} from you" if pending else "Waits on you"
+        if ask or pending:
+            fields["ask"] = ask or read_ask(watch.get("env"), dict(thread, threadId=watch["thread_id"]))
     elif fixed:
         fields["step"] = fixed
     elif step:

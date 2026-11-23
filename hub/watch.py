@@ -30,9 +30,12 @@ def judge(watch, data):
     pending = int(thread.get("pendingRequestCount") or 0)
     if pending and watch["state"] != "asking":
         return "asking", f"it waits on {pending} pending request{'s' if pending != 1 else ''} (an approval or a question)"
-    if not pending and watch["state"] == "asking" and thread.get("activeRunId"):
+    from .t3threads import waits_on_itself
+
+    busy = bool(thread.get("activeRunId")) or str(thread.get("status") or "") in ACTIVE or waits_on_itself(thread)
+    if not pending and watch["state"] == "asking" and busy:
         return "open", None
-    if thread.get("activeRunId") or not runs:
+    if busy or not runs:
         return None, None
     latest = runs[0]
     status = str(latest.get("status") or thread.get("status") or "")
@@ -66,10 +69,11 @@ TAIL = 8
 TAIL_PAGES = 3
 
 
-def event_text(watch, what, state="done"):
+def event_text(watch, what, state="done", ask=None):
     title = watch["title"] or "untitled"
+    asked = f" It asks: {tasks.ask_line(ask)}" if state == "waiting" and ask else ""
     return (
-        f"[t3 event] The thread \"{title}\" ({watch['thread_id']}) on {watch['env']}: {what}. "
+        f"[t3 event] The thread \"{title}\" ({watch['thread_id']}) on {watch['env']}: {what}.{asked} "
         f"Its task card already shows this to Marcus. {ASKS.get(state, ASKS['done'])}"
     )
 
@@ -109,7 +113,11 @@ async def check_once(deliver):
         await _check_watches(deliver)
     finally:
         try:
-            await asyncio.to_thread(tasks.sweep)
+            for card in await asyncio.to_thread(tasks.sweep):
+                if card.get("expired"):
+                    logger.warning("waiting task card %s (%s) expired: %s, %s", card["id"], card["title"], card["step"], card["result"])
+                elif card.get("result"):
+                    logger.info("task card %s (%s) finished: %s, %s", card["id"], card["title"], card["step"], card["result"])
         except Exception:
             logger.exception("task sweep failed")
 
@@ -144,7 +152,8 @@ async def _check_watches(deliver):
             card = "stopped"
         logger.info("t3 event for %s: %s", watch["thread_id"], what)
         try:
-            turn = await brains.ask(watch["conv"] or brains.MAIN, event_text(watch, what, card), origin="t3 watcher", machine=True)
+            turn = await brains.ask(watch["conv"] or brains.MAIN, event_text(watch, what, card, (task or {}).get("ask")),
+                                    origin="t3 watcher", machine=True)
         except Exception:
             logger.exception("event turn failed")
             continue
