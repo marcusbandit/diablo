@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from . import deliver as delivery
-from . import agent, autoship, brains, busy, character, db, devices, events, files, jev, llm, hue, lockguard, modules, newthread, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, tts, usage, voicemerge, watch
+from . import agent, autoship, brains, busy, character, choices, db, devices, events, files, jev, llm, hue, lockguard, modules, newthread, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, tts, usage, voicemerge, watch
 from . import settings as app_settings
 from .config import get_config
 
@@ -1620,6 +1620,7 @@ async def screen_marks(body: MarksIn, caller: dict = Depends(require_token)):
     marks = pointing.clean_payload(body.model_dump())
     if isinstance(marks, str):
         raise HTTPException(status_code=400, detail=marks)
+    choices.replaced(marks.get("show") or "")
     publish({"kind": "screen", "marks": marks})
     return {"ok": True, "marks": len(marks.get("marks") or [])}
 
@@ -1852,6 +1853,8 @@ async def on_startup():
         asyncio.create_task(standby.run(MAIN_SOURCES))
         logger.warning("standby hub for %s: no Telegram bot, no T3 watchers", standby.primary_url())
         return
+    if choices.on_question not in questions.listeners:
+        questions.listeners.append(choices.on_question)
     threads.busy = lambda: brains.any_busy() or selfrestart.ears_view()["state"] in EARS_BUSY or bool(selfrestart.ears_elsewhere(busy=EARS_BUSY))
     asyncio.create_task(threads.migrate())
     asyncio.create_task(watch.keep_links())

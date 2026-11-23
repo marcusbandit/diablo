@@ -566,7 +566,8 @@ ASK_TOOL = {
     "description": (
         "Ask Marcus one question with two to four choices and wait for his pick, the way a form does, instead of "
         "asking in prose. Use it when a choice is genuinely his. The hub shows it as buttons in his apps and a "
-        "keyboard on Telegram and reads it aloud on a spoken turn; his answer comes back as a new turn "
+        "keyboard on Telegram and reads it aloud on a spoken turn, and on a turn from his desk also draws the options "
+        "on his screen as cards, one per option, the recommended one marked; his answer comes back as a new turn "
         "[answer to question <id>: <label>]. One question at a time: a new one replaces any still open. After "
         "calling it, end your turn with at most one short line."
     ),

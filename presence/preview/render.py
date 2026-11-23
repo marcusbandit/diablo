@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCENES = ["orb-listening", "orb-thinking", "orb-speaking", "act-speaking", "act-surprised", "act-sorry", "act-delighted", "moons-0", "moons-1", "moons-3", "moons-9", "card-below", "card-above", "card-right-edge",
           "two-cards", "card-long-reply", "panel-settings", "panel-voice", "panel-training", "panel-now", "panel-tasks", "panel-tasks-calm", "panel-tasks-empty", "panel-list", "panel-list-desk", "panel-list-wide", "panel-list-long", "panel-history", "panel-history-search",
-          "marks-all", "marks-spotlight", "marks-steps", "diagram-early", "diagram-last"]
+          "marks-all", "marks-spotlight", "marks-steps", "diagram-early", "diagram-last", "choices-early", "choices-all", "choices-four"]
 EARS = {"panel-settings": "trained", "panel-voice": "trained", "panel-training": "speech", "panel-now": "trained"}
 PORT = 18758
 HUB_PORT = 18755
@@ -47,6 +47,27 @@ def diagram_beats(screen=(1920, 1080)):
     return json.dumps([pointing.clean_payload(beat) for beat in beats])
 
 
+def choice_beats(scene, screen=(1920, 1080)):
+    """The sample question's cards as the hub would send them; choices-four adds a fourth option."""
+    sys.path.insert(0, str(ROOT))
+    from hub import choices, pointing
+
+    question = dict(choices.SAMPLE)
+    if scene == "choices-four":
+        question["options"] = question["options"] + [{"label": "Put it off a week", "description": "Gives the slides more time"}]
+        question["recommended"] = 1
+    beats = choices.plan(question, {"x": 0, "y": 0, "w": screen[0], "h": screen[1]}, show="preview")
+    return json.dumps([pointing.clean_payload(beat) for beat in beats])
+
+
+def beats_for(scene):
+    if scene.startswith("diagram"):
+        return diagram_beats()
+    if scene.startswith("choices"):
+        return choice_beats(scene)
+    return "[]"
+
+
 def render(scene, out):
     code = (
         "import sys\n"
@@ -62,7 +83,7 @@ def render(scene, out):
         "sys.exit(3 if bad else code)\n"
     )
     argv = [sys.executable, "-c", code, "--", scene, str(out), str(ROOT / "assets/faces"), f"http://127.0.0.1:{PORT}",
-            f"http://127.0.0.1:{HUB_PORT}", diagram_beats() if scene.startswith("diagram") else "[]"]
+            f"http://127.0.0.1:{HUB_PORT}", beats_for(scene)]
     # The rhi backend, or the MultiEffect that tints his face draws nothing offscreen. A machine
     # with no GPU (CI) sets PRESENCE_SOFTWARE=1: everything draws, the face just goes untinted.
     backend = "software" if os.environ.get("PRESENCE_SOFTWARE") else "rhi"
