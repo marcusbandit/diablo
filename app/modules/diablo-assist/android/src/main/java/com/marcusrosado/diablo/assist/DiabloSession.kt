@@ -28,7 +28,12 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
   private var typeFirst = false
   private val encode = Executors.newSingleThreadExecutor()
   private val ui = Handler(Looper.getMainLooper())
-  private val leave = Runnable { if (floating?.typing != true) hide() }
+  private val leave = Runnable {
+    pending = false
+    if (floating?.typing != true) hide()
+  }
+  /** The close timer is running. */
+  private var pending = false
   private val closer: (Talk.Now) -> Unit = { now -> plan(now) }
 
   /** A reply finished while the typing bar was open: closing the bar without sending lets him go. */
@@ -42,6 +47,7 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
       return
     }
     missed = false
+    pending = wait != null
     wait?.let { ui.postDelayed(leave, it) }
   }
 
@@ -60,7 +66,7 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
       w.callback = object : Window.Callback by inner {
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
           if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
-            hide()
+            outside()
             return true
           }
           return inner.dispatchTouchEvent(event)
@@ -120,6 +126,7 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
     Talk.unlisten(closer)
     floating?.closeTyping()
     ui.removeCallbacks(leave)
+    pending = false
     missed = false
     Talk.stopHearing()
     // A turn still running lingers in the overlay, when he may draw over apps.
@@ -128,6 +135,8 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
   }
 
   override fun outside() {
+    // Tapping him away means away: no reply read out later, no overlay coming back.
+    Talk.quiet()
     hide()
   }
 
@@ -147,6 +156,8 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
     }
     floating?.requestLayout()
     if (open) {
+      if (pending) missed = true
+      pending = false
       ui.removeCallbacks(leave)
     } else if (missed) {
       plan(Talk.now)

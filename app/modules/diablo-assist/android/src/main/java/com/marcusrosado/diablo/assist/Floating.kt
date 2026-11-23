@@ -49,6 +49,8 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
     fun wantsTyping() {}
     /** A touch landed beside him: outside the window, where the app underneath gets it too, or beside the typing bar. */
     fun outside() {}
+    /** The window is wider than his pieces and a tap on the empty part of it closes him too. */
+    val besideCloses: Boolean get() = false
   }
 
   private val ui = Handler(Looper.getMainLooper())
@@ -197,7 +199,7 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
   }
 
   override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-    val beside = typingOpen && ev.actionMasked == MotionEvent.ACTION_DOWN && !onPiece(ev.rawX.toInt(), ev.rawY.toInt())
+    val beside = (typingOpen || host.besideCloses) && ev.actionMasked == MotionEvent.ACTION_DOWN && !onPiece(ev.rawX.toInt(), ev.rawY.toInt())
     if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE || beside) {
       host.outside()
       return true

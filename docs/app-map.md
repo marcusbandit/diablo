@@ -28,7 +28,7 @@ Everything else is a room.
 | Settings | Hubs, devices, notifications, about. | The den |
 | Onboarding | First launch: what he does for you, then pairing. Every step has Later. | First launch, Settings |
 | Assistant setup | His ears, the assistant role, drawing over apps: each shown, opened in Android's own page, checked on return. | Once, the first time the hub knows the phone; the den's "Hold power for Diablo" line |
-| Over any app | Holding power: his face floats in glass over the app in front, listens first, reads that screen, answers in a card and aloud in his own voice from the hub. Tap his face or the T to type. Once a command is answered he goes by himself after a beat; a reply that asks something stays until Marcus answers or closes it. Back, or a tap beside him, closes him; the tap still reaches the app. Lingers over apps while he finishes. Pictures: `docs/app/design/assist.html`. | Holding power, the corner swipe |
+| Over any app | Holding power: his face floats in glass over the app in front, listens first, reads that screen, answers in a card and aloud in his own voice from the hub. Tap his face or the T to type. Once a command is answered he goes by himself after a beat; a reply that asks something stays until Marcus answers or closes it. Back, or a tap beside him, closes him and quiets him; the tap still reaches the app unless the typing bar is open. Lingers over apps while he finishes. Pictures: `docs/app/design/assist.html`. | Holding power, the corner swipe |
 
 ## Rooms
 

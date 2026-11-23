@@ -39,8 +39,13 @@ object Overlay {
         DiabloAssistService.reopen(type = true)
       }
 
+      override val besideCloses = true
+
       override fun outside() {
-        ui.post { remove() }
+        ui.post {
+          Talk.quiet()
+          remove()
+        }
       }
     })
     // A window only as tall as his pieces, at the bottom, so the rest of the screen stays the app's.

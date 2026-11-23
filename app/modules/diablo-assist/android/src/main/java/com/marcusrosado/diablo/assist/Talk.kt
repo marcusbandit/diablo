@@ -58,7 +58,7 @@ object Talk {
 
   private val main = Handler(Looper.getMainLooper())
   private val work = Executors.newSingleThreadExecutor()
-  private val voice = Executors.newSingleThreadExecutor()
+  private val voice = Executors.newCachedThreadPool()
   private val listeners = LinkedHashSet<(Now) -> Unit>()
 
   var now = Now(Phase.RESTING, "", "")
@@ -186,6 +186,7 @@ object Talk {
   private fun throughHub(context: Context) {
     set(Now(Phase.LISTENING, "", ""))
     stopRecording = false
+    val mine = turn
     val thread = Thread {
       val wav = try {
         record()
@@ -205,7 +206,8 @@ object Talk {
         trouble(e)
         return@Thread
       }
-      if (text.isEmpty()) set(Now(Phase.RESTING, "", "")) else main.post { send(context, text) }
+      if (mine != turn) return@Thread
+      if (text.isEmpty()) set(Now(Phase.RESTING, "", "")) else main.post { if (mine == turn) send(context, text) }
     }
     recording = thread
     thread.start()
@@ -325,7 +327,12 @@ object Talk {
   private fun play(context: Context, file: File, done: (Boolean) -> Unit) {
     stopPlayer()
     val manager = context.getSystemService(AudioManager::class.java)
-    val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK).setAudioAttributes(speech).build()
+    val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+      .setAudioAttributes(speech)
+      .setOnAudioFocusChangeListener({ change ->
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) stopSpeaking()
+      }, main)
+      .build()
     if (manager == null || manager.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
       done(false)
       return
@@ -365,6 +372,14 @@ object Talk {
     }
     focus?.let { audio?.abandonAudioFocusRequest(it) }
     focus = null
+  }
+
+  /** He was sent away: whatever he was hearing, thinking or saying ends here, and a late reply stays unsaid. */
+  fun quiet() {
+    turn++
+    stopHearing()
+    stopSpeaking()
+    if (now.phase != Phase.RESTING) set(Now(Phase.RESTING, "", ""))
   }
 
   fun stopSpeaking() {

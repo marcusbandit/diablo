@@ -30,14 +30,13 @@ def _cartesia(text, language="en", origin="voice note"):
     return response.content
 
 
-def _openai(text, origin="voice note"):
+def _openai(text):
     response = httpx.post(
         "https://api.openai.com/v1/audio/speech",
         headers={"Authorization": f"Bearer {settings.get('tts_api_key')}"},
         json={"model": "tts-1", "input": text, "voice": "onyx", "response_format": "wav"},
         timeout=60,
     )
-    usage.record_speech("tts-1", text, ok=response.is_success, origin=origin)
     response.raise_for_status()
     return response.content
 
@@ -84,7 +83,8 @@ def whole_wav(audio):
             if fmt is None:
                 return audio
             data = audio[body:body + min(size, len(audio) - body)]
-            data = data[:len(data) - len(data) % 2]
+            block = struct.unpack("<H", fmt[12:14])[0] if len(fmt) >= 14 else 2
+            data = data[:len(data) - len(data) % max(block, 1)]
             head = b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data))
             return b"RIFF" + struct.pack("<I", 4 + len(head) + len(data)) + b"WAVE" + head + data
         at = body + size + (size & 1)
@@ -96,7 +96,7 @@ def speak(text, voice_note=False, language="en", origin="voice note"):
     if provider == "cartesia":
         audio = _cartesia(text, language, origin)
     elif provider == "openai":
-        audio = _openai(text, origin)
+        audio = _openai(text)
     else:
         raise RuntimeError("no tts provider configured")
     if voice_note:
