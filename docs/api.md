@@ -421,7 +421,7 @@ ones waiting on Marcus at the top. `{"threads": [...], "now": <hub time>}`, each
 | --- | --- |
 | `id`, `env` | the thread id, and the machine it runs on (`nemurenai`, `banditbox`, `diablo-pi`, `kangaeru`) |
 | `title` | the thread's title in T3 |
-| `state` | `working`, `waiting` (an approval or a question for Marcus), `finished`, `failed`, `stopped`, or `unknown` when it has never been read |
+| `state` | `working`, `waiting` (an approval or a question for Marcus), `finished`, `failed`, `stopped`, or `unknown` when it has never been read. A thread T3 calls waiting while it waits on its own background jobs or child threads, with no request for Marcus, is `working` |
 | `pending` | how many requests wait on Marcus |
 | `started`, `finished` | unix times of the latest run; `finished` is null while it runs |
 | `pr` | `{number, url, state}` of the newest pull request, or null |
@@ -472,6 +472,7 @@ deleted.
 | `links` | `{pr, pr_number, pr_state, issue, thread}`, every key present: empty strings or null when there is none. `thread` is a `t3code://` link that opens the thread in the T3 Code app |
 | `result` | the outcome in one line, mostly for partner work, or empty |
 | `source` | `t3:<thread id>` for a watched thread, `tool` for an `update_task` card |
+| `ask` | on a `waiting` card, what it waits on Marcus for, else null: `{kind, id, header, question, options, multi, more}`. `kind` is `question` or `approval`; `id` is the T3 request id, or empty; `options` holds up to four `{label, description, recommended}`, at most one recommended; `more` counts the questions waiting behind this one, so a client shows them one at a time. An approval has no options: it is answered in T3 |
 
 `POST /v1/tasks/{id}/seen` marks a card seen, which also moves `updated_at`, and answers `{"task": ...}`, or 404. Marking a card that is already seen changes nothing and sends no event. `POST /v1/tasks`
 creates or updates a card with any of the fields above plus `id`; it takes the hub token only, and
@@ -480,6 +481,14 @@ once.
 
 A finished self-improvement thread only updates its card: Diablo gets a turn, and the app a
 message, only when a watched thread waits on Marcus, fails, or is partner work that finished.
+
+A waiting card never outlives its reason. A T3 card follows its thread while the watch is open and
+goes back to working, done, failed or `Stopped` the poll after the thread does. After every poll
+the hub finishes a waiting T3 card whose watch has closed, and a waiting card with no `ask` that
+has not changed for `tasks.waiting_bare_s` seconds (default 3600) is done with the step
+`Expired: nothing was asked`. Both finish at that moment, so `list_tasks` still reports them for 12
+hours, and the hub logs each one. `update_task` refuses `waiting` without a question and two to four
+options.
 
 ## Block kinds
 

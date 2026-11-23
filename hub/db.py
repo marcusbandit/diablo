@@ -635,11 +635,16 @@ TASK_COLS = ("id", "title", "kind", "kind_source", "machine", "state", "step", "
 
 
 def _task_row(row):
+    """The question a waiting card carries rides in the links json as "ask", so it needs no column."""
     task = dict(row)
     try:
         task["links"] = json.loads(task["links"]) if task["links"] else {}
     except ValueError:
         task["links"] = {}
+    if not isinstance(task["links"], dict):
+        task["links"] = {}
+    ask = task["links"].pop("ask", None)
+    task["ask"] = ask if isinstance(ask, dict) else None
     return task
 
 
@@ -651,7 +656,10 @@ def get_task(task_id):
 
 def put_task(task):
     row = dict(task)
-    row["links"] = json.dumps(row.get("links") or {}, sort_keys=True)
+    links = {k: v for k, v in (row.get("links") or {}).items() if k != "ask"}
+    if row.get("ask"):
+        links["ask"] = row["ask"]
+    row["links"] = json.dumps(links, sort_keys=True)
     values = [row.get(col) for col in TASK_COLS]
     with _lock:
         _conn.execute(

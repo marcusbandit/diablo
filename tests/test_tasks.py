@@ -62,7 +62,8 @@ class TestSave(DbCase):
     def test_create_fills_every_field_and_publishes(self):
         task = tasks.save("t1", {"title": "Timer app", "kind": "partner", "machine": "nemurenai"}, now=100)
         self.assertEqual(set(task), {"id", "title", "kind", "machine", "state", "step", "started_at", "finished_at",
-                                     "seen_at", "updated_at", "links", "result", "source"})
+                                     "seen_at", "updated_at", "links", "result", "source", "ask"})
+        self.assertIsNone(task["ask"])
         self.assertEqual(task["links"], {"pr": "", "pr_number": None, "pr_state": "", "issue": "", "thread": ""})
         self.assertEqual((task["state"], task["started_at"], task["finished_at"]), ("working", 100, None))
         self.assertEqual(self.task_events(), [{"kind": "task", "change": "created", "task": task}])
@@ -149,7 +150,9 @@ class TestThreadState(unittest.TestCase):
     def test_table(self):
         rows = [
             ({"pendingRequestCount": 1, "activeRunId": "r"}, {"status": "running"}, ("waiting", None)),
-            ({"status": "waiting"}, {"status": "completed"}, ("waiting", None)),
+            ({"status": "waiting"}, {"status": "completed"}, ("working", None)),
+            ({"status": "waiting", "pendingRequestCount": 0, "pendingBackgroundTasks": [{"taskId": "b1"}]},
+             {"status": "completed"}, ("working", None)),
             ({"activeRunId": "r"}, {"status": "running"}, ("working", None)),
             ({}, {"status": "starting"}, ("working", None)),
             ({}, {"status": "queued"}, ("queued", None)),
@@ -207,17 +210,24 @@ class TestKind(unittest.TestCase):
         self.assertEqual(tasks.kind_of_project({}), "partner")
 
 
-def fake_t3(project, run_status="completed", active=None, completed=None, pending=0, prs=None, items=None, started=None):
+def fake_t3(project, run_status="completed", active=None, completed=None, pending=0, prs=None, items=None, started=None,
+            status=None, requests=None, background=None):
     def call(env, name, arguments, timeout=60):
         if name == "t3_project_read":
             return project
+        if name == "t3_pending_request":
+            if arguments["action"] == "list":
+                return {"requestIds": list(requests or {})}
+            return requests[arguments["requestId"]]
         if arguments.get("view") == "activity":
             if callable(items):
                 return items(arguments)
             return {"thread": {}, "items": items or []}
         return {"thread": {"threadId": arguments["threadId"], "projectId": project["id"], "title": "T3 title",
                            "activeRunId": active, "pendingRequestCount": pending, "itemCount": 40,
-                           "pullRequests": prs or [], "link": f"<t3-thread://v2/env-1/{arguments['threadId']}>"},
+                           "pullRequests": prs or [], "link": f"<t3-thread://v2/env-1/{arguments['threadId']}>",
+                           "status": status or run_status, "pendingBackgroundTasks": background or [],
+                           "updatedAt": iso(time.time())},
                 "recentRuns": [{"status": run_status, "startedAt": iso(started or time.time() - 60),
                                 "completedAt": iso(completed) if completed else None}]}
     return call
@@ -308,6 +318,50 @@ class TestWatchLoop(DbCase):
         self.assertIn("stopped before it finished", ask.call_args.args[1])
         self.assertEqual(db.get_task("t13")["step"], "Stopped")
 
+    def test_a_thread_waiting_on_its_own_background_job_stays_watched_and_working(self):
+        db.add_watch("t30", "box-a", "Timer", "main")
+        tasks.save("t30", {"title": "Timer", "state": "working", "source": "t3:t30"})
+        delivered, ask = self.run_loop(fake_t3(ANIBEAM, completed=time.time() + 5, status="waiting",
+                                               background=[{"taskId": "b1", "kind": "command", "awaited": True}]))
+        self.assertEqual(delivered, [])
+        ask.assert_not_called()
+        self.assertTrue(db.watch_is_open("t30"))
+        self.assertEqual(db.get_task("t30")["state"], "working")
+
+    def test_a_waiting_card_carries_its_question_with_the_pick_marked(self):
+        db.add_watch("t31", "box-b", "Venue", "main")
+        request = {"requestId": "r1", "questions": [
+            {"header": "Venue", "question": "Which room for the demo?", "multiSelect": False, "options": [
+                {"label": "Hall A (Recommended)", "description": "Seats forty"},
+                {"label": "Hall B", "description": "Has a projector"},
+                {"label": "Online", "description": "No room at all"}]},
+            {"header": "Time", "question": "When?", "options": [{"label": "Noon"}, {"label": "Evening"}]}]}
+        delivered, ask = self.run_loop(fake_t3(ANIBEAM, run_status="running", active="r", pending=1, requests={"r1": request}))
+        card = tasks.public(db.get_task("t31"))
+        self.assertEqual(card["state"], "waiting")
+        self.assertEqual(card["ask"]["question"], "Which room for the demo?")
+        self.assertEqual([(o["label"], o["recommended"]) for o in card["ask"]["options"]],
+                         [("Hall A", True), ("Hall B", False), ("Online", False)])
+        self.assertEqual((card["ask"]["id"], card["ask"]["header"], card["ask"]["more"]), ("r1", "Venue", 1))
+        prompt = ask.call_args.args[1]
+        self.assertIn("Which room for the demo? Options: Hall A (recommended); Hall B; Online.", prompt)
+
+    def test_an_approval_still_says_what_it_waits_on(self):
+        db.add_watch("t32", "box-b", "Deploy", "main")
+        self.run_loop(fake_t3(ANIBEAM, run_status="running", active="r", pending=1, requests={}))
+        card = tasks.public(db.get_task("t32"))
+        self.assertEqual((card["ask"]["kind"], card["ask"]["question"]), ("approval", tasks.APPROVAL_ASK["question"]))
+
+    def test_the_question_leaves_with_the_wait(self):
+        db.add_watch("t33", "box-b", "Asks", "main")
+        request = {"questions": [{"question": "Go?", "options": [{"label": "Yes"}, {"label": "No"}]}]}
+        self.run_loop(fake_t3(ANIBEAM, run_status="running", active="r", pending=1, requests={"r2": request}))
+        self.assertIsNotNone(db.get_task("t33")["ask"])
+        self.run_loop(fake_t3(ANIBEAM, run_status="running", active="r"))
+        card = db.get_task("t33")
+        self.assertEqual((card["state"], card["ask"]), ("working", None))
+        self.assertNotIn("ask", card["links"])
+
     def test_an_explicit_kind_beats_the_project(self):
         db.add_watch("t6", "nemurenai", "For himself", "main")
         tasks.save("t6", {"title": "For himself", "kind": "self_improvement"})
@@ -378,11 +432,48 @@ class TestSweep(DbCase):
         self.assertTrue(db.watch_is_open("t25"))
         self.assertEqual(db.get_task("t25")["state"], "working")
 
-    def test_a_waiting_card_is_left_waiting(self):
-        tasks.save("t26", {"title": "Asks", "state": "waiting", "source": "t3:t26"})
-        tasks.save("task-c", {"title": "Asks too", "state": "waiting"}, now=time.time() - tasks.UNTRACKED_S - 1)
-        self.assertEqual(tasks.sweep(), [])
-        self.assertEqual({db.get_task(i)["state"] for i in ("t26", "task-c")}, {"waiting"})
+    def test_a_waiting_thread_card_without_an_open_watch_is_finished_now(self):
+        now = time.time()
+        db.add_watch("t26", "box-a", "Asks", "main")
+        tasks.save("t26", {"title": "Asks", "state": "waiting", "source": "t3:t26"}, now=now - 20 * 3600)
+        db.set_watch("t26", "done")
+        finished = tasks.sweep(now=now)
+        self.assertEqual([(t["id"], t["expired"]) for t in finished], [("t26", True)])
+        card = db.get_task("t26")
+        self.assertEqual((card["state"], card["step"], card["finished_at"]), ("done", tasks.UNWATCHED_STEP, now))
+        self.assertIn("t26", [t["id"] for t in tasks.listing(now=now)])
+        self.assertEqual(tasks.listing(["waiting"], now=now), [])
+
+    def test_a_waiting_card_with_its_question_stays(self):
+        now = time.time()
+        db.add_watch("t27", "box-a", "Asks", "main")
+        ask = {"question": "Ship it tonight?", "options": ["Yes (Recommended)", "Tomorrow"]}
+        tasks.save("t27", {"title": "Asks", "state": "waiting", "source": "t3:t27", "ask": ask}, now=now - 5 * 3600)
+        tasks.save("task-c", {"title": "Pick a venue", "state": "waiting", "ask": ask}, now=now - 5 * 3600)
+        self.assertEqual(tasks.sweep(now=now), [])
+        self.assertEqual({db.get_task(i)["state"] for i in ("t27", "task-c")}, {"waiting"})
+
+    def test_a_waiting_card_with_no_question_expires_and_is_reported(self):
+        now = time.time()
+        tasks.save("task-e", {"title": "Bare", "state": "waiting"}, now=now - tasks.WAITING_BARE_S - 1)
+        tasks.save("task-f", {"title": "Fresh", "state": "waiting"}, now=now - 60)
+        finished = tasks.sweep(now=now)
+        self.assertEqual([t["id"] for t in finished], ["task-e"])
+        card = db.get_task("task-e")
+        self.assertEqual((card["state"], card["step"]), ("done", tasks.EXPIRED_STEP))
+        self.assertIn("with no question on it", card["result"])
+        self.assertEqual(db.get_task("task-f")["state"], "waiting")
+        with self.assertLogs("hub.watch", "WARNING") as logged, \
+                mock.patch.object(tasks, "sweep", return_value=finished), \
+                mock.patch.object(watch.brains, "ask", mock.AsyncMock()):
+            asyncio.run(watch.check_once(mock.AsyncMock()))
+        self.assertIn("task-e", logged.output[0])
+
+    def test_the_bare_wait_follows_the_setting(self):
+        db.set_setting("tasks.waiting_bare_s", "120")
+        now = time.time()
+        tasks.save("task-g", {"title": "Bare", "state": "waiting"}, now=now - 121)
+        self.assertEqual([t["id"] for t in tasks.sweep(now=now)], ["task-g"])
 
     def test_an_old_card_keeps_its_old_finish_time(self):
         long_ago = time.time() - 5 * 86400
@@ -500,6 +591,14 @@ class TestApi(DbCase):
         self.assertEqual(self.task_events()[-1]["change"], "seen")
         self.assertEqual(self.client.post("/v1/tasks/nope/seen", headers=HEADERS).status_code, 404)
 
+    def test_the_hub_api_keeps_the_ask(self):
+        body = self.client.post("/v1/tasks", headers=HEADERS, json={
+            "id": "t41", "title": "Venue", "state": "waiting",
+            "ask": {"question": "Which hall?", "options": ["Hall A", "Hall B"]}}).json()
+        self.assertEqual(body["task"]["ask"]["question"], "Which hall?")
+        listed = self.client.get("/v1/tasks", headers=HEADERS).json()["tasks"]
+        self.assertEqual(listed[0]["ask"]["options"][1]["label"], "Hall B")
+
     def test_a_device_reads_but_only_the_hub_token_writes(self):
         device = devices.admit("phone")[0]
         mine = {"X-Diablo-Token": device}
@@ -510,6 +609,60 @@ class TestApi(DbCase):
         self.assertEqual(made.json()["task"]["title"], "Hub write")
         self.assertEqual(self.client.post("/v1/tasks", headers=HEADERS, json={"title": "x", "state": "bad"}).status_code, 400)
         self.assertEqual(self.client.get("/v1/tasks").status_code, 403)
+
+
+class TestAsk(DbCase):
+    def test_the_recommended_pick_comes_from_the_label_or_the_name(self):
+        marked = tasks.clean_ask({"question": "Q?", "options": ["A", "B (Recommended)"]})
+        self.assertEqual([(o["label"], o["recommended"]) for o in marked["options"]], [("A", False), ("B", True)])
+        named = tasks.clean_ask({"question": "Q?", "options": ["A", "B"], "recommended": "a"})
+        self.assertEqual([o["recommended"] for o in named["options"]], [True, False])
+        numbered = tasks.clean_ask({"question": "Q?", "options": ["A", "B"], "recommended": 1})
+        self.assertEqual([o["recommended"] for o in numbered["options"]], [False, True])
+        plain = tasks.clean_ask({"question": "Q?", "options": ["A", "B"]})
+        self.assertEqual([o["recommended"] for o in plain["options"]], [False, False])
+
+    def test_bad_asks_are_dropped_and_long_ones_trimmed(self):
+        self.assertIsNone(tasks.clean_ask(None))
+        self.assertIsNone(tasks.clean_ask({"options": ["A"]}))
+        ask = tasks.clean_ask({"question": "Q" * 900, "options": [f"Option {i}" for i in range(9)], "more": "x"})
+        self.assertEqual((len(ask["question"]), len(ask["options"]), ask["more"]), (tasks.QUESTION_CHARS, tasks.OPTIONS_MAX, 0))
+
+    def test_the_ask_round_trips_and_shows_only_while_waiting(self):
+        ask = {"question": "Ship it?", "options": ["Yes", "No"]}
+        tasks.save("t40", {"title": "Ship", "state": "waiting", "ask": ask})
+        stored = db.get_task("t40")
+        self.assertEqual(stored["ask"]["question"], "Ship it?")
+        self.assertNotIn("ask", tasks.public(stored)["links"])
+        tasks.save("t40", {"state": "done"})
+        self.assertIsNone(tasks.public(db.get_task("t40"))["ask"])
+        self.assertIsNone(db.get_task("t40")["ask"])
+
+    def test_list_tasks_reads_the_question_out(self):
+        tasks.save("q2", {"title": "Book a table", "state": "waiting",
+                          "ask": {"question": "Where?", "options": ["Here (Recommended)", "There"]}})
+        self.assertIn("waiting: Book a table, asks: Where? Options: Here (recommended); There.", agent._call_tool("list_tasks", {}))
+
+
+class TestUpdateTaskAsks(DbCase):
+    def setUp(self):
+        super().setUp()
+        hub_down = mock.patch.object(mcp_server.httpx, "post", side_effect=mcp_server.httpx.ConnectError("down"))
+        hub_down.start()
+        self.addCleanup(hub_down.stop)
+
+    def test_a_waiting_card_needs_its_question(self):
+        self.assertIn("needs the question", mcp_server.call("update_task", {"title": "Venue", "state": "waiting"}))
+        self.assertEqual(db.list_tasks(), [])
+        self.assertIn("two to four options", mcp_server.call("update_task", {"title": "Venue", "state": "waiting",
+                                                                             "question": "Which?", "options": ["A"]}))
+
+    def test_a_waiting_card_with_its_question_is_saved(self):
+        reply = mcp_server.call("update_task", {"title": "Venue", "state": "waiting", "question": "Which hall?",
+                                                "options": ["Hall A", "Hall B"], "recommended": "Hall B"})
+        card = tasks.public(db.get_task(reply.split()[1]))
+        self.assertEqual([(o["label"], o["recommended"]) for o in card["ask"]["options"]], [("Hall A", False), ("Hall B", True)])
+        self.assertIn("saved: waiting", mcp_server.call("update_task", {"id": card["id"], "step": "Asked by voice"}))
 
 
 class TestCharter(unittest.TestCase):

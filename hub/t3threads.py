@@ -39,13 +39,13 @@ def open_link(thread):
 
 
 def state_of(thread, run):
+    """waiting only while the thread holds a request for Marcus. T3 also says waiting while a thread
+    waits on its own background jobs or child threads; that is still work, not a question."""
     if int(thread.get("pendingRequestCount") or 0):
         return "waiting"
     status = str((run or {}).get("status") or thread.get("status") or "")
-    if thread.get("activeRunId") or status in WORKING:
+    if thread.get("activeRunId") or status in WORKING or str(thread.get("status") or "") == "waiting":
         return "working"
-    if str(thread.get("status") or "") == "waiting":
-        return "waiting"
     if status == "failed":
         return "failed"
     if status in STOPPED:
