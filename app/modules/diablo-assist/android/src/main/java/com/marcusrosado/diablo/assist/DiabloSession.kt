@@ -9,7 +9,10 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.service.voice.VoiceInteractionSession
+import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.Window
 import android.view.WindowManager
 import java.util.concurrent.Executors
 
@@ -17,7 +20,8 @@ import java.util.concurrent.Executors
  * What holding power opens: he floats over the app in front and listens at once. Android hands
  * the session that app's text and a screenshot, which go to the hub with the first line. Only
  * his own pieces take touches; the app underneath stays usable. Once a command is answered he
- * goes by himself after a beat to read it, unless the reply waits on Marcus or he is typing.
+ * goes by himself after a beat to read it, unless the reply waits on Marcus or he is typing. A tap
+ * on the app underneath reaches that app and closes him.
  */
 class DiabloSession(context: Context) : VoiceInteractionSession(context), Floating.Host {
   private var floating: Floating? = null
@@ -48,6 +52,20 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
       w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
       w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
       w.setDecorFitsSystemWindows(false)
+      // Only as tall as his pieces, at the bottom: a touch above reaches the app and closes him.
+      w.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
+      w.setGravity(Gravity.BOTTOM)
+      w.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+      val inner = w.callback ?: return@let
+      w.callback = object : Window.Callback by inner {
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+          if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+            hide()
+            return true
+          }
+          return inner.dispatchTouchEvent(event)
+        }
+      }
     }
   }
 
@@ -85,8 +103,12 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
     super.onComputeInsets(outInsets)
     val view = floating ?: return
     outInsets.contentInsets.top = view.height
-    outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
-    view.touchable(outInsets.touchableRegion)
+    if (view.typing) {
+      outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_FRAME
+    } else {
+      outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
+      view.touchable(outInsets.touchableRegion)
+    }
   }
 
   override fun onBackPressed() {
@@ -105,7 +127,24 @@ class DiabloSession(context: Context) : VoiceInteractionSession(context), Floati
     super.onHide()
   }
 
+  override fun outside() {
+    hide()
+  }
+
   override fun typing(open: Boolean) {
+    // Typing needs the whole screen so the keyboard can lift the bar; a tap beside him then closes him.
+    // Taps on the keyboard land in another window, so watching for outside touches stops meanwhile.
+    window?.window?.let { w ->
+      w.setLayout(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        if (open) WindowManager.LayoutParams.MATCH_PARENT else WindowManager.LayoutParams.WRAP_CONTENT,
+      )
+      if (open) {
+        w.clearFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+      } else {
+        w.addFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+      }
+    }
     floating?.requestLayout()
     if (open) {
       ui.removeCallbacks(leave)

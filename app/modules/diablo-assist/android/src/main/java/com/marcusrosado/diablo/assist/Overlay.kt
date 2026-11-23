@@ -38,6 +38,10 @@ object Overlay {
         remove()
         DiabloAssistService.reopen(type = true)
       }
+
+      override fun outside() {
+        ui.post { remove() }
+      }
     })
     // A window only as tall as his pieces, at the bottom, so the rest of the screen stays the app's.
     val params = WindowManager.LayoutParams(
@@ -45,7 +49,7 @@ object Overlay {
       WindowManager.LayoutParams.WRAP_CONTENT,
       WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
       WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
       PixelFormat.TRANSLUCENT,
     ).apply {
       gravity = Gravity.BOTTOM

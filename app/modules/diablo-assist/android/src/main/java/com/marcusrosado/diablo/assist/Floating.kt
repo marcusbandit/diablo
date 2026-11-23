@@ -17,6 +17,7 @@ import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -46,6 +47,8 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
     fun typing(open: Boolean) {}
     /** His face or the T was tapped where typing is not possible here. */
     fun wantsTyping() {}
+    /** A touch landed beside him: outside the window, where the app underneath gets it too, or beside the typing bar. */
+    fun outside() {}
   }
 
   private val ui = Handler(Looper.getMainLooper())
@@ -193,6 +196,15 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
     super.onDetachedFromWindow()
   }
 
+  override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+    val beside = typingOpen && ev.actionMasked == MotionEvent.ACTION_DOWN && !onPiece(ev.rawX.toInt(), ev.rawY.toInt())
+    if (ev.actionMasked == MotionEvent.ACTION_OUTSIDE || beside) {
+      host.outside()
+      return true
+    }
+    return super.dispatchTouchEvent(ev)
+  }
+
   override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
     super.onSizeChanged(w, h, oldw, oldh)
     // Wide (unfolded, or on its side): he keeps to the right half, beside the app, never across the hinge.
@@ -264,6 +276,16 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
       view.setImageResource(id)
       view.setColorFilter(INK, PorterDuff.Mode.SRC_IN)
     }
+  }
+
+  private fun onPiece(x: Int, y: Int): Boolean {
+    val at = IntArray(2)
+    for (view in arrayOf(card, orb, tx, bar)) {
+      if (!view.isShown || view.width == 0) continue
+      view.getLocationOnScreen(at)
+      if (x >= at[0] && x < at[0] + view.width && y >= at[1] && y < at[1] + view.height) return true
+    }
+    return false
   }
 
   /** Where he is on screen, in window pixels: only these parts take touches. */
