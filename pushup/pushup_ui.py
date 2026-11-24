@@ -162,6 +162,9 @@ BUBBLE_MARGIN = 24  # the rest bubble's gap from the screen's corner
 # Where he last dragged the rest bubble, as its gaps from the top and right edges, so the next rest
 # opens there instead of back over whatever he moved it off.
 REST_SPOT = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "pushup" / "rest_spot.json"
+# Where he last dragged the set card, as its offset from the middle of the screen.
+CARD_SPOT = REST_SPOT.with_name("card_spot.json")
+CARD_SPOT_MAX = 8000  # twice this is a margin, and GTK takes margins up to 32767
 
 
 def css(accent, tier):
@@ -615,7 +618,7 @@ class PainMap(Gtk.DrawingArea):
     def hover(self, spot):
         if spot != self.hot:
             self.hot = spot
-            self.set_cursor_from_name("pointer" if spot else None)
+            self.set_cursor_from_name("pointer" if spot else "default")
             self.queue_draw()
             self.changed()
 
@@ -1270,7 +1273,7 @@ def load_rest_spot():
     try:
         spot = json.loads(REST_SPOT.read_text())
         return max(0, int(spot["top"])), max(0, int(spot["right"]))
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
         return BUBBLE_MARGIN, BUBBLE_MARGIN
 
 
@@ -1282,6 +1285,32 @@ def save_rest_spot(top, right):
         tmp.replace(REST_SPOT)
     except OSError:
         pass
+
+
+def load_card_spot():
+    try:
+        spot = json.loads(CARD_SPOT.read_text())
+        return (min(max(-CARD_SPOT_MAX, int(spot["x"])), CARD_SPOT_MAX),
+                min(max(-CARD_SPOT_MAX, int(spot["y"])), CARD_SPOT_MAX))
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
+        return 0, 0
+
+
+def save_card_spot(x, y):
+    try:
+        CARD_SPOT.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CARD_SPOT.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"x": int(x), "y": int(y)}))
+        tmp.replace(CARD_SPOT)
+    except OSError:
+        pass
+
+
+def clamp_offset(off, size, area):
+    """Keeps a centred card whole on its screen: its offset from the middle, never past an edge."""
+    (x, y), (w, h), (aw, ah) = off, size, area
+    mx, my = max(0, (aw - w) // 2), max(0, (ah - h) // 2)
+    return min(max(-mx, x), mx), min(max(-my, y), my)
 
 
 def usable_area(width, height, reserved):
@@ -1338,6 +1367,8 @@ class Card:
         self.reserved = (0, 0, 0, 0)
         self.spot = None
         self.drag = None
+        self.card_off = load_card_spot() if self.reminder_mode else None
+        self.card_drag = None
         self.app = Gtk.Application(application_id=None, flags=0)
         self.app.connect("activate", self.build)
 
@@ -1348,6 +1379,8 @@ class Card:
     def finish(self, result):
         if self.drag and self.drag["moved"] != self.drag["spot"]:
             save_rest_spot(*self.drag["moved"])  # the rest ran out mid-drag: keep where he had it
+        if self.card_drag and self.card_drag["moved"] != self.card_drag["off"]:
+            save_card_spot(*self.card_drag["moved"])
         self.result = result
         self.app.quit()
 
@@ -1397,7 +1430,10 @@ class Card:
         column.set_halign(Gtk.Align.CENTER)
         column.set_valign(Gtk.Align.CENTER)
         column.set_hexpand(True)
+        self.column = column
         self.backdrop.append(column)
+        if self.card_off is not None:
+            self.make_card_draggable()
         win.set_child(self.backdrop)
 
         keys = Gtk.EventControllerKey()
@@ -1432,6 +1468,9 @@ class Card:
         win.present()
         if self.resting and self.spot is not None:
             GLib.timeout_add(50, lambda: self.settle_spot(win))
+        if self.card_off is not None:
+            self.card_size = None
+            self.column.add_tick_callback(self.settle_card)
 
     def place(self, win):
         if LayerShell and "Wayland" in type(Gdk.Display.get_default()).__name__ and LayerShell.is_supported():
@@ -1674,6 +1713,92 @@ class Card:
             self.spot = self.drag["moved"]
             save_rest_spot(*self.spot)
         self.drag = None
+
+    # The set card moves the same way, inside its full-screen layer: the drag listens on the
+    # backdrop, which never moves, so its offsets stay true while the card slides under them.
+    # A press on anything that takes presses of its own (a button, the slider, the hold to pass,
+    # the body map) belongs to that control and never starts a drag.
+
+    def make_card_draggable(self):
+        drag = Gtk.GestureDrag()
+        drag.set_button(Gdk.BUTTON_PRIMARY)
+        drag.connect("drag-begin", self.card_drag_begin)
+        drag.connect("drag-update", self.card_drag_update)
+        drag.connect("drag-end", lambda *_: self.card_drag_end())
+        self.backdrop.add_controller(drag)
+        self.card.set_cursor_from_name("grab")
+
+    @staticmethod
+    def takes_presses(widget):
+        if isinstance(widget, Gtk.Button):
+            return True
+        ctls = widget.observe_controllers()
+        return any(isinstance(ctls.get_item(i), Gtk.Gesture) for i in range(ctls.get_n_items()))
+
+    def card_drag_begin(self, gesture, x, y):
+        hit = self.backdrop.pick(x, y, Gtk.PickFlags.DEFAULT)
+        while hit is not None and hit is not self.card:
+            if self.takes_presses(hit):
+                hit = None
+                break
+            hit = hit.get_parent()
+        if hit is None or self.closing:
+            gesture.set_state(Gtk.EventSequenceState.DENIED)
+            return
+        self.card_drag = {"off": self.card_off, "moved": self.card_off, "live": False}
+
+    def card_drag_update(self, gesture, dx, dy):
+        d = self.card_drag
+        if not d:
+            return
+        if not d["live"]:
+            if math.hypot(dx, dy) < 4:
+                return
+            d["live"] = True
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            self.card.set_cursor_from_name("grabbing")
+        off = self.keep_card_on_screen((d["off"][0] + round(dx), d["off"][1] + round(dy)))
+        if off != d["moved"]:
+            d["moved"] = off
+            self.shift_card(off)
+
+    def card_drag_end(self):
+        self.card.set_cursor_from_name("default" if self.closing else "grab")
+        d, self.card_drag = self.card_drag, None
+        if d and d["moved"] != d["off"]:
+            self.card_off = d["moved"]
+            save_card_spot(*self.card_off)
+
+    def keep_card_on_screen(self, off):
+        """Bounded by the screen, not the backdrop: in a plain window the margins would grow that."""
+        col = self.column
+        if self.monitor:
+            geo = self.monitor.get_geometry()
+            area = (geo.width, geo.height)
+        else:
+            area = (self.backdrop.get_width(), self.backdrop.get_height())
+        return clamp_offset(off, (col.get_width(), col.get_height()), area)
+
+    def shift_card(self, off):
+        """Centred, then pushed off the middle: a margin on one side moves a centred child half as far."""
+        x, y = off
+        self.column.set_margin_start(max(0, 2 * x))
+        self.column.set_margin_end(max(0, -2 * x))
+        self.column.set_margin_top(max(0, 2 * y))
+        self.column.set_margin_bottom(max(0, -2 * y))
+
+    def settle_card(self, col, _clock):
+        """Pulls the card back whole onto the screen whenever its size changes: the first frame, a
+        spot saved on a bigger screen, the body map that "It hurts" opens. A drag clamps itself."""
+        size = (col.get_width(), col.get_height())
+        if size[0] <= 1 or size == self.card_size or self.card_drag:
+            return GLib.SOURCE_CONTINUE
+        self.card_size = size
+        off = self.keep_card_on_screen(self.card_off)
+        if off != self.card_off or col.get_margin_start() + col.get_margin_end() + col.get_margin_top() + col.get_margin_bottom() == 0:
+            self.card_off = off
+            self.shift_card(off)
+        return GLib.SOURCE_CONTINUE
 
     # The reminder: the number, the slider, log. Nothing else while you should be on the floor.
 
@@ -2221,6 +2346,8 @@ class Card:
         if self.closing:
             return
         self.closing = close
+        if close and self.card_off is not None:
+            self.card.set_cursor_from_name("default")  # the ending screen holds still
         self.key_released = False
         self.hold_stop()
         if self.timer:
