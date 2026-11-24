@@ -21,12 +21,14 @@ Precedence in route():
 
 A line said aloud at his desk then always runs on route.spoken (default
 "claude-haiku-5-5|xhigh", off keeps the tier's model), so the spoken answer stays
-fast. When he asked aloud for the big brain ("think hard", "use opus"), that model
+fast. A quick one, chit-chat or a short question (quick()), runs on route.spoken_quick
+(default "claude-haiku-5-5|medium") instead: xhigh thought for seconds before "it is
+four degrees". When he asked aloud for the big brain ("think hard", "use opus"), that model
 gets the work as a background run instead (brains.run_deep), and its outcome lands
 in the app. Typed lines, voice notes and machine turns keep the tier's model.
 
 Settings: route.enabled (on/off; off still computes and logs the decision),
-route.max_tier, route.min_tier, route.tier.<tier>, route.spoken. Log: ~/.local/state/diablo/route.jsonl.
+route.max_tier, route.min_tier, route.tier.<tier>, route.spoken, route.spoken_quick. Log: ~/.local/state/diablo/route.jsonl.
 Trees are data at the bottom of this file; `python -m hub.route show` prints them,
 `python -m hub.route classify TEXT` explains one line.
 """
@@ -43,13 +45,16 @@ from . import settings
 
 TIERS = ("fast", "voice", "standard", "chat", "deep")
 TIER_DEFAULTS = {
-    "fast": "claude-haiku-5-5|low",
-    "voice": "claude-sonnet-5-5|low",
-    "standard": "claude-sonnet-5-5|medium",
+    "fast": "claude-haiku-5-5|medium",
+    "voice": "claude-opus-5-5|medium",
+    "standard": "claude-opus-5-5|medium",
     "chat": "claude-opus-5-5|medium",
     "deep": "claude-opus-5-5|high",
 }
 SPOKEN_DEFAULT = "claude-haiku-5-5|xhigh"
+SPOKEN_QUICK_DEFAULT = "claude-haiku-5-5|medium"
+QUICK_SUBJECTS = ("smalltalk", "info_lookup", "home_control")
+QUICK_WORDS = 12
 STICKY_SECONDS = 900
 LOG = Path.home() / ".local" / "state" / "diablo" / "route.jsonl"
 
@@ -75,14 +80,34 @@ def model_effort(tier):
     return model.strip() or default_model, effort.strip() or default_effort
 
 
-def spoken_brain():
-    """(model, effort) for a line spoken aloud at his desk, from route.spoken, or None when it is off."""
-    raw = str(settings.get("route.spoken") or SPOKEN_DEFAULT).strip()
+def quick(decision):
+    """A turn that only wants a fast plain answer: the fast tier, or chit-chat, a short lookup or one
+    device question at the voice tier, with no explicit ask for the big brain and no T3 handoff."""
+    if decision is None or decision.explicit or decision.handoff:
+        return False
+    if decision.tier == "fast":
+        return True
+    if decision.tier != "voice" or decision.subject not in QUICK_SUBJECTS:
+        return False
+    return decision.subject != "info_lookup" or decision.features.get("words", 0) <= QUICK_WORDS
+
+
+def _brain(key, default):
+    raw = str(settings.get(key) or default).strip()
     if raw.lower() in ("0", "off", "false", "no", "tier"):
         return None
     model, _, effort = raw.partition("|")
-    default_model, _, default_effort = SPOKEN_DEFAULT.partition("|")
+    default_model, _, default_effort = default.partition("|")
     return model.strip() or default_model, effort.strip() or default_effort
+
+
+def spoken_brain(decision=None):
+    """(model, effort) for a line spoken aloud at his desk, from route.spoken, or None when it is off.
+    A quick line takes route.spoken_quick; off there falls back to route.spoken."""
+    brain = _brain("route.spoken", SPOKEN_DEFAULT)
+    if brain is None or not quick(decision):
+        return brain
+    return _brain("route.spoken_quick", SPOKEN_QUICK_DEFAULT) or brain
 
 
 # =========================================================== features
@@ -456,8 +481,9 @@ DECISION_TREES = {
         ("multi_step or question or words > 14", go("voice", "several device steps or a device question")),
     ], else_=go("fast", "single device command: haiku")),
     "info_lookup": split("info_lookup", [
-        ("depth or words > 25", go("standard", "longer explanation: sonnet medium")),
-    ], else_=go("voice", "quick lookup")),
+        ("depth or words > 25", go("standard", "longer explanation")),
+        (f"words > {QUICK_WORDS} or build or dev or multi_step", go("voice", "a lookup with more to it")),
+    ], else_=go("fast", "quick question: haiku is enough")),
     "reminder_schedule": split("reminder_schedule", [
         ("multi_step and words > 25", go("standard", "long multi-part scheduling")),
     ], else_=go("voice", "file the reminder")),
@@ -467,7 +493,7 @@ DECISION_TREES = {
     "study_math": split("study_math", [
         ("arithmetic and words <= 14 and not math and not hard_math", go("voice", "plain arithmetic")),
         ("hard_math or depth or words > 30", go("chat", "proof/derivation or a long problem: opus medium")),
-    ], else_=go("standard", "math/study question: sonnet medium")),
+    ], else_=go("standard", "math/study question")),
     "dev_system": split("dev_system", [
         ("build and (multi_step or depth or words > 20)", go("deep", "long build/fix work: opus high")),
         ("build", go("chat", "build/fix work on the system: opus medium")),
@@ -476,13 +502,13 @@ DECISION_TREES = {
     ], else_=go("voice", "short technical remark")),
     "research": split("research", [
         ("depth or multi_step or words > 20", go("deep", "in-depth research: opus high")),
-    ], else_=go("standard", "research: sonnet medium")),
-    "purchase": go("standard", "an order costs money: sonnet medium, asks before paying"),
+    ], else_=go("standard", "research")),
+    "purchase": go("standard", "an order costs money, asks before paying"),
     "other": split("other", [
         ("followup", go("voice", "follow-up: inherits the last tier when there is one")),
         ("build and multi_step and words >= 15", go("deep", "long multi-step build request")),
         ("words > 60", go("standard", "a long message with no clear subject")),
-    ], else_=go("voice", "no strong signal: sonnet low")),
+    ], else_=go("voice", "no strong signal")),
 }
 
 for _name in SUBJECTS:
