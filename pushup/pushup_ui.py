@@ -161,7 +161,7 @@ HURT_W = 150  # "It hurts" beside the skip; the two together are as wide as Log 
 BUBBLE_MARGIN = 24  # the rest bubble's gap from the screen's corner
 # Where he last dragged the rest bubble, as its gaps from the top and right edges, so the next rest
 # opens there instead of back over whatever he moved it off.
-REST_SPOT = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "pushup" / "rest_spot.json"
+REST_SPOT = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "pushup" / "rest_spot.json"
 
 
 def css(accent, tier):
@@ -1230,12 +1230,21 @@ class RestRing(Gtk.DrawingArea):
         PangoCairo.show_layout(cr, layout)
 
 
-def focused_connector():
+def focused_monitor():
+    """Hyprland's focused monitor: its connector name and the edges bars reserve (left, top, right, bottom)."""
     try:
         mons = json.loads(subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=3).stdout)
-        return next((m["name"] for m in mons if m.get("focused")), None)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return None
+        mon = next((m for m in mons if m.get("focused")), None)
+        if mon:
+            reserved = mon.get("reserved") or [0, 0, 0, 0]
+            return mon["name"], tuple(int(v) for v in reserved[:4])
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        pass
+    return None, (0, 0, 0, 0)
+
+
+def focused_connector():
+    return focused_monitor()[0]
 
 
 def cursor_pos():
@@ -1273,6 +1282,12 @@ def save_rest_spot(top, right):
         tmp.replace(REST_SPOT)
     except OSError:
         pass
+
+
+def usable_area(width, height, reserved):
+    """What a layer with no exclusive zone of its own gets: the monitor less the bars' edges."""
+    left, top, right, bottom = reserved
+    return max(0, width - left - right), max(0, height - top - bottom)
 
 
 def clamp_spot(top, right, size, area):
@@ -1320,6 +1335,7 @@ class Card:
         self.key_released = False
         self.below = None
         self.monitor = None
+        self.reserved = (0, 0, 0, 0)
         self.spot = None
         self.drag = None
         self.app = Gtk.Application(application_id=None, flags=0)
@@ -1330,6 +1346,8 @@ class Card:
         return self.result
 
     def finish(self, result):
+        if self.drag and self.drag["moved"] != self.drag["spot"]:
+            save_rest_spot(*self.drag["moved"])  # the rest ran out mid-drag: keep where he had it
         self.result = result
         self.app.quit()
 
@@ -1437,13 +1455,16 @@ class Card:
                 LayerShell.set_exclusive_zone(win, -1)
                 mode = LayerShell.KeyboardMode.NONE if self.args.no_grab else LayerShell.KeyboardMode.EXCLUSIVE
                 LayerShell.set_keyboard_mode(win, mode)
-            name = focused_connector()
+            name, self.reserved = focused_monitor()
             monitors = Gdk.Display.get_default().get_monitors()
             for i in range(monitors.get_n_items()):
                 mon = monitors.get_item(i)
                 if mon.get_connector() == name:
                     LayerShell.set_monitor(win, mon)
                     self.monitor = mon
+            if self.monitor is None and monitors.get_n_items():
+                # Hyprland didn't say: the compositor puts it on its first screen, so bound it by that.
+                self.monitor = monitors.get_item(0)
         else:
             win.set_decorated(False)
             if "Broadway" in type(Gdk.Display.get_default()).__name__:
@@ -1586,22 +1607,33 @@ class Card:
     def make_draggable(self, card):
         drag = Gtk.GestureDrag()
         drag.set_button(Gdk.BUTTON_PRIMARY)
-        drag.connect("drag-begin", lambda g, x, y: self.drag_begin(g, card))
-        drag.connect("drag-update", lambda g, dx, dy: self.drag_update(dx, dy))
+        drag.connect("drag-begin", lambda g, x, y: self.drag_begin(g, card, x, y))
+        drag.connect("drag-update", lambda g, dx, dy: self.drag_update(g, dx, dy))
         drag.connect("drag-end", lambda g, dx, dy: self.drag_end(card))
         card.add_controller(drag)
         card.set_cursor_from_name("grab")
 
-    def drag_begin(self, gesture, card):
-        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-        win = card.get_root()
-        self.drag = {"win": win, "spot": self.spot, "cursor": cursor_pos(), "moved": self.spot}
-        card.set_cursor_from_name("grabbing")
+    def drag_begin(self, gesture, card, x, y):
+        hit = card.pick(x, y, Gtk.PickFlags.DEFAULT)
+        while hit is not None and hit is not card:
+            if isinstance(hit, Gtk.Button):
+                gesture.set_state(Gtk.EventSequenceState.DENIED)  # a press on a button is a click
+                return
+            hit = hit.get_parent()
+        self.drag = {"win": card.get_root(), "card": card, "spot": self.spot, "cursor": cursor_pos(),
+                     "moved": self.spot, "live": False}
 
-    def drag_update(self, dx, dy):
+    def drag_update(self, gesture, dx, dy):
         d = self.drag
         if not d:
             return
+        if not d["live"]:
+            # A press that barely moves stays a press; past the threshold the bubble is his to move.
+            if math.hypot(dx, dy) < 4:
+                return
+            d["live"] = True
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            d["card"].set_cursor_from_name("grabbing")
         top0, right0 = d["spot"]
         now = cursor_pos() if d["cursor"] else None
         if now:
@@ -1618,7 +1650,7 @@ class Card:
         area = (1 << 30, 1 << 30)
         if self.monitor:
             geo = self.monitor.get_geometry()
-            area = (geo.width, geo.height)
+            area = usable_area(geo.width, geo.height, self.reserved)
         return clamp_spot(round(top), round(right), (win.get_width(), win.get_height()), area)
 
     @staticmethod

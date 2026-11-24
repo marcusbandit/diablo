@@ -41,6 +41,9 @@ class TestRestSpot(unittest.TestCase):
         self.assertEqual(pushup_ui.clamp_spot(5000, 9000, size, area), (1440 - 130, 5120 - 660))
         self.assertEqual(pushup_ui.clamp_spot(400, 2000, size, area), (400, 2000))
 
+    def test_bars_take_their_edges_off_the_area(self):
+        self.assertEqual(pushup_ui.usable_area(5120, 1440, (32, 10, 10, 10)), (5078, 1420))
+
     def test_no_hyprland_means_no_cursor(self):
         with mock.patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": ""}):
             self.assertIsNone(pushup_ui.cursor_pos())
