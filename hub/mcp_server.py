@@ -19,6 +19,14 @@ SHARED = (
     "phone_status", "fleet_power", "fleet_where", "brain_search", "brain_read", "brain_log", "update_task", "list_tasks",
     "ask_user", "cancel_question",
 )
+# Loaded into the prompt up front instead of behind the claude CLI's tool search, so a quick turn
+# answers without a round trip to load them: what quick questions, small errands and handing work
+# to T3 reach for first. Each costs prompt tokens on every turn, so the long tail stays deferred.
+ALWAYS_LOADED = (
+    "recall_facts", "save_fact", "phone_status", "hue_light", "ask_user", "add_reminder", "list_reminders",
+    "fleet_where", "t3_where", "watch_t3_thread", "thread_history", "list_tasks", "guests",
+)
+LOADED_META = {"anthropic/alwaysLoad": True}
 EXTRA = [
     {
         "name": "show_on_screen",
@@ -191,7 +199,8 @@ def tools():
                 "description": function.get("description", ""),
                 "inputSchema": function.get("parameters") or {"type": "object", "properties": {}},
             })
-    return listed + EXTRA + skillbook.TOOLS
+    return [dict(tool, _meta=LOADED_META) if tool["name"] in ALWAYS_LOADED else tool
+            for tool in listed + EXTRA + skillbook.TOOLS]
 
 
 def turn_origin():

@@ -21,12 +21,14 @@ Precedence in route():
 
 A line said aloud at his desk then always runs on route.spoken (default
 "claude-haiku-5-5|xhigh", off keeps the tier's model), so the spoken answer stays
-fast. When he asked aloud for the big brain ("think hard", "use opus"), that model
+fast. A quick one, chit-chat or a short question (quick()), runs on route.spoken_quick
+(default "claude-haiku-5-5|medium") instead: xhigh thought for seconds before "it is
+four degrees". When he asked aloud for the big brain ("think hard", "use opus"), that model
 gets the work as a background run instead (brains.run_deep), and its outcome lands
 in the app. Typed lines, voice notes and machine turns keep the tier's model.
 
 Settings: route.enabled (on/off; off still computes and logs the decision),
-route.max_tier, route.min_tier, route.tier.<tier>, route.spoken. Log: ~/.local/state/diablo/route.jsonl.
+route.max_tier, route.min_tier, route.tier.<tier>, route.spoken, route.spoken_quick. Log: ~/.local/state/diablo/route.jsonl.
 Trees are data at the bottom of this file; `python -m hub.route show` prints them,
 `python -m hub.route classify TEXT` explains one line.
 """
@@ -43,13 +45,15 @@ from . import settings
 
 TIERS = ("fast", "voice", "standard", "chat", "deep")
 TIER_DEFAULTS = {
-    "fast": "claude-haiku-5-5|low",
-    "voice": "claude-sonnet-5-5|low",
-    "standard": "claude-sonnet-5-5|medium",
+    "fast": "claude-haiku-5-5|medium",
+    "voice": "claude-opus-5-5|medium",
+    "standard": "claude-opus-5-5|medium",
     "chat": "claude-opus-5-5|medium",
     "deep": "claude-opus-5-5|high",
 }
 SPOKEN_DEFAULT = "claude-haiku-5-5|xhigh"
+SPOKEN_QUICK_DEFAULT = "claude-haiku-5-5|medium"
+QUICK_SUBJECTS = ("smalltalk", "info_lookup", "home_control")
 STICKY_SECONDS = 900
 LOG = Path.home() / ".local" / "state" / "diablo" / "route.jsonl"
 
@@ -75,14 +79,32 @@ def model_effort(tier):
     return model.strip() or default_model, effort.strip() or default_effort
 
 
-def spoken_brain():
-    """(model, effort) for a line spoken aloud at his desk, from route.spoken, or None when it is off."""
-    raw = str(settings.get("route.spoken") or SPOKEN_DEFAULT).strip()
+def quick(decision):
+    """A turn that only wants a fast plain answer: the fast tier, or chit-chat, a short lookup or one
+    device question at the voice tier, with no explicit ask for the big brain and no T3 handoff."""
+    if decision is None or decision.explicit or decision.handoff:
+        return False
+    if decision.tier == "fast":
+        return True
+    return decision.tier == "voice" and decision.subject in QUICK_SUBJECTS
+
+
+def _brain(key, default):
+    raw = str(settings.get(key) or default).strip()
     if raw.lower() in ("0", "off", "false", "no", "tier"):
         return None
     model, _, effort = raw.partition("|")
-    default_model, _, default_effort = SPOKEN_DEFAULT.partition("|")
+    default_model, _, default_effort = default.partition("|")
     return model.strip() or default_model, effort.strip() or default_effort
+
+
+def spoken_brain(decision=None):
+    """(model, effort) for a line spoken aloud at his desk, from route.spoken, or None when it is off.
+    A quick line takes route.spoken_quick; off there falls back to route.spoken."""
+    brain = _brain("route.spoken", SPOKEN_DEFAULT)
+    if brain is None or not quick(decision):
+        return brain
+    return _brain("route.spoken_quick", SPOKEN_QUICK_DEFAULT) or brain
 
 
 # =========================================================== features
@@ -457,7 +479,8 @@ DECISION_TREES = {
     ], else_=go("fast", "single device command: haiku")),
     "info_lookup": split("info_lookup", [
         ("depth or words > 25", go("standard", "longer explanation: sonnet medium")),
-    ], else_=go("voice", "quick lookup")),
+        ("words > 12 or build or dev or multi_step", go("voice", "a lookup with more to it")),
+    ], else_=go("fast", "quick question: haiku is enough")),
     "reminder_schedule": split("reminder_schedule", [
         ("multi_step and words > 25", go("standard", "long multi-part scheduling")),
     ], else_=go("voice", "file the reminder")),

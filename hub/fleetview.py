@@ -172,14 +172,15 @@ def _stored_phone():
 
 
 def phone_status(fresh=False):
-    """The phone posts its reports to the hub; fresh asks it over /api/events and waits a few seconds."""
+    """The phone posts its reports to the hub; fresh asks it over /api/events and waits a few seconds.
+    A phone that has never reported is not waited for: the ask goes out, the answer comes at once."""
     report, received = _stored_phone()
     if fresh:
         try:
             urllib.request.urlopen(urllib.request.Request(HUB_URL + "/api/phone/request", data=b""), timeout=5).read()
         except OSError:
             pass
-        deadline = time.time() + 8
+        deadline = time.time() + (8 if report is not None else 0)
         while time.time() < deadline:
             time.sleep(0.5)
             newer, at = _stored_phone()

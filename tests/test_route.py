@@ -18,9 +18,11 @@ CASES = [
     ("sluk lyset i stuen", "home_control", "fast"),
     ("pause the music", "home_control", "fast"),
     ("dim the lights and then play my focus playlist on spotify", "home_control", "voice"),
-    ("what's the weather like tomorrow", "info_lookup", "voice"),
-    ("hvad er klokken", "info_lookup", "voice"),
-    ("where is my phone", "info_lookup", "voice"),
+    ("what's the weather like tomorrow", "info_lookup", "fast"),
+    ("hvad er klokken", "info_lookup", "fast"),
+    ("where is my phone", "info_lookup", "fast"),
+    ("what's the temperature today?", "info_lookup", "fast"),
+    ("who was the first person on the moon and how did they get back home again afterwards", "info_lookup", "voice"),
     ("remind me to call mom at 5", "reminder_schedule", "voice"),
     ("mind mig om at købe mælk i morgen", "reminder_schedule", "voice"),
     ("check my inbox", "mail_calendar", "standard"),
@@ -116,7 +118,7 @@ def test_followup_inherits_the_last_tier_within_the_window():
 
 
 def test_tier_models_come_from_settings(fake_settings):
-    assert route.model_effort("fast") == ("claude-haiku-5-5", "low")
+    assert route.model_effort("fast") == ("claude-haiku-5-5", "medium")
     fake_settings["route.tier.fast"] = "claude-sonnet-5-5|low"
     assert route.route("turn off the lights").model == "claude-sonnet-5-5"
 
@@ -150,7 +152,7 @@ def test_confident_jev_replaces_the_tree_tier():
 
 def test_unsure_jev_leaves_the_tree_tier():
     decision = route.route("what is the eur to dkk rate right now", conv="j2", jev=jev("deep", conf=0.5))
-    assert decision.tier == "voice" and decision.source == "tree"
+    assert decision.tier == "fast" and decision.source == "tree"
 
 
 def test_jev_cannot_skip_the_ceiling_or_the_no_ask_guard():
@@ -206,7 +208,7 @@ def test_build_work_is_handed_to_t3_with_a_heavy_worker():
     answer.update(work="big_work", work_confidence=0.9)
     decision = route.route("add offline sync to anibeam", conv="h1", jev=answer)
     assert decision.handoff == {"work": "big_work", "model": "claude-opus-5-5", "effort": "high"}
-    assert decision.tier == "standard" and decision.model == "claude-sonnet-5-5"
+    assert decision.tier == "standard" and decision.model == "claude-opus-5-5"
 
 
 def test_small_changes_get_a_sonnet_worker():
@@ -239,3 +241,42 @@ def test_jev_certain_of_a_light_change_skips_the_word_rule():
     assert sure.direct and sure.direct["action"] == "warmer"
     unsure = route.route(line, conv="c2", jev=jev("fast", action="warmer", action_conf=0.93))
     assert not unsure.direct
+
+
+def test_no_tier_default_uses_an_effort_outside_high_medium_xhigh():
+    for value in list(route.TIER_DEFAULTS.values()) + [route.SPOKEN_DEFAULT, route.SPOKEN_QUICK_DEFAULT]:
+        assert value.partition("|")[2] in ("high", "medium", "xhigh"), value
+
+
+@pytest.mark.parametrize("text", [
+    "what's the temperature today?", "what time is it", "hey diablo", "how are you", "turn off the lights",
+    "is it going to rain",
+])
+def test_a_quick_spoken_line_runs_on_the_quick_brain(text):
+    decision = route.route(text, conv=text, handoff=False)
+    assert route.quick(decision), (decision.tier, decision.subject)
+    assert route.spoken_brain(decision) == ("claude-haiku-5-5", "medium")
+
+
+@pytest.mark.parametrize("text", [
+    "fix the crash in banditshell", "check my inbox", "explain eigenvalues to me", "think hard about the weather",
+])
+def test_real_work_said_aloud_keeps_the_spoken_brain(text):
+    decision = route.route(text, conv=text, handoff=False)
+    assert not route.quick(decision), (decision.tier, decision.subject)
+    assert route.spoken_brain(decision) == ("claude-haiku-5-5", "xhigh")
+
+
+def test_a_handoff_is_never_quick():
+    decision = route.route("build me a new app for my plants", conv="h")
+    assert decision.handoff and not route.quick(decision)
+
+
+def test_the_quick_spoken_brain_comes_from_settings(fake_settings):
+    decision = route.route("what time is it", conv="s", handoff=False)
+    fake_settings["route.spoken_quick"] = "claude-sonnet-5-5|high"
+    assert route.spoken_brain(decision) == ("claude-sonnet-5-5", "high")
+    fake_settings["route.spoken_quick"] = "off"
+    assert route.spoken_brain(decision) == ("claude-haiku-5-5", "xhigh")
+    fake_settings["route.spoken"] = "off"
+    assert route.spoken_brain(decision) is None
