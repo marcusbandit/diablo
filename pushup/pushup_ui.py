@@ -164,6 +164,7 @@ BUBBLE_MARGIN = 24  # the rest bubble's gap from the screen's corner
 REST_SPOT = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "pushup" / "rest_spot.json"
 # Where he last dragged the set card, as its offset from the middle of the screen.
 CARD_SPOT = REST_SPOT.with_name("card_spot.json")
+CARD_SPOT_MAX = 8000  # twice this is a margin, and GTK takes margins up to 32767
 
 
 def css(accent, tier):
@@ -617,7 +618,7 @@ class PainMap(Gtk.DrawingArea):
     def hover(self, spot):
         if spot != self.hot:
             self.hot = spot
-            self.set_cursor_from_name("pointer" if spot else None)
+            self.set_cursor_from_name("pointer" if spot else "default")
             self.queue_draw()
             self.changed()
 
@@ -1272,7 +1273,7 @@ def load_rest_spot():
     try:
         spot = json.loads(REST_SPOT.read_text())
         return max(0, int(spot["top"])), max(0, int(spot["right"]))
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
         return BUBBLE_MARGIN, BUBBLE_MARGIN
 
 
@@ -1289,8 +1290,9 @@ def save_rest_spot(top, right):
 def load_card_spot():
     try:
         spot = json.loads(CARD_SPOT.read_text())
-        return int(spot["x"]), int(spot["y"])
-    except (OSError, ValueError, KeyError, TypeError):
+        return (min(max(-CARD_SPOT_MAX, int(spot["x"])), CARD_SPOT_MAX),
+                min(max(-CARD_SPOT_MAX, int(spot["y"])), CARD_SPOT_MAX))
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
         return 0, 0
 
 
@@ -1467,8 +1469,8 @@ class Card:
         if self.resting and self.spot is not None:
             GLib.timeout_add(50, lambda: self.settle_spot(win))
         if self.card_off is not None:
-            self.shift_card(self.card_off)
-            GLib.timeout_add(50, self.settle_card)
+            self.card_size = None
+            self.column.add_tick_callback(self.settle_card)
 
     def place(self, win):
         if LayerShell and "Wayland" in type(Gdk.Display.get_default()).__name__ and LayerShell.is_supported():
@@ -1761,15 +1763,21 @@ class Card:
             self.shift_card(off)
 
     def card_drag_end(self):
-        self.card.set_cursor_from_name("grab")
+        self.card.set_cursor_from_name("default" if self.closing else "grab")
         d, self.card_drag = self.card_drag, None
         if d and d["moved"] != d["off"]:
             self.card_off = d["moved"]
             save_card_spot(*self.card_off)
 
     def keep_card_on_screen(self, off):
-        col, back = self.column, self.backdrop
-        return clamp_offset(off, (col.get_width(), col.get_height()), (back.get_width(), back.get_height()))
+        """Bounded by the screen, not the backdrop: in a plain window the margins would grow that."""
+        col = self.column
+        if self.monitor:
+            geo = self.monitor.get_geometry()
+            area = (geo.width, geo.height)
+        else:
+            area = (self.backdrop.get_width(), self.backdrop.get_height())
+        return clamp_offset(off, (col.get_width(), col.get_height()), area)
 
     def shift_card(self, off):
         """Centred, then pushed off the middle: a margin on one side moves a centred child half as far."""
@@ -1779,15 +1787,18 @@ class Card:
         self.column.set_margin_top(max(0, 2 * y))
         self.column.set_margin_bottom(max(0, -2 * y))
 
-    def settle_card(self):
-        """A spot saved on a bigger screen could leave the card hanging off this one: pull it back on."""
-        if self.backdrop.get_width() <= 1:
-            return True
+    def settle_card(self, col, _clock):
+        """Pulls the card back whole onto the screen whenever its size changes: the first frame, a
+        spot saved on a bigger screen, the body map that "It hurts" opens. A drag clamps itself."""
+        size = (col.get_width(), col.get_height())
+        if size[0] <= 1 or size == self.card_size or self.card_drag:
+            return GLib.SOURCE_CONTINUE
+        self.card_size = size
         off = self.keep_card_on_screen(self.card_off)
-        if off != self.card_off:
+        if off != self.card_off or col.get_margin_start() + col.get_margin_end() + col.get_margin_top() + col.get_margin_bottom() == 0:
             self.card_off = off
             self.shift_card(off)
-        return False
+        return GLib.SOURCE_CONTINUE
 
     # The reminder: the number, the slider, log. Nothing else while you should be on the floor.
 
@@ -2335,6 +2346,8 @@ class Card:
         if self.closing:
             return
         self.closing = close
+        if close and self.card_off is not None:
+            self.card.set_cursor_from_name("default")  # the ending screen holds still
         self.key_released = False
         self.hold_stop()
         if self.timer:
