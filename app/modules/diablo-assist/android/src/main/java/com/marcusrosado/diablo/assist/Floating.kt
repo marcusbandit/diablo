@@ -270,7 +270,7 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
       now.phase == Talk.Phase.LISTENING || now.phase == Talk.Phase.THINKING -> now.heard
       else -> ""
     }
-    cardText.text = text
+    cardText.text = if (now.reply.isNotEmpty()) Talk.readable(text) else text
     cardText.setTextColor(if (now.reply.isEmpty()) DIM else INK)
     cardText.typeface = if (now.reply.isEmpty()) medium else regular
     card.visibility = if (text.isEmpty() || docked) GONE else VISIBLE

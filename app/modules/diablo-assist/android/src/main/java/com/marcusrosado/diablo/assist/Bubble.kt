@@ -815,9 +815,12 @@ object Bubble {
       addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
     }
 
+    private var shown = ""
+
     fun set(line: String, heard: String) {
-      val fresh = his.text.toString() != line
-      his.text = line
+      val fresh = shown != line
+      shown = line
+      his.text = Talk.readable(line)
       his.visibility = if (line.isEmpty()) GONE else VISIBLE
       said.text = heard
       said.visibility = if (heard.isEmpty()) GONE else VISIBLE

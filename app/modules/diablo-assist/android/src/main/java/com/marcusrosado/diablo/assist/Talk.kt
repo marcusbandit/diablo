@@ -494,6 +494,36 @@ object Talk {
     return if (end > SPOKEN_MAX / 2) cut.substring(0, end + 1).trim() else cut.substringBeforeLast(' ').trim()
   }
 
+  /**
+   * His reply as the card shows it: bold stays bold, the other markdown marks go, links keep
+   * their words and list lines get a dot.
+   */
+  fun readable(text: String): CharSequence {
+    val lines = text.trim().lines().map { line ->
+      line
+        .replace(Regex("^#{1,6}\\s+"), "")
+        .replace(Regex("^\\s*[-*+]\\s+(\\[[ xX]]\\s+)?"), "\u2022 ")
+        .replace(Regex("^>\\s?"), "")
+        .replace(Regex("\\[([^\\]]+)]\\([^)]+\\)"), "$1")
+        .replace("`", "")
+    }.filter { !it.trim().startsWith("```") }
+    val out = android.text.SpannableStringBuilder()
+    val bold = Regex("\\*\\*(.+?)\\*\\*|__(.+?)__")
+    lines.forEachIndexed { i, line ->
+      if (i > 0) out.append('\n')
+      var at = 0
+      for (m in bold.findAll(line)) {
+        out.append(line.substring(at, m.range.first).replace(Regex("(?<!\\w)[*_](\\S(?:.*?\\S)?)[*_](?!\\w)"), "$1"))
+        val start = out.length
+        out.append(m.groupValues[1].ifEmpty { m.groupValues[2] })
+        out.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), start, out.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        at = m.range.last + 1
+      }
+      out.append(line.substring(at).replace(Regex("(?<!\\w)[*_](\\S(?:.*?\\S)?)[*_](?!\\w)"), "$1"))
+    }
+    return out
+  }
+
   /** Markdown and links read badly aloud. */
   private fun plain(text: String) = text
     .replace(Regex("\\[([^\\]]+)]\\([^)]+\\)"), "$1")
