@@ -35,7 +35,8 @@ class TestCheckFirst(unittest.TestCase):
     def test_the_charter_checks_before_it_says_it_does_not_know(self):
         text = charter.CHARTER
         self.assertIn("Check before you say you do not know.", text)
-        self.assertIn("Weather and temperature: search the web at once", text)
+        self.assertIn("Weather and temperature: one standard WebSearch", text)
+        self.assertIn("your very first words, before the first tool call", text)
         self.assertIn("Never call phone_status for the weather", text)
         self.assertIn("Ask which town only when no home town is saved", text)
         self.assertIn("keep them to a few plain sentences", text)
