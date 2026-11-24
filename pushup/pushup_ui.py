@@ -6,8 +6,10 @@ import math
 import os
 import random
 import shutil
+import socket
 import subprocess
 import time
+from pathlib import Path
 
 import gi
 
@@ -157,6 +159,9 @@ HOLD_W = 420  # the Log it button's width: 360 plus its padding
 PAIN_SCALE = 6  # the body map you click when it hurts: big enough to hit a forearm
 HURT_W = 150  # "It hurts" beside the skip; the two together are as wide as Log it
 BUBBLE_MARGIN = 24  # the rest bubble's gap from the screen's corner
+# Where he last dragged the rest bubble, as its gaps from the top and right edges, so the next rest
+# opens there instead of back over whatever he moved it off.
+REST_SPOT = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "pushup" / "rest_spot.json"
 
 
 def css(accent, tier):
@@ -1233,6 +1238,50 @@ def focused_connector():
         return None
 
 
+def cursor_pos():
+    """The pointer in Hyprland's layout coordinates, straight off its socket (well under a ms)."""
+    sig, run = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"), os.environ.get("XDG_RUNTIME_DIR")
+    if not (sig and run):
+        return None
+    try:
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(0.05)
+            s.connect(os.path.join(run, "hypr", sig, ".socket.sock"))
+            s.sendall(b"j/cursorpos")
+            data = b""
+            while chunk := s.recv(4096):
+                data += chunk
+        pos = json.loads(data)
+        return float(pos["x"]), float(pos["y"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def load_rest_spot():
+    try:
+        spot = json.loads(REST_SPOT.read_text())
+        return max(0, int(spot["top"])), max(0, int(spot["right"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return BUBBLE_MARGIN, BUBBLE_MARGIN
+
+
+def save_rest_spot(top, right):
+    try:
+        REST_SPOT.parent.mkdir(parents=True, exist_ok=True)
+        tmp = REST_SPOT.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"top": int(top), "right": int(right)}))
+        tmp.replace(REST_SPOT)
+    except OSError:
+        pass
+
+
+def clamp_spot(top, right, size, area):
+    """Keeps the bubble whole on its screen: gaps from the top and right, never past the far edges."""
+    w, h = size
+    aw, ah = area
+    return min(max(0, top), max(0, ah - h)), min(max(0, right), max(0, aw - w))
+
+
 class Card:
     def __init__(self, args):
         self.args = args
@@ -1270,6 +1319,9 @@ class Card:
         self.with_receipts = None
         self.key_released = False
         self.below = None
+        self.monitor = None
+        self.spot = None
+        self.drag = None
         self.app = Gtk.Application(application_id=None, flags=0)
         self.app.connect("activate", self.build)
 
@@ -1360,6 +1412,8 @@ class Card:
         if self.args.value is not None and self.reminder_mode:
             self.adj.set_value(self.args.value)
         win.present()
+        if self.resting and self.spot is not None:
+            GLib.timeout_add(50, lambda: self.settle_spot(win))
 
     def place(self, win):
         if LayerShell and "Wayland" in type(Gdk.Display.get_default()).__name__ and LayerShell.is_supported():
@@ -1369,9 +1423,12 @@ class Card:
             if self.resting:
                 # The rest sits in the top right corner, clear of the bar, and leaves the keyboard
                 # with whatever had it, so the video behind it still takes its keys.
+                # He can drag it anywhere; it opens where he last left it.
+                self.spot = load_rest_spot()
                 for edge in (LayerShell.Edge.TOP, LayerShell.Edge.RIGHT):
                     LayerShell.set_anchor(win, edge, True)
-                    LayerShell.set_margin(win, edge, BUBBLE_MARGIN)
+                LayerShell.set_margin(win, LayerShell.Edge.TOP, self.spot[0])
+                LayerShell.set_margin(win, LayerShell.Edge.RIGHT, self.spot[1])
                 LayerShell.set_exclusive_zone(win, 0)
                 LayerShell.set_keyboard_mode(win, LayerShell.KeyboardMode.NONE)
             else:
@@ -1386,6 +1443,7 @@ class Card:
                 mon = monitors.get_item(i)
                 if mon.get_connector() == name:
                     LayerShell.set_monitor(win, mon)
+                    self.monitor = mon
         else:
             win.set_decorated(False)
             if "Broadway" in type(Gdk.Display.get_default()).__name__:
@@ -1507,6 +1565,8 @@ class Card:
         actions = hbox(8, go, end)
         actions.set_valign(Gtk.Align.CENTER)
         card = hbox(18, self.rest_ring, words, actions, center=False)
+        if self.spot is not None:
+            self.make_draggable(card)
 
         def tick():
             left = self.rest_ends - time.time()
@@ -1518,6 +1578,70 @@ class Card:
 
         GLib.timeout_add(100, tick)
         return card
+
+    # Grab the bubble anywhere but its buttons and it follows the pointer. The buttons claim their
+    # own presses, so a click on them never starts a drag. The pointer comes from Hyprland rather
+    # than the drag's own offsets: those are relative to a surface that moves under them.
+
+    def make_draggable(self, card):
+        drag = Gtk.GestureDrag()
+        drag.set_button(Gdk.BUTTON_PRIMARY)
+        drag.connect("drag-begin", lambda g, x, y: self.drag_begin(g, card))
+        drag.connect("drag-update", lambda g, dx, dy: self.drag_update(dx, dy))
+        drag.connect("drag-end", lambda g, dx, dy: self.drag_end(card))
+        card.add_controller(drag)
+        card.set_cursor_from_name("grab")
+
+    def drag_begin(self, gesture, card):
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        win = card.get_root()
+        self.drag = {"win": win, "spot": self.spot, "cursor": cursor_pos(), "moved": self.spot}
+        card.set_cursor_from_name("grabbing")
+
+    def drag_update(self, dx, dy):
+        d = self.drag
+        if not d:
+            return
+        top0, right0 = d["spot"]
+        now = cursor_pos() if d["cursor"] else None
+        if now:
+            top, right = top0 + now[1] - d["cursor"][1], right0 - (now[0] - d["cursor"][0])
+        else:
+            # No Hyprland socket: the offset is against where the surface is now, so add it on.
+            top, right = d["moved"][0] + dy, d["moved"][1] - dx
+        top, right = self.keep_on_screen(d["win"], top, right)
+        if (top, right) != d["moved"]:
+            d["moved"] = (top, right)
+            self.move_to(d["win"], top, right)
+
+    def keep_on_screen(self, win, top, right):
+        area = (1 << 30, 1 << 30)
+        if self.monitor:
+            geo = self.monitor.get_geometry()
+            area = (geo.width, geo.height)
+        return clamp_spot(round(top), round(right), (win.get_width(), win.get_height()), area)
+
+    @staticmethod
+    def move_to(win, top, right):
+        LayerShell.set_margin(win, LayerShell.Edge.TOP, top)
+        LayerShell.set_margin(win, LayerShell.Edge.RIGHT, right)
+
+    def settle_spot(self, win):
+        """A spot saved on a bigger screen could leave it hanging off this one: pull it back on."""
+        if win.get_width() <= 1:
+            return True
+        spot = self.keep_on_screen(win, *self.spot)
+        if spot != self.spot:
+            self.spot = spot
+            self.move_to(win, *spot)
+        return False
+
+    def drag_end(self, card):
+        card.set_cursor_from_name("grab")
+        if self.drag and self.drag["moved"] != self.drag["spot"]:
+            self.spot = self.drag["moved"]
+            save_rest_spot(*self.spot)
+        self.drag = None
 
     # The reminder: the number, the slider, log. Nothing else while you should be on the floor.
 
