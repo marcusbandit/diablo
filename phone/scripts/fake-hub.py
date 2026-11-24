@@ -317,6 +317,25 @@ def serve(args):
     devices.hub_name = lambda: "fake-hub"
     lockguard.for_turn = lambda origin, look=None: lockguard.Guard(origin=origin)
 
+    # Fake voice: /v1/speech answers with a hum shaped like syllables, so the phone has a reply to
+    # play and its speaking state can be seen. Nothing reaches a real voice service.
+    from hub import tts
+
+    def hum(seconds, rate=24000):
+        import math
+        frames = bytearray()
+        for i in range(int(seconds * rate)):
+            t = i / rate
+            syllable = max(0.0, math.sin(math.pi * 4.2 * t)) ** 0.6
+            fade = min(1.0, t / 0.05, (seconds - t) / 0.08)
+            wave = 0.6 * math.sin(2 * math.pi * 132 * t) + 0.3 * math.sin(2 * math.pi * 264 * t) + 0.1 * math.sin(2 * math.pi * 396 * t)
+            frames += struct.pack("<h", int(9000 * syllable * fade * wave))
+        data = bytes(frames)
+        head = b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16) + b"data" + struct.pack("<I", len(data))
+        return b"RIFF" + struct.pack("<I", 4 + len(head) + len(data)) + b"WAVE" + head + data
+
+    tts.speak = lambda text, voice_note=False, language="en", origin="voice note": hum(min(8.0, 0.6 + len(text) * 0.05))
+
     # Fake modules: workout, today, lights. Real ones would read pushup files, Hue or mail.
     work = {"done": 45, "target": 100, "streak": 6, "sets": 4, "minutes": 35, "week": 310, "week_goal": 500}
     lamps = [
@@ -457,7 +476,7 @@ def serve(args):
         return str(origin or "").split(marker, 1)[1].strip() if marker in str(origin or "") else "Diablo"
 
     async def fake_ask(conv, text, origin="telegram", images=None, on_step=None, notes=None, machine=False,
-                       message_id=None, thread_hint=None, desktop=None, on_text=None):
+                       message_id=None, thread_hint=None, desktop=None, on_text=None, **_):
         n = next(counter)
         lower = text.lower()
         await asyncio.sleep(0.5)
@@ -716,6 +735,7 @@ def serve(args):
         db.listeners.append(lambda mid, source, meta: events.message_added(mid, source, meta, server.MAIN_SOURCES))
         db.listeners.append(questions.link)
         seed()
+        settings.set_setting("tts_provider", "cartesia")
         asyncio.create_task(server.sweep_questions())
 
     # Swap the real startup (Telegram, T3 watchers, autoship, mail, skills) for ours.

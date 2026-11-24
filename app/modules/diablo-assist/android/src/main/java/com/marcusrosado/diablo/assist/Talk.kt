@@ -70,6 +70,16 @@ object Talk {
   private var screenSent = false
   private var turn = 0
 
+  /** How loud Marcus is right now while he is heard, 0 to 1, for the halo. */
+  @Volatile var micLevel = 0f
+    private set
+  /** Called once he finished saying a reply that asks something: listen for the answer. */
+  var again: (() -> Unit)? = null
+  /** The question he is waiting on, kept on the card while the answer is heard. */
+  private var asked = ""
+  private var envelope: FloatArray? = null
+  @Volatile private var finishRecording = false
+
   private var recognizer: SpeechRecognizer? = null
   private var recording: Thread? = null
   @Volatile private var stopRecording = false
@@ -125,7 +135,12 @@ object Talk {
       set(Now(Phase.TROUBLE, "", "Let me hear you first, sir: allow the microphone in the app."))
       return
     }
-    set(Now(Phase.LISTENING, "", ""))
+    // Listening for the answer to his question keeps the question on screen.
+    asked = if (now.asks && now.reply.isNotEmpty() && now.phase != Phase.THINKING) now.reply else ""
+    // Talking over a reply still being worked out replaces that line.
+    if (now.phase == Phase.THINKING) turn++
+    micLevel = 0f
+    set(Now(Phase.LISTENING, "", asked, asks = asked.isNotEmpty()))
     if (SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) onDevice(context.applicationContext) else throughHub(context.applicationContext)
   }
 
@@ -137,8 +152,18 @@ object Talk {
     recognizer = null
     stopRecording = true
     recording = null
-    if (now.phase == Phase.LISTENING) set(Now(Phase.RESTING, "", now.reply))
+    micLevel = 0f
+    if (now.phase == Phase.LISTENING) set(Now(Phase.RESTING, "", now.reply, now.asks))
   }
+
+  /** He tapped while being heard: what was said so far goes now, without waiting for the pause. */
+  fun finishHearing() {
+    if (now.phase != Phase.LISTENING) return
+    recognizer?.stopListening()
+    if (recording != null) finishRecording = true
+  }
+
+  private fun idle() = Now(Phase.RESTING, "", asked, asks = asked.isNotEmpty())
 
   private fun onDevice(context: Context) {
     val r = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
@@ -146,14 +171,16 @@ object Talk {
     r.setRecognitionListener(object : RecognitionListener {
       override fun onReadyForSpeech(params: Bundle?) {}
       override fun onBeginningOfSpeech() {}
-      override fun onRmsChanged(rmsdB: Float) {}
+      override fun onRmsChanged(rmsdB: Float) {
+        if (recognizer === r) micLevel = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+      }
       override fun onBufferReceived(buffer: ByteArray?) {}
       override fun onEndOfSpeech() {}
       override fun onEvent(eventType: Int, params: Bundle?) {}
 
       override fun onPartialResults(partial: Bundle?) {
         val text = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
-        if (recognizer === r && text.isNotBlank()) set(Now(Phase.LISTENING, text, ""))
+        if (recognizer === r && text.isNotBlank()) set(Now(Phase.LISTENING, text, asked, asks = asked.isNotEmpty()))
       }
 
       override fun onResults(results: Bundle?) {
@@ -161,7 +188,8 @@ object Talk {
         val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim() ?: ""
         r.destroy()
         recognizer = null
-        if (text.isEmpty()) set(Now(Phase.RESTING, "", "")) else send(context, text)
+        micLevel = 0f
+        if (text.isEmpty()) set(idle()) else send(context, text)
       }
 
       override fun onError(error: Int) {
@@ -169,7 +197,10 @@ object Talk {
         r.destroy()
         recognizer = null
         when (error) {
-          SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> set(Now(Phase.RESTING, "", ""))
+          SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+            micLevel = 0f
+            set(idle())
+          }
           // The phone's recognizer cannot do it after all: the hub's ears can.
           else -> throughHub(context)
         }
@@ -184,8 +215,9 @@ object Talk {
 
   /** Records until he stops talking, then the hub transcribes the clip. */
   private fun throughHub(context: Context) {
-    set(Now(Phase.LISTENING, "", ""))
+    set(Now(Phase.LISTENING, "", asked, asks = asked.isNotEmpty()))
     stopRecording = false
+    finishRecording = false
     val mine = turn
     val thread = Thread {
       val wav = try {
@@ -195,8 +227,9 @@ object Talk {
       }
       if (stopRecording && recording !== Thread.currentThread()) return@Thread
       recording = null
+      micLevel = 0f
       if (wav == null) {
-        set(Now(Phase.RESTING, "", ""))
+        set(idle())
         return@Thread
       }
       set(Now(Phase.THINKING, "", ""))
@@ -207,7 +240,7 @@ object Talk {
         return@Thread
       }
       if (mine != turn) return@Thread
-      if (text.isEmpty()) set(Now(Phase.RESTING, "", "")) else main.post { if (mine == turn) send(context, text) }
+      if (text.isEmpty()) set(idle()) else main.post { if (mine == turn) send(context, text) }
     }
     recording = thread
     thread.start()
@@ -238,7 +271,9 @@ object Talk {
           bytes.putShort(frame[i])
         }
         pcm.write(bytes.array(), 0, n * 2)
-        val loud = sqrt(sum / n) > 900
+        val rms = sqrt(sum / n)
+        micLevel = (rms / 3000.0).toFloat().coerceIn(0f, 1f)
+        val loud = rms > 900
         totalMs += 20
         if (loud) {
           spoke = true
@@ -248,7 +283,7 @@ object Talk {
         }
         if (!spoke && totalMs > 6000) return null
         if (spoke && quietMs > 1200) break
-        if (totalMs > 20000) break
+        if (totalMs > 20000 || finishRecording) break
       }
     } finally {
       rec.stop()
@@ -274,6 +309,7 @@ object Talk {
     stopSpeaking()
     val app = context.applicationContext
     val mine = ++turn
+    asked = ""
     val withScreen = if (screenSent) null else screen
     screenSent = true
     set(Now(Phase.THINKING, line, ""))
@@ -300,7 +336,11 @@ object Talk {
     set(Now(Phase.SPEAKING, now.heard, reply, asks))
     val done = { spoken: Boolean ->
       main.post {
-        if (mine == turn && now.phase == Phase.SPEAKING && now.reply == reply) set(Now(Phase.RESTING, now.heard, reply, asks, spoken))
+        if (mine == turn && now.phase == Phase.SPEAKING && now.reply == reply) {
+          set(Now(Phase.RESTING, now.heard, reply, asks, spoken))
+          // He asked something: he listens for the answer by himself, a beat after he stops.
+          if (asks) main.postDelayed({ if (mine == turn && now.phase == Phase.RESTING && now.reply == reply) again?.invoke() }, AGAIN_MS)
+        }
       }
       Unit
     }
@@ -314,6 +354,7 @@ object Talk {
       val file = try {
         val wav = HubLink.speech(context, words)
         if (mine != turn) return@execute
+        envelope = envelopeOf(wav)
         File(context.cacheDir, "diablo-reply.wav").apply { writeBytes(wav) }
       } catch (e: Exception) {
         null
@@ -360,6 +401,61 @@ object Talk {
     }
   }
 
+  /** How loud his voice is at this moment of the reply, 0 to 1, for the halo and his mouth. */
+  fun voiceLevel(): Float {
+    val p = player ?: return 0f
+    val env = envelope ?: return 0f
+    val at = try {
+      p.currentPosition
+    } catch (_: IllegalStateException) {
+      return 0f
+    }
+    val i = at / ENV_MS
+    return if (i in env.indices) env[i] else 0f
+  }
+
+  private const val ENV_MS = 40
+  private const val AGAIN_MS = 350L
+
+  /** The loudness of a 16 bit wav in steps of ENV_MS, scaled so the loudest step is 1. */
+  private fun envelopeOf(wav: ByteArray): FloatArray? {
+    if (wav.size < 12) return null
+    val b = ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN)
+    var at = 12
+    var rate = 24000
+    var channels = 1
+    while (at + 8 <= wav.size) {
+      val kind = String(wav, at, 4, Charsets.US_ASCII)
+      val size = b.getInt(at + 4).let { if (it < 0 || it > wav.size - at - 8) wav.size - at - 8 else it }
+      val body = at + 8
+      if (kind == "fmt " && size >= 16) {
+        channels = maxOf(1, b.getShort(body + 2).toInt())
+        rate = b.getInt(body + 4)
+      } else if (kind == "data") {
+        val end = body + size
+        val per = maxOf(1, rate * ENV_MS / 1000 * channels)
+        val steps = ArrayList<Float>()
+        var i = body
+        while (i + 2 <= end) {
+          var sum = 0.0
+          var n = 0
+          while (n < per && i + 2 <= end) {
+            val v = b.getShort(i).toDouble()
+            sum += v * v
+            i += 2
+            n++
+          }
+          steps.add(sqrt(sum / maxOf(n, 1)).toFloat())
+        }
+        val top = steps.maxOrNull() ?: return null
+        if (top <= 0f) return null
+        return FloatArray(steps.size) { (steps[it] / top).coerceIn(0f, 1f) }
+      }
+      at = body + size + (size and 1)
+    }
+    return null
+  }
+
   private fun stopPlayer() {
     player?.let {
       player = null
@@ -377,9 +473,10 @@ object Talk {
   /** He was sent away: whatever he was hearing, thinking or saying ends here, and a late reply stays unsaid. */
   fun quiet() {
     turn++
+    asked = ""
     stopHearing()
     stopSpeaking()
-    if (now.phase != Phase.RESTING) set(Now(Phase.RESTING, "", ""))
+    set(Now(Phase.RESTING, "", ""))
   }
 
   fun stopSpeaking() {
