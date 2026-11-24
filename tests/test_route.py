@@ -267,6 +267,12 @@ def test_real_work_said_aloud_keeps_the_spoken_brain(text):
     assert route.spoken_brain(decision) == ("claude-haiku-5-5", "xhigh")
 
 
+def test_a_long_lookup_said_aloud_is_not_quick():
+    decision = route.route("who was the first person on the moon and how did they get back home again afterwards", conv="l", handoff=False)
+    assert decision.tier == "voice" and not route.quick(decision)
+    assert route.spoken_brain(decision) == ("claude-haiku-5-5", "xhigh")
+
+
 def test_a_handoff_is_never_quick():
     decision = route.route("build me a new app for my plants", conv="h")
     assert decision.handoff and not route.quick(decision)

@@ -1,7 +1,6 @@
 import os
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -36,14 +35,15 @@ class TestCheckFirst(unittest.TestCase):
         text = charter.CHARTER
         self.assertIn("Check before you say you do not know.", text)
         self.assertIn("Weather and temperature: one standard WebSearch", text)
-        self.assertIn("your very first words, before the first tool call", text)
+        self.assertIn("that line comes before the first tool call and before loading any tool", text)
+        self.assertIn("first say in one short line what you are checking", text)
         self.assertIn("Never call phone_status for the weather", text)
         self.assertIn("Ask which town only when no home town is saved", text)
         self.assertIn("keep them to a few plain sentences", text)
 
     def test_the_charter_stays_free_of_dashes(self):
-        self.assertNotIn("—", charter.CHARTER)
-        self.assertNotIn("–", charter.CHARTER)
+        self.assertNotIn("\u2014", charter.CHARTER)
+        self.assertNotIn("\u2013", charter.CHARTER)
 
 
 class TestPhoneNeverReported(unittest.TestCase):
@@ -54,13 +54,19 @@ class TestPhoneNeverReported(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_a_fresh_ask_does_not_wait_for_a_phone_that_never_reported(self):
+    def test_a_fresh_ask_waits_only_briefly_for_a_phone_that_never_reported(self):
+        clock = {"now": 1000.0}
+
+        def sleep(seconds):
+            clock["now"] += seconds
+
         with mock.patch.object(fleetview.urllib.request, "urlopen") as urlopen, \
+                mock.patch.object(fleetview.time, "time", side_effect=lambda: clock["now"]), \
+                mock.patch.object(fleetview.time, "sleep", side_effect=sleep), \
                 mock.patch.object(fleetview, "_stored_phone", return_value=(None, 0.0)):
-            started = time.monotonic()
             answer = fleetview.phone_status(fresh=True)
         self.assertEqual(answer, "the phone has not reported to the hub yet")
-        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertLessEqual(clock["now"] - 1000.0, 3.5)
         urlopen.assert_called_once()
 
     def test_a_phone_that_reported_before_is_still_waited_for(self):

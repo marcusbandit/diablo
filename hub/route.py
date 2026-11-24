@@ -54,6 +54,7 @@ TIER_DEFAULTS = {
 SPOKEN_DEFAULT = "claude-haiku-5-5|xhigh"
 SPOKEN_QUICK_DEFAULT = "claude-haiku-5-5|medium"
 QUICK_SUBJECTS = ("smalltalk", "info_lookup", "home_control")
+QUICK_WORDS = 12
 STICKY_SECONDS = 900
 LOG = Path.home() / ".local" / "state" / "diablo" / "route.jsonl"
 
@@ -86,7 +87,9 @@ def quick(decision):
         return False
     if decision.tier == "fast":
         return True
-    return decision.tier == "voice" and decision.subject in QUICK_SUBJECTS
+    if decision.tier != "voice" or decision.subject not in QUICK_SUBJECTS:
+        return False
+    return decision.subject != "info_lookup" or decision.features.get("words", 0) <= QUICK_WORDS
 
 
 def _brain(key, default):
@@ -478,8 +481,8 @@ DECISION_TREES = {
         ("multi_step or question or words > 14", go("voice", "several device steps or a device question")),
     ], else_=go("fast", "single device command: haiku")),
     "info_lookup": split("info_lookup", [
-        ("depth or words > 25", go("standard", "longer explanation: sonnet medium")),
-        ("words > 12 or build or dev or multi_step", go("voice", "a lookup with more to it")),
+        ("depth or words > 25", go("standard", "longer explanation")),
+        (f"words > {QUICK_WORDS} or build or dev or multi_step", go("voice", "a lookup with more to it")),
     ], else_=go("fast", "quick question: haiku is enough")),
     "reminder_schedule": split("reminder_schedule", [
         ("multi_step and words > 25", go("standard", "long multi-part scheduling")),
@@ -490,7 +493,7 @@ DECISION_TREES = {
     "study_math": split("study_math", [
         ("arithmetic and words <= 14 and not math and not hard_math", go("voice", "plain arithmetic")),
         ("hard_math or depth or words > 30", go("chat", "proof/derivation or a long problem: opus medium")),
-    ], else_=go("standard", "math/study question: sonnet medium")),
+    ], else_=go("standard", "math/study question")),
     "dev_system": split("dev_system", [
         ("build and (multi_step or depth or words > 20)", go("deep", "long build/fix work: opus high")),
         ("build", go("chat", "build/fix work on the system: opus medium")),
@@ -499,13 +502,13 @@ DECISION_TREES = {
     ], else_=go("voice", "short technical remark")),
     "research": split("research", [
         ("depth or multi_step or words > 20", go("deep", "in-depth research: opus high")),
-    ], else_=go("standard", "research: sonnet medium")),
-    "purchase": go("standard", "an order costs money: sonnet medium, asks before paying"),
+    ], else_=go("standard", "research")),
+    "purchase": go("standard", "an order costs money, asks before paying"),
     "other": split("other", [
         ("followup", go("voice", "follow-up: inherits the last tier when there is one")),
         ("build and multi_step and words >= 15", go("deep", "long multi-step build request")),
         ("words > 60", go("standard", "a long message with no clear subject")),
-    ], else_=go("voice", "no strong signal: sonnet low")),
+    ], else_=go("voice", "no strong signal")),
 }
 
 for _name in SUBJECTS:

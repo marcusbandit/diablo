@@ -137,8 +137,8 @@ def route(text, workspaces, threshold=None):
 
 
 TIER_CRITERIA = {
-    "fast": "chit-chat, thanks, a greeting, or one simple light command",
-    "voice": "a quick lookup, status check, reminder or short question",
+    "fast": "chit-chat, thanks, a greeting, one simple light command, or a quick lookup or short question",
+    "voice": "a status check, a reminder, or a lookup with more to it",
     "standard": "mail or calendar, math, an explanation, an order, a longer question",
     "chat": "fix, build or change something, or a hard problem; needs real thinking",
     "deep": "a long multi-step build or in-depth research",
