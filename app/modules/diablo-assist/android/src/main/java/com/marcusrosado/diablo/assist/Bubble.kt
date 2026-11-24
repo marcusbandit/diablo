@@ -136,6 +136,8 @@ object Bubble {
     target = x
     targetParams = targetParams()
     x.centreY = targetY() - targetParams!!.y
+    // Hidden between drags: a visible overlay, even one that takes no touches, can block taps on the app.
+    x.visibility = View.GONE
     manager.addView(x, targetParams)
     manager.addView(t, tp)
     manager.addView(h, hp)
@@ -280,7 +282,8 @@ object Bubble {
     val done: () -> Unit,
   ) : Choreographer.FrameCallback {
     private var last = 0L
-    private var running = false
+    var running = false
+      private set
     private val damping = 2f * 0.78f * sqrt(stiffness)
 
     fun start() {
@@ -329,6 +332,7 @@ object Bubble {
   private var grabX = 0f
   private var grabY = 0f
   private var dragging = false
+  private var interrupted = false
   private var captured = false
   private var chasing = false
   private var velocity: VelocityTracker? = null
@@ -339,6 +343,7 @@ object Bubble {
   private fun touch(view: View, e: MotionEvent): Boolean {
     when (e.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
+        interrupted = spring?.running == true
         spring?.stop()
         downX = e.rawX
         downY = e.rawY
@@ -363,6 +368,8 @@ object Bubble {
         head?.press(false)
         if (!dragging) {
           view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+          // Caught mid glide: he still settles at a side.
+          if (interrupted) fling(0f, 0f)
           app?.let { talk(it) }
         } else if (captured) {
           view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
@@ -378,7 +385,7 @@ object Bubble {
       }
       MotionEvent.ACTION_CANCEL -> {
         head?.press(false)
-        if (dragging) fling(0f, 0f)
+        if (dragging || interrupted) fling(0f, 0f)
         velocity?.recycle()
         velocity = null
         dragging = false
@@ -434,6 +441,8 @@ object Bubble {
 
   private fun fling(vx: Float, vy: Float) {
     head?.dragging = false
+    captured = false
+    chasing = false
     showTarget(false)
     val fast = dp(900f)
     val s = when {
@@ -451,11 +460,7 @@ object Bubble {
     spring?.stop()
     moveTo(targetX(), targetY())
     target?.swallow()
-    head?.vanish {
-      remove()
-      Talk.quiet()
-      DiabloSession.current?.hide()
-    }
+    head?.vanish { dismiss() }
   }
 
   private fun targetParams(): WindowManager.LayoutParams {
@@ -482,8 +487,12 @@ object Bubble {
       targetParams = tp
       t.centreY = targetY() - tp.y
       if (t.isAttachedToWindow) wm?.updateViewLayout(t, tp)
+      t.visibility = View.VISIBLE
+      t.rise(true)
+    } else {
+      t.hold(false)
+      t.rise(false) { if (!dragging) it.visibility = View.GONE }
     }
-    t.rise(on)
   }
 
   // ---------- the T ----------
@@ -594,6 +603,8 @@ object Bubble {
     val w = cp.width
     c.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height * 3 / 10, View.MeasureSpec.AT_MOST))
     val h = c.measuredHeight
+    // The window is as tall as the capped card, so a long reply scrolls inside it instead of spilling over him.
+    cp.height = h
     cp.x = if (side > 0) width - dp(12f) - w else dp(12f)
     val above = cy - dp(ORB) / 2f - dp(10f) - h
     cp.y = if (above >= safe.top + dp(8f)) above.roundToInt() else (cy + dp(ORB) / 2f + dp(10f)).roundToInt()
@@ -771,7 +782,7 @@ object Bubble {
         it.draw(canvas)
       }
       canvas.restore()
-      val settled = phase == Talk.Phase.RESTING && !dragging && abs(pressTarget - pressed) < 0.01f && scaleAnim?.isRunning != true
+      val settled = (phase == Talk.Phase.RESTING || phase == Talk.Phase.TROUBLE) && !dragging && abs(pressTarget - pressed) < 0.01f && scaleAnim?.isRunning != true
       if (!settled || now - stirred < IDLE_MS) postInvalidateOnAnimation()
     }
   }

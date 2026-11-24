@@ -51,7 +51,7 @@ function Preview({ step }: { step: Step }) {
       ))}
       <View style={[glass, { position: "absolute", right: 10, bottom: 98, maxWidth: 104, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 }]}>
         <Text style={{ color: color.text, fontFamily: font.regular, fontSize: 10, lineHeight: 13 }}>
-          {step === "mic" ? "Turn the lamp blue" : step === "assistant" ? "Explain this to me" : "The left one is the client."}
+          {step === "mic" ? "Turn the lamp blue" : step === "assistant" ? "Explain this to me" : "The lamp is on, sir."}
         </Text>
       </View>
       <View style={[glass, { position: "absolute", right: 52, bottom: 62, width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center" }]}>

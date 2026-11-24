@@ -112,7 +112,8 @@ object Talk {
     screen = null
     shot = null
     screenSent = false
-    if (!busy) set(Now(Phase.RESTING, "", ""))
+    // A question he is still waiting on stays: the session may open again just to hear the answer.
+    if (!busy && !now.asks) set(Now(Phase.RESTING, "", ""))
   }
 
   fun screen(read: ScreenRead) {
@@ -499,14 +500,14 @@ object Talk {
    * their words and list lines get a dot.
    */
   fun readable(text: String): CharSequence {
-    val lines = text.trim().lines().map { line ->
+    val lines = text.trim().lines().filter { !it.trim().startsWith("```") }.map { line ->
       line
         .replace(Regex("^#{1,6}\\s+"), "")
         .replace(Regex("^\\s*[-*+]\\s+(\\[[ xX]]\\s+)?"), "\u2022 ")
         .replace(Regex("^>\\s?"), "")
         .replace(Regex("\\[([^\\]]+)]\\([^)]+\\)"), "$1")
         .replace("`", "")
-    }.filter { !it.trim().startsWith("```") }
+    }
     val out = android.text.SpannableStringBuilder()
     val bold = Regex("\\*\\*(.+?)\\*\\*|__(.+?)__")
     lines.forEachIndexed { i, line ->
