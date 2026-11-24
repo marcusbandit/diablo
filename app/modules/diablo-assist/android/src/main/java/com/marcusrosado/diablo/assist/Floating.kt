@@ -140,6 +140,19 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
   }
 
   private var typingOpen = false
+
+  /** The bubble shows him over the apps: here only the typing bar is drawn, and only while typing. */
+  var docked = false
+    set(value) {
+      field = value
+      column.visibility = if (value && !typingOpen) INVISIBLE else VISIBLE
+      if (value) {
+        card.visibility = GONE
+        row.visibility = GONE
+      } else if (!typingOpen) {
+        row.visibility = VISIBLE
+      }
+    }
   private var shown: Talk.Phase? = null
   private var folder = "resting"
   private val blink = object : Runnable {
@@ -157,7 +170,9 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
     column.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     addView(column, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
 
-    orb.setOnClickListener { openTyping() }
+    orb.setOnClickListener {
+      if (Talk.now.phase == Talk.Phase.LISTENING) Talk.finishHearing() else Talk.hear(context)
+    }
     tx.setOnClickListener { openTyping() }
     mic.setOnClickListener {
       closeTyping()
@@ -230,6 +245,7 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
     Talk.stopHearing()
     row.visibility = GONE
     bar.visibility = VISIBLE
+    column.visibility = VISIBLE
     host.typing(true)
     field.requestFocus()
     field.post {
@@ -242,7 +258,7 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
     typingOpen = false
     (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(field.windowToken, 0)
     bar.visibility = GONE
-    row.visibility = VISIBLE
+    if (docked) column.visibility = INVISIBLE else row.visibility = VISIBLE
     host.typing(false)
   }
 
@@ -254,11 +270,11 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
       now.phase == Talk.Phase.LISTENING || now.phase == Talk.Phase.THINKING -> now.heard
       else -> ""
     }
-    cardText.text = text
+    cardText.text = if (now.reply.isNotEmpty()) Talk.readable(text) else text
     cardText.setTextColor(if (now.reply.isEmpty()) DIM else INK)
     cardText.typeface = if (now.reply.isEmpty()) medium else regular
-    card.visibility = if (text.isEmpty()) GONE else VISIBLE
-    if (now.reply.isNotEmpty()) card.post { card.scrollTo(0, 0) }
+    card.visibility = if (text.isEmpty() || docked) GONE else VISIBLE
+    if (now.reply.isNotEmpty() && !docked) card.post { card.scrollTo(0, 0) }
     if (shown != now.phase) {
       shown = now.phase
       folder = FOLDER.getValue(now.phase)
@@ -330,7 +346,7 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
   }
 
   companion object {
-    private val GLASS = Color.argb(160, 18, 20, 24)
+    private val GLASS = Color.argb(236, 18, 20, 24)
     private val EDGE = Color.argb(46, 255, 255, 255)
     private val INK = Color.rgb(242, 244, 246)
     private val DIM = Color.argb(200, 242, 244, 246)
@@ -354,7 +370,7 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
 
 /** The two small icons, drawn so they need no image: a T with a caret, and a microphone. */
 @SuppressLint("ViewConstructor")
-private class Glyph(context: Context, private val kind: Int) : View(context) {
+internal class Glyph(context: Context, private val kind: Int) : View(context) {
   private val pen = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     color = Color.rgb(242, 244, 246)
     style = Paint.Style.STROKE

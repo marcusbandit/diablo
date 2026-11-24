@@ -18,7 +18,7 @@ type Copy = { ask: string; done: string; act: string; faceAsk: string; fill: str
 const COPY: Record<Step, Copy> = {
   mic: { ask: "Just talk. I listen first.", done: "I can hear you now, sir.", act: "Let me hear you", faceAsk: "listening", fill: state.listening, ink: "#0d1a22" },
   assistant: { ask: "Hold power, and I'm on any screen.", done: "Hold power and I'm there, sir.", act: "Open the assistant page", faceAsk: "expectant", fill: state.listening, ink: "#0d1a22" },
-  overlay: { ask: "Let me stay on screen while I finish.", done: "I can float over your apps now.", act: "Allow drawing over apps", faceAsk: "delighted", fill: state.speaking, ink: "#0c1f15" },
+  overlay: { ask: "I'll float over your apps. Tap to talk.", done: "I can float over your apps now.", act: "Allow drawing over apps", faceAsk: "delighted", fill: state.speaking, ink: "#0c1f15" },
 };
 
 /** The exact clicks on Android's side, with its own labels. */
@@ -37,7 +37,7 @@ function useStatus(): [AssistStatus, () => void] {
   return [now, read];
 }
 
-/** A small phone with an app on it and him floating at the bottom, the way it will look. */
+/** A small phone with an app on it and him floating at its side as a bubble, the way it will look. */
 function Preview({ step }: { step: Step }) {
   const glass = { backgroundColor: "rgba(18,20,24,0.66)", borderColor: "rgba(255,255,255,0.18)", borderWidth: 1 } as const;
   return (
@@ -49,17 +49,15 @@ function Preview({ step }: { step: Step }) {
       {[92, 86, 90, 70].map((w, i) => (
         <View key={i} style={{ height: 5, width: `${w}%`, borderRadius: 2, backgroundColor: "#c9c5bd", marginBottom: 5 }} />
       ))}
-      {step === "overlay" ? (
-        <View style={{ position: "absolute", left: 12, right: 12, top: 96, gap: 16 }}>
-          <Text style={[glass, { alignSelf: "flex-start", color: color.text, fontFamily: font.medium, fontSize: 10, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 }]}>Client</Text>
-          <Text style={[glass, { alignSelf: "flex-end", color: color.text, fontFamily: font.medium, fontSize: 10, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 }]}>Server</Text>
-        </View>
-      ) : (
-        <View style={[glass, { position: "absolute", left: 10, right: 10, bottom: 58, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 }]}>
-          <Text style={{ color: color.text, fontFamily: font.regular, fontSize: 10, lineHeight: 13 }}>{step === "mic" ? "Turn the lamp blue" : "Explain this to me"}</Text>
-        </View>
-      )}
-      <View style={[glass, { position: "absolute", bottom: 12, alignSelf: "center", left: 54, width: 40, height: 40, borderRadius: 20, borderColor: COPY[step].fill, borderWidth: 2, alignItems: "center", justifyContent: "center" }]}>
+      <View style={[glass, { position: "absolute", right: 10, bottom: 98, maxWidth: 104, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 }]}>
+        <Text style={{ color: color.text, fontFamily: font.regular, fontSize: 10, lineHeight: 13 }}>
+          {step === "mic" ? "Turn the lamp blue" : step === "assistant" ? "Explain this to me" : "The lamp is on, sir."}
+        </Text>
+      </View>
+      <View style={[glass, { position: "absolute", right: 52, bottom: 62, width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center" }]}>
+        <Text style={{ color: color.text, fontFamily: font.medium, fontSize: 10, lineHeight: 12 }}>T</Text>
+      </View>
+      <View style={[glass, { position: "absolute", right: 6, bottom: 54, width: 40, height: 40, borderRadius: 20, borderColor: COPY[step].fill, borderWidth: 2, alignItems: "center", justifyContent: "center" }]}>
         <Image source={face(step === "overlay" ? "talking" : "listening")} style={{ width: 28, height: 28, tintColor: color.text }} />
       </View>
     </View>
