@@ -250,32 +250,70 @@ def test_no_tier_default_uses_an_effort_outside_high_medium_xhigh():
 
 @pytest.mark.parametrize("text", [
     "what's the temperature today?", "what time is it", "hey diablo", "how are you", "turn off the lights",
-    "is it going to rain",
+    "is it going to rain", "check my inbox", "explain eigenvalues to me",
+    "who was the first person on the moon and how did they get back home again afterwards",
 ])
-def test_a_quick_spoken_line_runs_on_the_quick_brain(text):
+def test_a_spoken_line_that_needs_no_planning_answers_at_once(text):
     decision = route.route(text, conv=text, handoff=False)
-    assert route.quick(decision), (decision.tier, decision.subject)
+    assert not route.spoken_thinks(decision), (decision.tier, decision.subject)
     assert route.spoken_brain(decision) == ("claude-haiku-5-5", "medium")
 
 
-@pytest.mark.parametrize("text", [
-    "fix the crash in banditshell", "check my inbox", "explain eigenvalues to me", "think hard about the weather",
-])
-def test_real_work_said_aloud_keeps_the_spoken_brain(text):
+@pytest.mark.parametrize("text", ["fix the crash in banditshell", "think hard about the weather"])
+def test_work_that_needs_planning_said_aloud_thinks_first(text):
     decision = route.route(text, conv=text, handoff=False)
-    assert not route.quick(decision), (decision.tier, decision.subject)
+    assert route.spoken_thinks(decision), (decision.tier, decision.subject)
     assert route.spoken_brain(decision) == ("claude-haiku-5-5", "xhigh")
 
 
-def test_a_long_lookup_said_aloud_is_not_quick():
-    decision = route.route("who was the first person on the moon and how did they get back home again afterwards", conv="l", handoff=False)
-    assert decision.tier == "voice" and not route.quick(decision)
-    assert route.spoken_brain(decision) == ("claude-haiku-5-5", "xhigh")
-
-
-def test_a_handoff_is_never_quick():
+def test_a_handoff_said_aloud_thinks_first():
     decision = route.route("build me a new app for my plants", conv="h")
-    assert decision.handoff and not route.quick(decision)
+    assert decision.handoff and route.spoken_thinks(decision)
+    assert route.spoken_brain(decision) == ("claude-haiku-5-5", "xhigh")
+
+
+def test_a_line_whose_work_went_to_the_background_answers_at_once():
+    decision = route.route("think hard about the weather", conv="bg", handoff=False)
+    decision.background = (decision.model, decision.effort)
+    assert not route.spoken_thinks(decision)
+
+
+def test_the_think_tier_comes_from_settings(fake_settings):
+    decision = route.route("fix the crash in banditshell", conv="tt", handoff=False)
+    fake_settings["route.spoken_think_tier"] = "never"
+    assert not route.spoken_thinks(decision)
+    fake_settings["route.spoken_think_tier"] = "always"
+    assert route.spoken_thinks(route.route("what time is it", conv="tt2", handoff=False))
+    fake_settings["route.spoken_think_tier"] = "voice"
+    assert route.spoken_thinks(route.route("check my inbox", conv="tt3", handoff=False))
+
+
+def test_no_decision_gets_the_brain_most_spoken_lines_run_on_for_priming(fake_settings):
+    assert route.spoken_brain() == ("claude-haiku-5-5", "medium")
+    fake_settings["route.spoken_quick"] = "claude-sonnet-5-5|high"
+    assert route.spoken_brain() == ("claude-sonnet-5-5", "high")
+
+
+def test_an_unknown_think_tier_keeps_the_default(fake_settings):
+    fake_settings["route.spoken_think_tier"] = "standrad"
+    assert route.spoken_thinks(route.route("fix the crash in banditshell", conv="ut", handoff=False))
+    assert not route.spoken_thinks(route.route("check my inbox", conv="ut2", handoff=False))
+
+
+def test_think_says_which_brain_the_line_got(fake_settings):
+    decision = route.route("what time is it", conv="tw", handoff=False)
+    assert route.spoken_pick(decision) == (("claude-haiku-5-5", "medium"), False)
+    fake_settings["route.spoken_quick"] = "off"
+    assert route.spoken_pick(decision) == (("claude-haiku-5-5", "xhigh"), True)
+    fake_settings["route.spoken"] = "off"
+    assert route.spoken_pick(decision) == (None, None)
+
+
+def test_a_turn_nobody_spoke_logs_no_think():
+    decision = route.route("what time is it", conv="tl", handoff=False)
+    assert "think" not in decision.log_row()
+    decision.think = False
+    assert decision.log_row()["think"] is False
 
 
 def test_the_quick_spoken_brain_comes_from_settings(fake_settings):
