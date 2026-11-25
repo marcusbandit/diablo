@@ -235,8 +235,8 @@ if __name__ == "__main__":
 
 
 class TestSpokenBrain(unittest.TestCase):
-    def decide(self, origin, explicit=False, setting=None, machine=False):
-        decision = mock.MagicMock(tier="chat", handoff=None, explicit=explicit, model="claude-opus-5-5", effort="medium",
+    def decide(self, origin, explicit=False, setting=None, machine=False, tier="chat"):
+        decision = mock.MagicMock(tier=tier, handoff=None, explicit=explicit, model="claude-opus-5-5", effort="medium",
                                   background=())
         decision.adjusted = []
         values = {"route.spoken": setting}
@@ -245,9 +245,10 @@ class TestSpokenBrain(unittest.TestCase):
                 mock.patch.object(brains.route.settings, "get", side_effect=lambda key, *a: values.get(key)):
             return brains.pick_tier("main", "what is on my calendar", None, origin, machine=machine)
 
-    def test_a_line_said_aloud_runs_on_haiku_xhigh(self):
+    def test_spoken_work_that_needs_planning_runs_on_haiku_xhigh(self):
         decision = self.decide("spoken aloud at his desk, transcribed by Whisper, the reply is spoken aloud")
         self.assertEqual((decision.model, decision.effort), ("claude-haiku-5-5", "xhigh"))
+        self.assertTrue(decision.think)
 
     def test_typed_lines_and_voice_notes_keep_the_tier_model(self):
         for origin in ("telegram", "desktop app on watcher tablet", "telegram voice note"):
@@ -256,8 +257,15 @@ class TestSpokenBrain(unittest.TestCase):
 
     def test_asking_aloud_for_the_big_brain_sends_it_to_the_background(self):
         decision = self.decide("spoken aloud at his desk", explicit=True)
-        self.assertEqual((decision.model, decision.effort), ("claude-haiku-5-5", "xhigh"))
+        self.assertEqual((decision.model, decision.effort), ("claude-haiku-5-5", "medium"))
         self.assertEqual(decision.background, ("claude-opus-5-5", "medium"))
+        self.assertFalse(decision.think)
+
+    def test_a_spoken_line_that_needs_no_planning_runs_at_medium(self):
+        for tier in ("fast", "voice", "standard"):
+            decision = self.decide("spoken aloud at his desk", tier=tier)
+            self.assertEqual((decision.model, decision.effort), ("claude-haiku-5-5", "medium"), tier)
+            self.assertFalse(decision.think)
 
     def test_a_plain_spoken_line_has_no_background_run(self):
         self.assertEqual(self.decide("spoken aloud at his desk").background, ())

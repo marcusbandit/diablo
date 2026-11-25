@@ -1312,10 +1312,12 @@ def pick_tier(conv, text, images, origin, answer=None, recent_light=False, needs
         if machine and route.rank(decision.tier) < route.rank("voice"):
             decision.tier = "voice"
             decision.model, decision.effort = route.model_effort("voice")
-        brain = route.spoken_brain(decision) if aloud(origin) and not machine else None
+        spoken = aloud(origin) and not machine
+        if spoken and decision.explicit and not decision.handoff and route.spoken_brain(decision):
+            decision.background = (decision.model, decision.effort)
+        brain = route.spoken_brain(decision) if spoken else None
         if brain:
-            if decision.explicit and not decision.handoff:
-                decision.background = (decision.model, decision.effort)
+            decision.think = route.spoken_thinks(decision)
             decision.adjusted.append(f"spoken aloud: {decision.model} {decision.effort} -> {brain[0]} {brain[1]}"
                                      + (" with the asked-for brain in the background" if decision.background else ""))
             decision.model, decision.effort = brain

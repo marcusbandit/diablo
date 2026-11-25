@@ -19,16 +19,20 @@ Precedence in route():
 3. The tree tier, capped at route.max_tier (default chat) and floored at
    route.min_tier (default none).
 
-A line said aloud at his desk then always runs on route.spoken (default
-"claude-haiku-5-5|xhigh", off keeps the tier's model), so the spoken answer stays
-fast. A quick one, chit-chat or a short question (quick()), runs on route.spoken_quick
-(default "claude-haiku-5-5|medium") instead: xhigh thought for seconds before "it is
-four degrees". When he asked aloud for the big brain ("think hard", "use opus"), that model
+A line said aloud at his desk then runs on route.spoken_quick (default
+"claude-haiku-5-5|medium"), so its first word streams at once: xhigh thought for 8 s on a
+median spoken turn before it said anything. Only a line that has to think first
+(spoken_thinks()) runs on route.spoken (default "claude-haiku-5-5|xhigh"): one that hands work
+to a T3 thread, or work at route.spoken_think_tier (default chat) or above, such as build work,
+mail across several steps or a proof. Thinking cannot be switched off on these models (the claude
+CLI says so and ignores --thinking disabled), so effort is the lever. Off for route.spoken keeps
+the tier's model. When he asked aloud for the big brain ("think hard", "use opus"), that model
 gets the work as a background run instead (brains.run_deep), and its outcome lands
 in the app. Typed lines, voice notes and machine turns keep the tier's model.
 
 Settings: route.enabled (on/off; off still computes and logs the decision),
-route.max_tier, route.min_tier, route.tier.<tier>, route.spoken, route.spoken_quick. Log: ~/.local/state/diablo/route.jsonl.
+route.max_tier, route.min_tier, route.tier.<tier>, route.spoken, route.spoken_quick,
+route.spoken_think_tier. Log: ~/.local/state/diablo/route.jsonl.
 Trees are data at the bottom of this file; `python -m hub.route show` prints them,
 `python -m hub.route classify TEXT` explains one line.
 """
@@ -53,8 +57,8 @@ TIER_DEFAULTS = {
 }
 SPOKEN_DEFAULT = "claude-haiku-5-5|xhigh"
 SPOKEN_QUICK_DEFAULT = "claude-haiku-5-5|medium"
-QUICK_SUBJECTS = ("smalltalk", "info_lookup", "home_control")
 QUICK_WORDS = 12
+SPOKEN_THINK_TIER = "chat"
 STICKY_SECONDS = 900
 LOG = Path.home() / ".local" / "state" / "diablo" / "route.jsonl"
 
@@ -80,18 +84,6 @@ def model_effort(tier):
     return model.strip() or default_model, effort.strip() or default_effort
 
 
-def quick(decision):
-    """A turn that only wants a fast plain answer: the fast tier, or chit-chat, a short lookup or one
-    device question at the voice tier, with no explicit ask for the big brain and no T3 handoff."""
-    if decision is None or decision.explicit or decision.handoff:
-        return False
-    if decision.tier == "fast":
-        return True
-    if decision.tier != "voice" or decision.subject not in QUICK_SUBJECTS:
-        return False
-    return decision.subject != "info_lookup" or decision.features.get("words", 0) <= QUICK_WORDS
-
-
 def _brain(key, default):
     raw = str(settings.get(key) or default).strip()
     if raw.lower() in ("0", "off", "false", "no", "tier"):
@@ -102,12 +94,29 @@ def _brain(key, default):
 
 
 def spoken_brain(decision=None):
-    """(model, effort) for a line spoken aloud at his desk, from route.spoken, or None when it is off.
-    A quick line takes route.spoken_quick; off there falls back to route.spoken."""
+    """(model, effort) for a line spoken aloud at his desk, or None when route.spoken is off. A line
+    that has to think first takes route.spoken, every other one route.spoken_quick; off there falls
+    back to route.spoken."""
     brain = _brain("route.spoken", SPOKEN_DEFAULT)
-    if brain is None or not quick(decision):
+    if brain is None or decision is None or spoken_thinks(decision):
         return brain
     return _brain("route.spoken_quick", SPOKEN_QUICK_DEFAULT) or brain
+
+
+def spoken_thinks(decision):
+    """Whether a line said aloud may think before it answers. Only a T3 handoff and work at
+    route.spoken_think_tier or above do; "never" leaves only handoffs, "always" every line. A line
+    whose heavy work went to a background run answers in one line, so it does not."""
+    if decision.handoff:
+        return True
+    if decision.background:
+        return False
+    raw = str(settings.get("route.spoken_think_tier") or SPOKEN_THINK_TIER).strip().lower()
+    if raw in ("always", "on", "all"):
+        return True
+    if raw not in TIERS:
+        return False
+    return rank(decision.tier) >= rank(raw)
 
 
 # =========================================================== features
@@ -536,13 +545,14 @@ class Decision:
     jev: dict = None
     direct: dict = None
     handoff: dict = None
+    think: bool = True
 
     def log_row(self, **extra):
         row = {
             "id": self.id, "subject": self.subject, "tier": self.tier, "model": self.model,
             "effort": self.effort, "reason": self.reason, "path": list(self.path),
             "explicit": self.explicit, "applied": self.applied, "elapsed_us": self.elapsed_us,
-            "source": self.source,
+            "source": self.source, "think": self.think,
         }
         if self.jev:
             row["jev"] = dict(self.jev)
