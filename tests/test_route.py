@@ -288,8 +288,32 @@ def test_the_think_tier_comes_from_settings(fake_settings):
     assert route.spoken_thinks(route.route("check my inbox", conv="tt3", handoff=False))
 
 
-def test_no_decision_gets_the_thinking_brain_for_priming():
-    assert route.spoken_brain() == ("claude-haiku-5-5", "xhigh")
+def test_no_decision_gets_the_brain_most_spoken_lines_run_on_for_priming(fake_settings):
+    assert route.spoken_brain() == ("claude-haiku-5-5", "medium")
+    fake_settings["route.spoken_quick"] = "claude-sonnet-5-5|high"
+    assert route.spoken_brain() == ("claude-sonnet-5-5", "high")
+
+
+def test_an_unknown_think_tier_keeps_the_default(fake_settings):
+    fake_settings["route.spoken_think_tier"] = "standrad"
+    assert route.spoken_thinks(route.route("fix the crash in banditshell", conv="ut", handoff=False))
+    assert not route.spoken_thinks(route.route("check my inbox", conv="ut2", handoff=False))
+
+
+def test_think_says_which_brain_the_line_got(fake_settings):
+    decision = route.route("what time is it", conv="tw", handoff=False)
+    assert route.spoken_pick(decision) == (("claude-haiku-5-5", "medium"), False)
+    fake_settings["route.spoken_quick"] = "off"
+    assert route.spoken_pick(decision) == (("claude-haiku-5-5", "xhigh"), True)
+    fake_settings["route.spoken"] = "off"
+    assert route.spoken_pick(decision) == (None, None)
+
+
+def test_a_turn_nobody_spoke_logs_no_think():
+    decision = route.route("what time is it", conv="tl", handoff=False)
+    assert "think" not in decision.log_row()
+    decision.think = False
+    assert decision.log_row()["think"] is False
 
 
 def test_the_quick_spoken_brain_comes_from_settings(fake_settings):

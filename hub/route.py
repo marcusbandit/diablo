@@ -93,20 +93,29 @@ def _brain(key, default):
     return model.strip() or default_model, effort.strip() or default_effort
 
 
-def spoken_brain(decision=None):
-    """(model, effort) for a line spoken aloud at his desk, or None when route.spoken is off. A line
-    that has to think first takes route.spoken, every other one route.spoken_quick; off there falls
-    back to route.spoken."""
+def spoken_pick(decision=None):
+    """((model, effort), thinks) for a line spoken aloud at his desk, or (None, None) when route.spoken
+    is off. A line that has to think first takes route.spoken, every other one route.spoken_quick;
+    off there falls back to route.spoken, and thinks says which one it got. With no decision it is
+    the brain most spoken lines run on, the one a waiting session is primed for."""
     brain = _brain("route.spoken", SPOKEN_DEFAULT)
-    if brain is None or decision is None or spoken_thinks(decision):
-        return brain
-    return _brain("route.spoken_quick", SPOKEN_QUICK_DEFAULT) or brain
+    if brain is None:
+        return None, None
+    if decision is not None and spoken_thinks(decision):
+        return brain, True
+    quick = _brain("route.spoken_quick", SPOKEN_QUICK_DEFAULT)
+    return (quick, False) if quick else (brain, True)
+
+
+def spoken_brain(decision=None):
+    return spoken_pick(decision)[0]
 
 
 def spoken_thinks(decision):
     """Whether a line said aloud may think before it answers. Only a T3 handoff and work at
-    route.spoken_think_tier or above do; "never" leaves only handoffs, "always" every line. A line
-    whose heavy work went to a background run answers in one line, so it does not."""
+    route.spoken_think_tier or above do; "never" leaves only handoffs, "always" every line, and any
+    other word keeps the default tier. A line whose heavy work went to a background run answers in
+    one line, so it does not."""
     if decision.handoff:
         return True
     if decision.background:
@@ -114,9 +123,9 @@ def spoken_thinks(decision):
     raw = str(settings.get("route.spoken_think_tier") or SPOKEN_THINK_TIER).strip().lower()
     if raw in ("always", "on", "all"):
         return True
-    if raw not in TIERS:
+    if raw in ("never", "off", "none"):
         return False
-    return rank(decision.tier) >= rank(raw)
+    return rank(decision.tier) >= rank(raw if raw in TIERS else SPOKEN_THINK_TIER)
 
 
 # =========================================================== features
@@ -545,15 +554,17 @@ class Decision:
     jev: dict = None
     direct: dict = None
     handoff: dict = None
-    think: bool = True
+    think: bool = None
 
     def log_row(self, **extra):
         row = {
             "id": self.id, "subject": self.subject, "tier": self.tier, "model": self.model,
             "effort": self.effort, "reason": self.reason, "path": list(self.path),
             "explicit": self.explicit, "applied": self.applied, "elapsed_us": self.elapsed_us,
-            "source": self.source, "think": self.think,
+            "source": self.source,
         }
+        if self.think is not None:
+            row["think"] = self.think
         if self.jev:
             row["jev"] = dict(self.jev)
         if self.direct:

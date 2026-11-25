@@ -261,6 +261,17 @@ class TestSpokenBrain(unittest.TestCase):
         self.assertEqual(decision.background, ("claude-opus-5-5", "medium"))
         self.assertFalse(decision.think)
 
+    def test_a_locked_desk_keeps_the_asked_for_work_in_front_on_the_thinking_brain(self):
+        from hub import route
+
+        decision = route.Decision(subject="other", tier="deep", reason="", path=["x"], explicit=True)
+        decision.model, decision.effort = "claude-haiku-5-5", "medium"
+        decision.background, decision.think = ("claude-opus-5-5", "high"), False
+        with mock.patch.object(route.settings, "get", return_value=None):
+            brains.keep_in_front(decision)
+        self.assertEqual(decision.background, ())
+        self.assertEqual((decision.model, decision.effort, decision.think), ("claude-haiku-5-5", "xhigh", True))
+
     def test_a_spoken_line_that_needs_no_planning_runs_at_medium(self):
         for tier in ("fast", "voice", "standard"):
             decision = self.decide("spoken aloud at his desk", tier=tier)

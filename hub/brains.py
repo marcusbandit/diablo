@@ -791,6 +791,16 @@ DEEP_NOTE = ("(He asked aloud for the big brain. A background run on it already 
              "and do not do the heavy work yourself.)")
 
 
+def keep_in_front(decision):
+    """No background run starts while the desk is locked, so the spoken turn does the work itself, on
+    the brain it would have had without one."""
+    decision.background = ()
+    brain, thinks = route.spoken_pick(decision)
+    if brain:
+        decision.model, decision.effort = brain
+        decision.think = thinks
+
+
 def launch_deep(conv, text, images, decision, guard):
     """Heavy work asked for aloud goes to its own run on the asked-for model; the spoken turn stays quick.
     Only an unrestricted turn may start one, and the lock is read again just before it starts."""
@@ -1315,9 +1325,9 @@ def pick_tier(conv, text, images, origin, answer=None, recent_light=False, needs
         spoken = aloud(origin) and not machine
         if spoken and decision.explicit and not decision.handoff and route.spoken_brain(decision):
             decision.background = (decision.model, decision.effort)
-        brain = route.spoken_brain(decision) if spoken else None
+        brain, thinks = route.spoken_pick(decision) if spoken else (None, None)
         if brain:
-            decision.think = route.spoken_thinks(decision)
+            decision.think = thinks
             decision.adjusted.append(f"spoken aloud: {decision.model} {decision.effort} -> {brain[0]} {brain[1]}"
                                      + (" with the asked-for brain in the background" if decision.background else ""))
             decision.model, decision.effort = brain
@@ -1478,6 +1488,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
     if decision is not None and decision.background:
         if guard.restricted:
             logger.info("%s: no background run for %r while the desk is locked", conv, said[:80])
+            keep_in_front(decision)
         else:
             launch_deep(conv, text, images, decision, guard)
             notes = [DEEP_NOTE] + list(notes or [])
