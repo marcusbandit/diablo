@@ -1,4 +1,3 @@
-import datetime
 import json
 import logging
 import os
@@ -6,7 +5,7 @@ import re
 import subprocess
 import time
 
-from . import brain, character, db, fleet, fleetview, hue, llm, lockguard, modules, persona, questions
+from . import brain, character, clock, db, fleet, fleetview, hue, llm, lockguard, modules, persona, questions
 
 logger = logging.getLogger(__name__)
 
@@ -388,8 +387,13 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "now",
-            "description": "Current local date and time.",
-            "parameters": {"type": "object", "properties": {}},
+            "description": "Current date and time. With no place it is home time; with place it is the local time there, with weekday, date and zone. Use it for the time anywhere instead of working out an offset yourself.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "place": {"type": "string", "description": "optional city, region or country, like Quebec, Tokyo or Copenhagen"},
+                },
+            },
         },
     },    {
         "type": "function",
@@ -488,10 +492,6 @@ def _run_shell(command):
     if len(output) > OUTPUT_LIMIT:
         output = output[:OUTPUT_LIMIT]
     return f"exit code {proc.returncode}\n{output}"
-
-
-def _now():
-    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def publish_step(chat_id, step):
@@ -720,7 +720,7 @@ def _call_tool(name, arguments, ctx=None):
     if name == "fleet_where":
         return fleetview.fleet_where()
     if name == "now":
-        return _now()
+        return clock.now(arguments.get("place"))
     if modules.owner(name) is not None:
         return modules.call(name, arguments)
     return "unknown tool"

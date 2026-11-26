@@ -17,14 +17,14 @@ SERVER_INFO = {"name": "diablo", "version": "2.0"}
 SHARED = (
     "save_fact", "recall_facts", "emit_object", "workspace_todo", "hue_light",
     "phone_status", "fleet_power", "fleet_where", "brain_search", "brain_read", "brain_log", "update_task", "list_tasks",
-    "ask_user", "cancel_question",
+    "ask_user", "cancel_question", "now",
 )
 # Loaded into the prompt up front instead of behind the claude CLI's tool search, so a quick turn
 # answers without a round trip to load them: what quick questions, small errands and handing work
 # to T3 reach for first. Each costs prompt tokens on every turn, so the long tail stays deferred.
 ALWAYS_LOADED = (
     "recall_facts", "save_fact", "phone_status", "hue_light", "ask_user", "add_reminder", "list_reminders",
-    "fleet_where", "t3_where", "watch_t3_thread", "thread_history", "list_tasks", "guests",
+    "fleet_where", "t3_where", "watch_t3_thread", "thread_history", "list_tasks", "guests", "now",
 )
 LOADED_META = {"anthropic/alwaysLoad": True}
 EXTRA = [
