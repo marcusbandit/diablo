@@ -776,29 +776,9 @@ WAKE_KEY = "wake.pending"
 
 
 def send_wake():
-    import subprocess
+    from . import boot
 
-    import ipaddress
-
-    from . import localenv
-
-    mac = str(settings.get("fleet.banditbox.mac") or localenv.get("DIABLO_WOL_MAC"))
-    if not mac:
-        return False
-    sent = []
-    attempts = [["wakeonlan", mac]]
-    subnet = str(settings.get("network.home_subnet") or "")
-    try:
-        attempts.append(["wakeonlan", "-i", str(ipaddress.ip_network(subnet, strict=False).broadcast_address), mac])
-    except ValueError:
-        pass
-    for argv in attempts:
-        try:
-            done = subprocess.run(argv, capture_output=True, text=True, timeout=10)
-            sent.append(done.returncode == 0)
-        except (OSError, subprocess.TimeoutExpired):
-            sent.append(False)
-    return any(sent)
+    return boot.send_wake()
 
 
 def wake(arguments):

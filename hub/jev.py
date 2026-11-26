@@ -153,7 +153,8 @@ ACTION_CRITERIA = {
     "cooler": "make the light cooler, colder, bluer white",
     "again": "do the last light change once more",
     "undo": "put the lights back how they were before the last change",
-    "none": "anything else: a question, several different things, or not about lights",
+    "boot_pc": "boot, wake, start or turn on his PC or desktop computer, also by its name",
+    "none": "anything else: a question, several different things, or not about lights or booting his PC",
 }
 TARGET_CRITERIA = {
     "all": "all the lights, or the room as a whole",
@@ -384,7 +385,7 @@ def decide(text, card="", labels=(), timeout=None, extra=None):
 
     questions = {
         "tier": {"type": "choice", "instructions": "How much brain does Diablo need for this new line", "criteria": TIER_CRITERIA},
-        "action": {"type": "choice", "instructions": "Is the new line one direct light change Diablo can do without thinking", "criteria": ACTION_CRITERIA},
+        "action": {"type": "choice", "instructions": "Is the new line one direct change Diablo can do without thinking: a light change, or booting his PC", "criteria": ACTION_CRITERIA},
         "target": {"type": "choice", "instructions": "Which lights the new line means, using the recent events for it or that", "criteria": TARGET_CRITERIA},
         "amount": {"type": "choice", "instructions": "How big a change the new line asks for", "criteria": AMOUNT_CRITERIA},
         "color": {"type": "choice", "instructions": "The color the new line names, if any", "criteria": COLOR_CRITERIA},

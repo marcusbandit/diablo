@@ -234,6 +234,8 @@ def lamp_states():
             "bri": state.get("bri"),
             "reachable": state.get("reachable") is not False,
             "ct": _kelvin(state.get("ct")) if state.get("ct") else None,
+            "xy": list(state.get("xy") or [])[:2] or None,
+            "gamut": control.get("colorgamut"),
             "caps": {
                 "color": bool(control.get("colorgamut")),
                 "ct": [low, high] if low and high else None,

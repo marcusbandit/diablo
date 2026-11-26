@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import busy as busy_turns
 from . import agent, character, charter, context, db, events, hue, jev, lockguard, modules, questions, route, sentences, settings, standby, t3link, threads, usage
-from . import learn, showcase, skillbook
+from . import boot, learn, showcase, skillbook
 
 logger = logging.getLogger(__name__)
 
@@ -1170,13 +1170,13 @@ def _name(slot):
     return "all lights" if slot == "all" else "the " + context.LAMP_NAMES.get(slot, slot)
 
 
-def apply_light(action, slot, lamps, before_event=None):
-    """Run one direct light action. Returns (result text, what was done) or None for unknown."""
+def light_plan(action, slot, lamps, before_event=None):
+    """The bridge calls for one direct light action: ([(target, word, options)], what was done), or None."""
     kind = action["action"]
     chosen = [lamp for lamp in lamps if slot == "all" or lamp["id"] == slot]
     if kind in ("lights_on", "lights_off"):
         word = kind.split("_")[1]
-        return hue.hue_light(word, slot), f"turned {_name(slot)} {word}"
+        return [(slot, word, {})], f"turned {_name(slot)} {word}"
     if kind in ("dim", "brighten"):
         if not chosen:
             return None
@@ -1185,35 +1185,143 @@ def apply_light(action, slot, lamps, before_event=None):
             lit = [lamp for lamp in chosen if lamp.get("on")]
             if not lit:
                 level = DIM_FROM_OFF.get(action.get("amount"), 25)
-                results = [hue.hue_light("on", lamp["id"], brightness=level) for lamp in chosen]
-                return ", ".join(results), f"turned {_name(slot)} on dimmed to {level}%"
+                return [(lamp["id"], "on", {"brightness": level}) for lamp in chosen], \
+                    f"turned {_name(slot)} on dimmed to {level}%"
             chosen = lit
-        results, levels = [], []
+        calls, levels = [], []
         for lamp in chosen:
             start = _pct(lamp) if lamp.get("on") else 0
             level = max(1, min(100, start + step))
-            results.append(hue.hue_light("on", lamp["id"], brightness=level))
+            calls.append((lamp["id"], "on", {"brightness": level}))
             levels.append(f"the {lamp['name']} to {level}%")
-        return ", ".join(results), ("dimmed " if kind == "dim" else "brightened ") + ", ".join(levels)
+        return calls, ("dimmed " if kind == "dim" else "brightened ") + ", ".join(levels)
     if kind == "color":
-        return hue.hue_light("on", slot, color=action["color"]), f"made {_name(slot)} {action['color']}"
+        return [(slot, "on", {"color": action["color"]})], f"made {_name(slot)} {action['color']}"
     if kind in ("warmer", "cooler"):
         big = action.get("amount") == "large"
         kelvin = (2200 if big else 2600) if kind == "warmer" else (6500 if big else 5000)
-        return hue.hue_light("on", slot, temperature=kelvin), f"made {_name(slot)} {kind} ({kelvin} K)"
+        return [(slot, "on", {"temperature": kelvin})], f"made {_name(slot)} {kind} ({kelvin} K)"
     if kind == "undo":
         saved = (before_event or {}).get("before") or []
         if not saved:
             return None
-        results = []
+        calls = []
         for lamp in saved:
             if lamp.get("on"):
                 color = lamp.get("color")
-                results.append(hue.hue_light("on", lamp["id"], brightness=_pct(lamp), color=None if color in (None, "#f2f1ee") else color))
+                calls.append((lamp["id"], "on", {"brightness": _pct(lamp),
+                                                 "color": None if color in (None, "#f2f1ee") else color}))
             else:
-                results.append(hue.hue_light("off", lamp["id"]))
-        return ", ".join(results), "put the lights back as they were"
+                calls.append((lamp["id"], "off", {}))
+        return calls, "put the lights back as they were"
     return None
+
+
+def run_calls(calls):
+    return ", ".join(hue.hue_light(word, target, **options) for target, word, options in calls)
+
+
+def apply_light(action, slot, lamps, before_event=None):
+    """Run one direct light action. Returns (result text, what was done) or None for unknown."""
+    plan = light_plan(action, slot, lamps, before_event)
+    if plan is None:
+        return None
+    calls, did = plan
+    return run_calls(calls), did
+
+
+COLOR_SLACK = 0.06
+BRIGHTNESS_SLACK = 3
+
+
+def _in_gamut(xy, gamut):
+    """The closest point to xy inside the lamp's colour triangle: where the bridge puts a colour it cannot make."""
+    try:
+        corners = [tuple(map(float, corner)) for corner in gamut][:3]
+    except (TypeError, ValueError):
+        return xy
+    if len(corners) != 3:
+        return xy
+    (ax, ay), (bx, by), (cx, cy) = corners
+    px, py = xy
+
+    def side(x1, y1, x2, y2):
+        return (px - x2) * (y1 - y2) - (x1 - x2) * (py - y2)
+
+    signs = (side(ax, ay, bx, by), side(bx, by, cx, cy), side(cx, cy, ax, ay))
+    if all(value >= 0 for value in signs) or all(value <= 0 for value in signs):
+        return xy
+
+    def nearest(x1, y1, x2, y2):
+        dx, dy = x2 - x1, y2 - y1
+        length = dx * dx + dy * dy
+        t = 0.0 if length == 0 else max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / length))
+        return (x1 + t * dx, y1 + t * dy)
+
+    points = [nearest(ax, ay, bx, by), nearest(bx, by, cx, cy), nearest(cx, cy, ax, ay)]
+    return min(points, key=lambda point: (point[0] - px) ** 2 + (point[1] - py) ** 2)
+
+
+def light_problems(calls, after):
+    """What the bridge reports that does not match the calls, one plain phrase per lamp, and the slots to retry."""
+    if not after:
+        logger.warning("the bridge gave no read-back, the light change stays unchecked")
+        return [], []
+    by_slot = {lamp["id"]: lamp for lamp in after}
+    problems, retry = [], []
+    for target, word, options in calls:
+        slots = list(by_slot) if target == "all" else [target]
+        for slot in slots:
+            lamp = by_slot.get(slot)
+            name = "the " + context.LAMP_NAMES.get(slot, slot)
+            if lamp is None:
+                problems.append(f"{name} did not report back")
+                retry.append((slot, word, options))
+                continue
+            if not lamp.get("reachable", True):
+                problems.append(f"{name} is not reachable")
+                retry.append((slot, word, options))
+                continue
+            want_on = word == "on" or any(options.get(k) is not None for k in ("brightness", "color", "temperature"))
+            wrong = None
+            if bool(lamp.get("on")) != want_on:
+                wrong = f"{name} did not turn {'on' if want_on else 'off'}"
+            elif options.get("brightness") is not None and abs(_pct(lamp) - round(float(options["brightness"]))) > BRIGHTNESS_SLACK:
+                wrong = f"{name} is at {_pct(lamp)}%, not {round(float(options['brightness']))}%"
+            elif options.get("color") and (lamp.get("caps") or {}).get("color") and lamp.get("xy"):
+                wanted = hue._resolve_color(options["color"])
+                if wanted is not None:
+                    wanted = _in_gamut(wanted, lamp.get("gamut"))
+                    x, y = lamp["xy"][:2]
+                    if ((x - wanted[0]) ** 2 + (y - wanted[1]) ** 2) ** 0.5 > COLOR_SLACK:
+                        wrong = f"{name} did not take the colour"
+            elif options.get("temperature") is not None and (lamp.get("caps") or {}).get("ct") and lamp.get("ct"):
+                low, high = lamp["caps"]["ct"]
+                wanted = max(low, min(high, int(options["temperature"])))
+                if abs(lamp["ct"] - wanted) > max(150, wanted * 0.08):
+                    wrong = f"{name} is at {lamp['ct']} K, not {wanted} K"
+            if wrong:
+                problems.append(wrong)
+                retry.append((slot, word, options))
+    return problems, retry
+
+
+VERIFY_PAUSE_S = 0.4
+
+
+def checked_lights(calls):
+    """Runs the calls, reads the bridge back, retries what did not take once. (result text, problems left)."""
+    result = run_calls(calls)
+    if any(word in result for word in DIRECT_FAILURES):
+        return result, []
+    problems, retry = light_problems(calls, lamps_now(0))
+    if not problems:
+        return result, []
+    logger.warning("lights did not take (%s), trying once more", "; ".join(problems))
+    run_calls(retry)
+    time.sleep(VERIFY_PAUSE_S)
+    problems, _ = light_problems(retry, lamps_now(0))
+    return result, problems
 
 
 def pick_event(conv, text, events, labels, answer):
@@ -1252,19 +1360,82 @@ async def run_direct(conv, text, decision, recent=None):
     if not slot:
         return None
     lamps = await asyncio.to_thread(lamps_now, 0)
-    outcome = await asyncio.to_thread(apply_light, action, slot, lamps, recent)
-    if outcome is None:
+    plan = light_plan(action, slot, lamps, recent)
+    if plan is None:
         return None
-    result, did = outcome
+    calls, did = plan
+    result, problems = await asyncio.to_thread(checked_lights, calls)
     if any(word in result for word in DIRECT_FAILURES):
         logger.warning("direct %s failed (%s), handing the line to claude", action, result)
         return None
     _lamps_cache[0] = 0.0
     keep = action if action["action"] != "undo" else None
+    if problems:
+        missed = "; ".join(problems)
+        targeted = {lamp["id"] for target, _, _ in calls for lamp in lamps if target in ("all", lamp["id"])}
+        if len(problems) < len(targeted):
+            line = did[0].upper() + did[1:]
+            did = f"{did}, except: {missed}"
+            reply = f"{line}, except: {missed}, sir."
+        else:
+            did = f"tried to change the lights, but {missed}"
+            reply = f"That did not take, sir: {missed}."
+        context.record(conv, text, did, device=slot, before=lamps, action=keep, via="direct")
+        context.answered(text, reply, did, "direct")
+        return Turn(text=reply, backend=DIRECT_FAILED, model="hue", did=did)
     context.record(conv, text, did, device=slot, before=lamps, action=keep, via="direct")
     line = did[0].upper() + did[1:]
     context.answered(text, f"{line}, sir.", did, "direct")
     return Turn(text=f"{line}, sir.", backend="direct", model="hue", did=did)
+
+
+DIRECT_FAILED = "direct-failed"
+
+
+_booting = []
+
+
+async def confirm_boot(conv, origin, said=""):
+    """Waits for the desktop to answer on the tailnet, then tells Marcus in the app whether it came up."""
+    from . import deliver
+
+    try:
+        seconds = await asyncio.to_thread(boot.wait_up)
+    finally:
+        _booting.clear()
+    line = boot.outcome_line(seconds)
+    context.record(conv, said, "the desktop came up" if seconds is not None else "the desktop did not come up",
+                   via="direct")
+    try:
+        await deliver.deliver(line, kind="report", origin=origin)
+    except Exception:
+        logger.exception("could not tell Marcus how the boot went: %s", line)
+
+
+BOOT_REPLIES = {
+    "up": ("checked the desktop: already up, sent nothing", "Your PC is already up, sir.", "direct"),
+    "no_host": ("could not boot the desktop: no host set", "I do not know which machine your PC is, sir. "
+                "DIABLO_DESKTOP_HOST is missing on the Pi.", DIRECT_FAILED),
+    "no_packet": ("could not send the wake packet to the desktop", "I could not send the wake packet to your PC, sir. "
+                  "The MAC or wakeonlan is missing on the Pi.", DIRECT_FAILED),
+    "sent": ("sent the wake packet to the desktop", "Waking your PC, sir. I will say when it answers.", "direct"),
+    "waking": ("the desktop is already waking, sent nothing", "Already waking your PC, sir. I will say when it answers.",
+               "direct"),
+}
+
+
+async def run_boot(conv, text, origin=""):
+    """Boots the desktop from the Pi with no model: nothing sent when it already answers or a wake is pending,
+    else the packet and a check. The desk's lock does not apply: a desktop that is up gets nothing sent, and one
+    that is off cannot be driven by anyone in the room."""
+    state = "waking" if _booting else await asyncio.to_thread(boot.start)
+    did, reply, backend = BOOT_REPLIES[state]
+    if state == "sent":
+        _booting.append(time.time())
+        background(confirm_boot(conv, origin, text))
+    context.record(conv, text, did, via="direct")
+    context.answered(text, reply, did, "direct")
+    return Turn(text=reply, backend=backend, model="boot", did=did)
 
 
 def did_for(turn):
@@ -1447,6 +1618,12 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
             asked = None
         if decision is not None and decision.handoff and not tour:
             notes = [handoff_note(decision.handoff)] + list(notes or [])
+    if decision is not None and decision.direct and decision.direct.get("kind") == "boot" and not tour:
+        turn = await run_boot(conv, text, origin)
+        if picking is not None:
+            background(file_when_picked(picking, message_id))
+        usage_log(turn, conv, origin, started, decision, arrived=arrived)
+        return turn
     act = route.desktop_action(answer, text, desktop) if asked else None
     if act is not None and act.get("action") == "again" and event and event.get("device"):
         # "A bit more" right after a light change means the lights, not the last desktop act.
@@ -1460,7 +1637,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
             background(file_when_picked(picking, message_id))
         usage_log(turn, conv, origin, started, decision, arrived=arrived)
         return turn
-    if decision is not None and decision.direct and not tour:
+    if decision is not None and decision.direct and decision.direct.get("kind") == "hue" and not tour:
         turn = await run_direct(conv, text, decision, event)
         if turn is not None:
             if decision.direct.get("kind") == "hue":

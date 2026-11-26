@@ -38,7 +38,19 @@ Spotify", "workspace 3", "move this to workspace 4", "pause the music", "play Sp
 "louder", "mute". The hub answers with an `act` and no model runs; `voice/commands.py` does it
 here with hyprctl, playerctl and wpctl. A command that worked says nothing, since the done chime
 already played. One that failed says why. A direct light change is quiet too. `ears.speak_direct`
-set to 1 makes both speak again. Measured on 24 lines against the live Jev: about 0.25 to 0.3 s a
+set to 1 makes both speak again.
+
+Every direct change is checked after it runs, and only a check that failed speaks. The ears read
+the desktop back (`commands.verify`): a closed window is gone from hyprctl, the workspace is the
+one asked for, the player is playing or paused, the sound moved or muted. Focus and stage check
+themselves in `voice/window.py`. Keys, clicks, scrolling, next and previous track, new windows and
+thread links have no cheap read and stay unchecked. The hub reads the Hue bridge back after a
+light change, tries once more on a lamp that did not take (off, wrong brightness, colour outside
+the lamp's gamut tolerance, wrong temperature, unreachable) and then says which lamp failed.
+"Boot my PC" (English or Danish, or Jev's `boot_pc` on a short line naming the machine) runs on
+the hub with no model: nothing is sent when the desktop already answers a tailnet ping, else the
+Pi sends wake-on-LAN (`hub/boot.py`, `DIABLO_DESKTOP_HOST` and `DIABLO_WOL_MAC` in local.env) and
+pings for `boot.timeout_s` (120 s), then says in the app whether it came up. Measured on 24 lines against the live Jev: about 0.25 to 0.3 s a
 decision, with no wrong action. Unsure lines ("show me T3 Code", "close it") went to Claude.
 
 A line over 12 words goes to Claude, since it is usually more than one thing, except music and
