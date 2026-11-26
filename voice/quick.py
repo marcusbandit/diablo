@@ -14,7 +14,8 @@ TIME = re.compile(r"\b(what(?:'s| is)? the time|what time is it|time is it|tell 
 WEATHER = re.compile(r"\b(weather|raining|rain today|rain tomorrow|will it rain|temperature outside|how (?:cold|warm|hot) is it|forecast)\b", re.I)
 BUS = re.compile(r"\b(bus|buses|next departure|when does the .* leave)\b", re.I)
 TOMORROW = re.compile(r"\btomorrow\b", re.I)
-PLACE = re.compile(r"\b(?:in|at)\s+(?!the\s+(?:morning|evening|afternoon)\b)([a-z][\w .,'-]*?)\W*$", re.I)
+PLACE = re.compile(r"\b(?:in|at)\s+(?!the\s+(?:moment|morning|evening|afternoon)\b)([a-z][\w .,'-]*?)\W*$", re.I)
+FILLER = re.compile(r"(?:\W+(?:right now|now|please|currently|at the moment|diablo))+\W*$", re.I)
 
 # Home and the bus stop are per-box values from ~/.config/diablo/config.toml (home_name,
 # home_lat, home_lon, bus_stop_id, bus_stop_name, bus_line, bus_toward), never written here.
@@ -42,7 +43,7 @@ def answer(text, cfg=None, now=None):
     if not (QUESTION.search(text) or text.rstrip().endswith("?")):
         return None
     if TIME.search(text):
-        where = PLACE.search(text)
+        where = PLACE.search(FILLER.sub("", text))
         if where and where.group(1).strip().lower() not in ("home", "here"):
             return place_time_answer(where.group(1))
         return time_answer(now)
@@ -64,13 +65,13 @@ def place_time_answer(place, at=None):
     """The time in a named place, or None when the zone is unknown so the hub can say so."""
     from hub import clock
 
-    zone = clock.resolve(place)
-    if zone is None:
+    there = clock.local(place, at)
+    if there is None:
         return None
-    local = (at or datetime.datetime.now(datetime.timezone.utc)).astimezone(clock.ZoneInfo(zone))
-    clock_text, name = local.strftime("%H:%M"), place.strip().title()
+    name, zone, moment = there
+    clock_text = moment.strftime("%H:%M")
     return f"It's {clock_text} in {name}.", {"kind": "time", "title": name, "big": clock_text,
-                                             "lines": [local.strftime("%A %-d %B"), zone]}
+                                             "lines": [moment.strftime("%A %-d %B"), zone]}
 
 
 def _pick(cfg, *keys):

@@ -26,8 +26,27 @@ class TestResolve(unittest.TestCase):
         self.assertEqual(clock.resolve("Asia/Kolkata"), "Asia/Kolkata")
 
     def test_an_unknown_place_or_a_country_that_spans_zones_is_not_guessed(self):
-        for place in ("Atlantis", "Canada", "Testby", "", None):
+        for place in ("Atlantis", "Canada", "Testby", "the west", "the east", "GMT+5", "", None):
             self.assertIsNone(clock.resolve(place), place)
+
+    def test_single_zone_countries_come_from_the_zone_tables(self):
+        self.assertEqual(clock.resolve("Greece"), "Europe/Athens")
+        self.assertEqual(clock.resolve("Switzerland"), "Europe/Zurich")
+        self.assertEqual(clock.resolve("Denmark"), "Europe/Copenhagen")
+        self.assertEqual(clock.resolve("South Korea"), "Asia/Seoul")
+        self.assertEqual(clock.resolve("Western Samoa"), "Pacific/Apia")
+        self.assertIsNone(clock.resolve("Samoa"))
+
+    def test_a_qualifier_after_a_comma_has_to_agree(self):
+        self.assertEqual(clock.resolve("Montreal, Canada"), "America/Toronto")
+        self.assertEqual(clock.resolve("Seattle, USA"), "America/Los_Angeles")
+        for place in ("Perth, Scotland", "London, Ontario", "Sydney, Nova Scotia"):
+            self.assertIsNone(clock.resolve(place), place)
+
+    def test_the_name_said_is_the_matched_place(self):
+        self.assertEqual(clock.match("in quebec")[1], "Quebec")
+        self.assertEqual(clock.match("nyc")[1], "NYC")
+        self.assertEqual(clock.match("Asia/Kolkata")[1], "Kolkata")
 
 
 class TestNow(unittest.TestCase):
@@ -84,6 +103,13 @@ class TestQuickVoice(unittest.TestCase):
 
     def test_an_unknown_place_goes_on_to_the_hub(self):
         self.assertIsNone(quick.answer("What time is it in Atlantis?"))
+
+    def test_filler_after_the_question_is_not_a_place(self):
+        moment = datetime.datetime(2026, 11, 11, 5, 2)
+        self.assertEqual(quick.answer("What time is it at the moment?", now=moment)[0], "It's 05:02.")
+        self.assertEqual(quick.answer("What time is it right now?", now=moment)[0], "It's 05:02.")
+        for line in ("What time is it in Tokyo, please?", "What time is it in Tokyo right now?", "what time is it in tokyo now"):
+            self.assertTrue(quick.answer(line)[0].endswith(" in Tokyo."), line)
 
 
 if __name__ == "__main__":
