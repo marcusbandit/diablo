@@ -31,6 +31,8 @@ SERVICES = ("claude", "openrouter", "fireworks", "groq", "cartesia")
 UNITS = ("calls", "tokens", "seconds", "characters")
 GROQ_PRICE_HOUR = {"whisper-large-v3-turbo": 0.04, "whisper-large-v3": 0.111}
 GROQ_MIN_SECONDS = 10
+STT_ONLY = ("elevenlabs",)
+ELEVENLABS_PRICE_HOUR = {"scribe_v3": 0.20 * 1.2}
 OPENROUTER = "https://openrouter.ai/api/v1"
 FIREWORKS = "https://api.fireworks.ai/v1"
 WINDOWS = {
@@ -50,7 +52,7 @@ _guard = threading.Lock()
 
 def service_for(base_url):
     host = (urlparse(str(base_url or "")).hostname or "").lower()
-    for name in ("fireworks", "openrouter", "groq", "cartesia", "anthropic", "openai"):
+    for name in ("fireworks", "openrouter", "groq", "cartesia", "elevenlabs", "anthropic", "openai"):
         if name in host:
             return name
     return host or "unknown"
@@ -95,6 +97,9 @@ def audio_seconds(data, filename=""):
 
 
 def transcription_cost(service, model, seconds):
+    if service == "elevenlabs":
+        price = ELEVENLABS_PRICE_HOUR.get(str(model))
+        return None if price is None else seconds / 3600 * price
     price = GROQ_PRICE_HOUR.get(str(model)) if service == "groq" else None
     if price is None:
         return None

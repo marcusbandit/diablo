@@ -75,10 +75,68 @@ object HubLink {
     return postBytes(context, "/v1/speech", "application/json", body, readMs = 60_000, retrySlow = false)
   }
 
-  /** A clip transcribed by the hub's speech to text, the way the desk's ears do it. */
+  /** A clip transcribed by the hub's speech to text, in the order the hub keeps for phones. */
   fun transcribe(context: Context, wav: ByteArray): String {
-    val out = post(context, "/v1/stt", "audio/wav", wav, readMs = 60_000, extra = mapOf("X-Filename" to "phone.wav"))
+    val out = post(context, "/v1/stt", "audio/wav", wav, readMs = 60_000, extra = mapOf("X-Filename" to "phone.wav", "X-Stt-For" to "phone"))
     return JSONObject(out).optString("text", "").trim()
+  }
+
+  /** Words speech to text gets wrong: the right forms to listen for, and the fix for what was heard. */
+  class Words(private val rules: List<Pair<String, List<Regex>>>) {
+    val rights get() = rules.map { it.first }
+
+    fun fix(text: String): String = rules.fold(text) { line, (right, wrongs) ->
+      wrongs.fold(line) { out, wrong -> wrong.replace(out, Regex.escapeReplacement(right)) }
+    }
+  }
+
+  @Volatile private var cached: Pair<String, Words>? = null
+
+  fun words(context: Context): Words {
+    val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("words", null) ?: "[]"
+    cached?.let { if (it.first == raw) return it.second }
+    val list = try {
+      JSONArray(raw)
+    } catch (_: Exception) {
+      JSONArray()
+    }
+    val rules = (0 until list.length()).mapNotNull { i ->
+      val o = list.optJSONObject(i) ?: return@mapNotNull null
+      val right = o.optString("right").trim()
+      val wrong = o.optJSONArray("wrong") ?: return@mapNotNull null
+      val forms = (0 until wrong.length()).map { wrong.optString(it).trim() }.filter { it.isNotEmpty() }
+        .sortedByDescending { it.length }
+        .map { form -> Regex("(?<!\\w)" + form.split(Regex("\\s+")).joinToString("\\s+") { Regex.escape(it) } + "(?!\\w)", RegexOption.IGNORE_CASE) }
+      if (right.isEmpty() || forms.isEmpty()) null else right to forms
+    }
+    return Words(rules).also { cached = raw to it }
+  }
+
+  /** Asks the hub for the words again and keeps them for the sessions that hear without it. Blocks. */
+  fun fetchWords(context: Context) {
+    val out = JSONObject(get(context, "/v1/hearing"))
+    val list = out.optJSONArray("words") ?: return
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("words", list.toString()).apply()
+  }
+
+  private fun get(context: Context, path: String): String {
+    val token = token(context) ?: throw Failure("Pair me in the app first, sir.")
+    var last: Exception? = null
+    for (base in hubs(context)) {
+      val conn = (URL(base + path).openConnection() as HttpURLConnection)
+      try {
+        conn.connectTimeout = 4000
+        conn.readTimeout = 8000
+        conn.setRequestProperty("X-Diablo-Token", token)
+        if (conn.responseCode !in 200..299) throw Failure("The hub answered ${conn.responseCode}.")
+        return conn.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
+      } catch (e: IOException) {
+        last = e
+      } finally {
+        conn.disconnect()
+      }
+    }
+    throw Failure(if (last != null) "I cannot reach the hub right now." else "No hub answered.")
   }
 
   private fun post(

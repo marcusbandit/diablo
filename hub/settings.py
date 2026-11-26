@@ -16,6 +16,12 @@ DEFAULTS = {
     "transcription.local.health": "on",
     "transcription.local.timeout": "60",
     "transcription.cloud.health": "off",
+    "transcription.eleven.base_url": "https://api.elevenlabs.io/v1",
+    "transcription.eleven.model": "scribe_v3",
+    "transcription.eleven.kind": "elevenlabs",
+    "transcription.eleven.health": "off",
+    "transcription.eleven.timeout": "30",
+    "transcription.phone.backends": "",
     "tts_provider": "none",
     "tts_api_key": "",
     "tts_model": "sonic-latest",
@@ -59,6 +65,7 @@ DEFAULTS = {
     "workout.window": "10:00-20:00",
     "workout.rest_day": "sun",
     "tasks.waiting_bare_s": "3600",
+    "hearing.words": "",
 }
 
 

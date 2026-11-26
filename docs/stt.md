@@ -12,7 +12,8 @@ Every path that turns Diablo's audio into words, and where its model runs.
 | Ears on a box without a GPU, `stt_via = "hub"` in its config.toml | the hub, `POST /v1/stt`, which uses hub/stt.py below | diablo-stt on banditbox, or Groq when it is not up |
 | Wake word (voice/wake.py) | in process on banditbox | openWakeWord features and diablo.onnx, no transcript |
 | Telegram voice notes (hub/bot.py, hub/stt.py) | diablo-stt on banditbox, Groq when it is not up | large-v3-turbo int8_float16, or Groq whisper-large-v3-turbo |
-| Phone and desktop apps | they send text; neither records audio for transcription | none |
+| Phone assistant (bubble and overlay, app/modules/diablo-assist Talk.kt) | records until 2 s of quiet, then the hub, `POST /v1/stt` with `X-Stt-For: phone`; Android's on-device recognizer hears the same audio only to show the words live | ElevenLabs Scribe v3 (`transcription.phone.backends`), then the desk's order |
+| Phone and desktop app screens | they send text | none |
 
 ## The desk's fallback (voice/stt.py)
 
@@ -55,6 +56,23 @@ quickly.
 
 `POST /v1/stt` takes `X-Stt-Skip`, a comma list of backend names to try last for that clip, and
 answers with the backend that served it.
+
+A backend's `.kind` is `openai` (the default, `POST <base_url>/audio/transcriptions`) or
+`elevenlabs` (`POST <base_url>/speech-to-text` with `xi-api-key`, `model_id`, and the right forms
+of `hearing.words` as `keyterms`, which ElevenLabs charges 20% more for). `eleven` is set up that
+way with `scribe_v3`; it needs only `transcription.eleven.api_key`.
+
+`X-Stt-For` names the caller. When `transcription.<caller>.backends` is set, that order serves
+it instead of `transcription.backends`, so the phone can use a paid service while the desk's
+fallback and Telegram voice notes stay on the free ones. Only the phone sends it today.
+
+## Words it gets wrong
+
+`hearing.words` holds one rule per line, written like the gvoice vocabulary:
+`Right = wrong, other wrong`. Every transcript the hub makes (hub/hearing.py) has the wrong
+forms replaced by the right one, whole words in any case. The phone reads the same rules from
+`GET /v1/hearing`, biases its live recognizer towards the right forms and fixes what it shows.
+Names of real people belong in this setting on the hub, never in the repo.
 
 A new tier, such as a smaller model on nemurenai, is settings only: add its name to
 `transcription.backends` and set its keys.

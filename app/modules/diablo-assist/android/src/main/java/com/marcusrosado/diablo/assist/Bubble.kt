@@ -777,7 +777,7 @@ object Bubble {
         canvas.drawArc(box, (t * 330f) % 360f, 80f, false, arc)
       }
       face?.let {
-        val f = (20f * density).toInt()
+        val f = (FACE / 2f * density).toInt()
         it.setBounds((x - f).toInt(), (y - f).toInt(), (x + f).toInt(), (y + f).toInt())
         it.draw(canvas)
       }
@@ -953,6 +953,8 @@ object Bubble {
   private const val STIFF_SETTLE = 420f
   private const val STIFF_MAGNET = 900f
   private const val STIFF_CHASE = 1600f
+  /** The face drawings fill half their square, so they are drawn past the orb to fill it. */
+  private const val FACE = 64f
   private const val FACE_MS = 250L
   private const val IDLE_MS = 30_000L
 
