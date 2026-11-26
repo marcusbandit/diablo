@@ -11,14 +11,18 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
+import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executors
@@ -80,7 +84,14 @@ object Talk {
   private var envelope: FloatArray? = null
   @Volatile private var finishRecording = false
 
+  /** The phone's own recognizer, fed the clip as it is recorded, only to show his words live. */
   private var recognizer: SpeechRecognizer? = null
+  @Volatile private var feed: OutputStream? = null
+  private var source: ParcelFileDescriptor? = null
+  /** What the live recognizer has settled so far, and its guess at the piece being said. */
+  private var settled = ""
+  private var live = ""
+  private var wordsAt = 0L
   private var recording: Thread? = null
   @Volatile private var stopRecording = false
   private var player: MediaPlayer? = null
@@ -128,7 +139,11 @@ object Talk {
   fun micAllowed(context: Context) =
     context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-  /** Listens for one line, on the phone's own recognizer when it has one, else through the hub. */
+  /**
+   * Listens for one line: the phone records until he has been quiet for QUIET_MS and the hub
+   * transcribes the clip. Meanwhile the phone's own recognizer hears the same audio, so his words
+   * show while he speaks.
+   */
   fun hear(context: Context) {
     stopHearing()
     stopSpeaking()
@@ -141,16 +156,27 @@ object Talk {
     // Talking over a reply still being worked out replaces that line.
     if (now.phase == Phase.THINKING) turn++
     micLevel = 0f
+    freshWords(context.applicationContext)
     set(Now(Phase.LISTENING, "", asked, asks = asked.isNotEmpty()))
-    if (SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) onDevice(context.applicationContext) else throughHub(context.applicationContext)
+    throughHub(context.applicationContext)
+  }
+
+  /** The words the hub says speech to text gets wrong, asked for again every few minutes. */
+  private fun freshWords(context: Context) {
+    val at = System.currentTimeMillis()
+    if (at - wordsAt < WORDS_MS) return
+    wordsAt = at
+    voice.execute {
+      try {
+        HubLink.fetchWords(context)
+      } catch (_: Exception) {
+        // The last words the phone was given still hold.
+      }
+    }
   }
 
   fun stopHearing() {
-    recognizer?.let {
-      it.cancel()
-      it.destroy()
-    }
-    recognizer = null
+    stopLive()
     stopRecording = true
     recording = null
     micLevel = 0f
@@ -160,58 +186,119 @@ object Talk {
   /** He tapped while being heard: what was said so far goes now, without waiting for the pause. */
   fun finishHearing() {
     if (now.phase != Phase.LISTENING) return
-    recognizer?.stopListening()
     if (recording != null) finishRecording = true
   }
 
   private fun idle() = Now(Phase.RESTING, "", asked, asks = asked.isNotEmpty())
 
-  private fun onDevice(context: Context) {
-    val r = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+  private fun heardLive() = listOf(settled, live).filter { it.isNotBlank() }.joinToString(" ").trim()
+
+  /**
+   * Starts the phone's recognizer on a pipe the recording writes into. It only shows words; the
+   * line that is sent comes from the hub. When it ends a piece on its own, a fresh one takes over.
+   */
+  private fun startLive(context: Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) return
+    val pipe = try {
+      ParcelFileDescriptor.createPipe()
+    } catch (_: IOException) {
+      return
+    }
+    val r = try {
+      SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+    } catch (_: Exception) {
+      pipe.forEach { it.close() }
+      return
+    }
     recognizer = r
+    source = pipe[0]
+    val show = {
+      if (recognizer === r && now.phase == Phase.LISTENING) {
+        val text = heardLive()
+        if (text.isNotEmpty()) set(Now(Phase.LISTENING, words(context).fix(text), asked, asks = asked.isNotEmpty()))
+      }
+    }
+    val keep = { bundle: Bundle? ->
+      val text = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim() ?: ""
+      if (text.isNotEmpty()) settled = listOf(settled, text).filter { it.isNotBlank() }.joinToString(" ")
+      live = ""
+    }
     r.setRecognitionListener(object : RecognitionListener {
       override fun onReadyForSpeech(params: Bundle?) {}
       override fun onBeginningOfSpeech() {}
-      override fun onRmsChanged(rmsdB: Float) {
-        if (recognizer === r) micLevel = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
-      }
+      override fun onRmsChanged(rmsdB: Float) {}
       override fun onBufferReceived(buffer: ByteArray?) {}
       override fun onEndOfSpeech() {}
       override fun onEvent(eventType: Int, params: Bundle?) {}
 
       override fun onPartialResults(partial: Bundle?) {
-        val text = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
-        if (recognizer === r && text.isNotBlank()) set(Now(Phase.LISTENING, text, asked, asks = asked.isNotEmpty()))
+        if (recognizer !== r) return
+        live = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim() ?: return
+        show()
       }
+
+      override fun onSegmentResults(segment: Bundle) {
+        if (recognizer !== r) return
+        keep(segment)
+        show()
+      }
+
+      override fun onEndOfSegmentedSession() {}
 
       override fun onResults(results: Bundle?) {
         if (recognizer !== r) return
-        val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim() ?: ""
-        r.destroy()
-        recognizer = null
-        micLevel = 0f
-        if (text.isEmpty()) set(idle()) else send(context, text)
+        keep(results)
+        show()
+        stopLive()
+        if (now.phase == Phase.LISTENING && recording != null) startLive(context)
       }
 
       override fun onError(error: Int) {
-        if (recognizer !== r) return
-        r.destroy()
-        recognizer = null
-        when (error) {
-          SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-            micLevel = 0f
-            set(idle())
-          }
-          // The phone's recognizer cannot do it after all: the hub's ears can.
-          else -> throughHub(context)
-        }
+        if (recognizer === r) stopLive()
       }
     })
     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
       .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
       .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
       .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-    r.startListening(intent)
+      .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipe[0])
+      .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+      .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+      .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, RATE)
+      .putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE)
+    val bias = words(context).rights
+    if (bias.isNotEmpty()) intent.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(bias))
+    feed = ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])
+    try {
+      r.startListening(intent)
+    } catch (_: Exception) {
+      stopLive()
+    }
+  }
+
+  private fun stopLive() {
+    val f = feed
+    feed = null
+    try {
+      f?.close()
+    } catch (_: IOException) {
+      // Already closed by the other side.
+    }
+    recognizer?.let {
+      try {
+        it.cancel()
+        it.destroy()
+      } catch (_: Exception) {
+        // A recognizer that already died needs nothing more.
+      }
+    }
+    recognizer = null
+    try {
+      source?.close()
+    } catch (_: IOException) {
+      // Nothing left to release.
+    }
+    source = null
   }
 
   /** Records until he stops talking, then the hub transcribes the clip. */
@@ -219,6 +306,8 @@ object Talk {
     set(Now(Phase.LISTENING, "", asked, asks = asked.isNotEmpty()))
     stopRecording = false
     finishRecording = false
+    settled = ""
+    live = ""
     val mine = turn
     val thread = Thread {
       val wav = try {
@@ -229,25 +318,36 @@ object Talk {
       if (stopRecording && recording !== Thread.currentThread()) return@Thread
       recording = null
       micLevel = 0f
+      main.post { stopLive() }
       if (wav == null) {
         set(idle())
         return@Thread
       }
-      set(Now(Phase.THINKING, "", ""))
+      val shown = now.heard
+      set(Now(Phase.THINKING, shown, ""))
       val text = try {
         HubLink.transcribe(context, wav)
       } catch (e: Exception) {
-        trouble(e)
-        return@Thread
+        // The hub could not hear it: what the phone heard itself still goes, if it heard anything.
+        if (shown.isEmpty()) {
+          trouble(e)
+          return@Thread
+        }
+        shown
       }
       if (mine != turn) return@Thread
-      if (text.isEmpty()) set(idle()) else main.post { if (mine == turn) send(context, text) }
+      if (text.isEmpty()) set(idle()) else main.post { if (mine == turn) send(context, words(context).fix(text)) }
     }
     recording = thread
     thread.start()
+    startLive(context)
   }
 
   private const val RATE = 16000
+  private const val QUIET_MS = 2000
+  private const val WORDS_MS = 10 * 60_000L
+
+  private fun words(context: Context) = HubLink.words(context)
 
   /** 16 kHz mono PCM as a WAV, or null when nothing was said. */
   @Suppress("MissingPermission")
@@ -272,6 +372,13 @@ object Talk {
           bytes.putShort(frame[i])
         }
         pcm.write(bytes.array(), 0, n * 2)
+        feed?.let {
+          try {
+            it.write(bytes.array(), 0, n * 2)
+          } catch (_: IOException) {
+            if (feed === it) feed = null
+          }
+        }
         val rms = sqrt(sum / n)
         micLevel = (rms / 3000.0).toFloat().coerceIn(0f, 1f)
         val loud = rms > 900
@@ -283,7 +390,7 @@ object Talk {
           quietMs += 20
         }
         if (!spoke && totalMs > 6000) return null
-        if (spoke && quietMs > 1200) break
+        if (spoke && quietMs > QUIET_MS) break
         if (totalMs > 20000 || finishRecording) break
       }
     } finally {
@@ -331,12 +438,19 @@ object Talk {
     set(Now(Phase.TROUBLE, now.heard, why))
   }
 
-  /** Shows the reply at once and speaks it in the voice the hub renders; without it, he stays silent. */
+  /**
+   * Speaks the reply in the voice the hub renders and shows it the moment the sound starts, so the
+   * words and his voice arrive together. Without the voice, the reply shows silently.
+   */
   private fun say(context: Context, reply: String, asks: Boolean, mine: Int) {
     if (mine != turn) return
-    set(Now(Phase.SPEAKING, now.heard, reply, asks))
+    val heard = now.heard
+    val show = {
+      if (mine == turn && now.phase == Phase.THINKING) set(Now(Phase.SPEAKING, heard, reply, asks))
+    }
     val done = { spoken: Boolean ->
       main.post {
+        show()
         if (mine == turn && now.phase == Phase.SPEAKING && now.reply == reply) {
           set(Now(Phase.RESTING, now.heard, reply, asks, spoken))
           // He asked something: he listens for the answer by himself, a beat after he stops.
@@ -361,12 +475,13 @@ object Talk {
         null
       }
       main.post {
-        if (file == null || mine != turn || now.phase != Phase.SPEAKING) done(false) else play(context, file, done)
+        if (mine != turn || now.phase != Phase.THINKING) return@post
+        if (file == null) done(false) else play(context, file, show, done)
       }
     }
   }
 
-  private fun play(context: Context, file: File, done: (Boolean) -> Unit) {
+  private fun play(context: Context, file: File, started: () -> Unit, done: (Boolean) -> Unit) {
     stopPlayer()
     val manager = context.getSystemService(AudioManager::class.java)
     val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
@@ -390,7 +505,12 @@ object Talk {
     try {
       p.setAudioAttributes(speech)
       p.setDataSource(file.path)
-      p.setOnPreparedListener { if (player === p) it.start() }
+      p.setOnPreparedListener {
+        if (player === p) {
+          it.start()
+          started()
+        }
+      }
       p.setOnCompletionListener { finish(true) }
       p.setOnErrorListener { _, _, _ ->
         finish(false)

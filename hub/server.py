@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from . import deliver as delivery
-from . import agent, autoship, brains, busy, character, choices, db, devices, events, files, jev, llm, hue, lockguard, modules, newthread, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, tts, usage, voicemerge, voicetimes, watch
+from . import agent, autoship, brains, busy, character, choices, db, devices, events, files, hearing, jev, llm, hue, lockguard, modules, newthread, questions, releases, route, sections, selfrestart, sentences, standby, stt, t3link, t3threads, tasks, threads, tts, usage, voicemerge, voicetimes, watch
 from . import settings as app_settings
 from .config import get_config
 
@@ -336,7 +336,8 @@ def voice_host(caller, host):
 async def stt_transcribe(request: Request, _: dict = Depends(require_token)):
     """A clip from ears on another box, transcribed the way voice notes are: diablo-stt on banditbox
     first, Groq when it is not up. The body is the audio itself, a wav unless X-Filename says otherwise.
-    X-Stt-Skip lists backends to try last, local when the desk's own Whisper just failed."""
+    X-Stt-Skip lists backends to try last, local when the desk's own Whisper just failed. X-Stt-For
+    names the caller, phone, whose own transcription.<caller>.backends order applies when set."""
     try:
         declared = int(request.headers.get("content-length") or 0)
     except ValueError:
@@ -353,11 +354,18 @@ async def stt_transcribe(request: Request, _: dict = Depends(require_token)):
         raise HTTPException(status_code=400, detail="empty audio")
     name = re.sub(r"[^\w.-]", "", request.headers.get("x-filename") or "") or "clip.wav"
     skip = tuple(part.strip() for part in (request.headers.get("x-stt-skip") or "").split(",") if part.strip())
+    caller = re.sub(r"[^a-z]", "", (request.headers.get("x-stt-for") or "").lower())
     try:
-        text, language, backend = await asyncio.to_thread(stt.transcribe_from, data, name, skip)
+        text, language, backend = await asyncio.to_thread(stt.transcribe_from, data, name, skip, caller)
     except stt.TranscriptionError as error:
         raise HTTPException(status_code=503, detail=str(error))
     return {"text": text, "language": language, "backend": backend}
+
+
+@app.get("/v1/hearing")
+def hearing_words(_: dict = Depends(require_token)):
+    """The words speech to text gets wrong, for a phone that hears on its own recognizer."""
+    return {"words": hearing.rules()}
 
 
 SPEECH_MAX_CHARS = 4000

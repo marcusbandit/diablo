@@ -87,7 +87,7 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
 
   private val face = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
   private val orb = FrameLayout(context).apply {
-    addView(face, LayoutParams(dp(38f), dp(38f), Gravity.CENTER))
+    addView(face, LayoutParams(dp(56f), dp(56f), Gravity.CENTER))
     isClickable = true
     contentDescription = "Diablo"
   }
@@ -104,7 +104,7 @@ class Floating(context: Context, private val host: Host) : FrameLayout(context) 
 
   private val smallFace = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
   private val smallOrb = FrameLayout(context).apply {
-    addView(smallFace, LayoutParams(dp(24f), dp(24f), Gravity.CENTER))
+    addView(smallFace, LayoutParams(dp(36f), dp(36f), Gravity.CENTER))
   }
   private val field = EditText(context).apply {
     background = null

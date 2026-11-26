@@ -43,7 +43,8 @@ class FakeWhisper:
 
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
-                fake.posts.append({"auth": self.headers.get("Authorization"), "body": self.rfile.read(length)})
+                fake.posts.append({"auth": self.headers.get("Authorization"), "xi": self.headers.get("xi-api-key"),
+                                   "path": self.path, "body": self.rfile.read(length)})
                 if fake.status != 200:
                     self._send(fake.status, {"error": "no"})
                 else:
@@ -360,6 +361,48 @@ class TestFallback(SttCase):
         self.assertIn("local failed", str(caught.exception))
         self.assertIn("cloud failed", str(caught.exception))
         self.assertNotIn("groq-key", str(caught.exception))
+
+
+class TestHearingWords(SttCase):
+    def test_a_rule_fixes_what_every_backend_heard(self):
+        settings.set_setting("hearing.words", "Annelise = Anna Lisa, Analise")
+        self.local.text = "dinner at anna lisa's place"
+        self.assertEqual(stt.transcribe(b"ogg", "voice.ogg")[0], "dinner at Annelise's place")
+
+
+class TestPhoneOrder(SttCase):
+    def setUp(self):
+        super().setUp()
+        self.eleven = self.fake("from scribe")
+        settings.set_setting("transcription.eleven.base_url", self.eleven.url)
+        settings.set_setting("transcription.eleven.api_key", "eleven-key")
+
+    def test_the_desk_never_reaches_a_phone_only_backend(self):
+        settings.set_setting("transcription.phone.backends", "eleven,local,cloud")
+        self.assertEqual(stt.transcribe_from(b"wav", "clip.wav")[2], "local")
+        self.assertEqual(self.eleven.posts, [])
+
+    def test_the_phone_gets_its_own_order(self):
+        settings.set_setting("transcription.phone.backends", "eleven,local,cloud")
+        self.assertEqual(stt.transcribe_from(b"wav", "clip.wav", caller="phone"), ("from scribe", "da", "eleven"))
+        self.assertEqual(len(self.local.posts), 0)
+
+    def test_without_its_own_order_the_phone_uses_the_default(self):
+        self.assertEqual(stt.transcribe_from(b"wav", "clip.wav", caller="phone")[2], "local")
+        self.assertEqual(self.eleven.posts, [])
+
+    def test_elevenlabs_is_asked_in_its_own_dialect_with_keyterms(self):
+        settings.set_setting("transcription.phone.backends", "eleven")
+        settings.set_setting("hearing.words", "Annelise = Anna Lisa\nKastrup = cast rope")
+        stt.transcribe_from(b"wav", "clip.wav", caller="phone")
+        post = self.eleven.posts[0]
+        self.assertEqual(post["path"], "/v1/speech-to-text")
+        self.assertEqual(post["xi"], "eleven-key")
+        self.assertIsNone(post["auth"])
+        body = post["body"].decode("latin-1")
+        self.assertIn('name="model_id"\r\n\r\nscribe_v3', body)
+        self.assertIn('name="keyterms"\r\n\r\nAnnelise', body)
+        self.assertIn('name="keyterms"\r\n\r\nKastrup', body)
 
 
 if __name__ == "__main__":

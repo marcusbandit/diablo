@@ -7,15 +7,20 @@ backend with health on is asked GET <base_url>/health first, with a short timeou
 answer cached for a few seconds, so a sleeping banditbox costs under a second. A backend
 that fails a request is marked down for the same few seconds and the next one in the list
 takes the request.
+
+A backend's .kind says how it is asked: openai (the default, POST /audio/transcriptions) or
+elevenlabs (POST /speech-to-text with the right forms in hearing.words as keyterms). A caller
+such as the phone can have its own order in transcription.<caller>.backends.
 """
 
 import logging
+import re
 import threading
 import time
 
 import httpx
 
-from . import settings, usage
+from . import hearing, settings, usage
 
 log = logging.getLogger("diablo.stt")
 
@@ -24,6 +29,7 @@ HEALTH_TIMEOUT = 0.8
 CONNECT_TIMEOUT = 2.0
 WARN_EVERY = 600.0
 BACKOFF_MAX = 300.0
+KEYTERMS_MAX = 100
 ERRORS = (httpx.HTTPError, httpx.InvalidURL, ValueError)
 LEGACY = {"base_url": "transcription_base_url", "api_key": "transcription_api_key",
           "model": "transcription_model"}
@@ -50,8 +56,10 @@ def _get(values, key):
     return values.get(key) or settings.DEFAULTS.get(key, "")
 
 
-def order(values=None):
-    raw = _get(values if values is not None else _values(), "transcription.backends")
+def order(values=None, caller=""):
+    values = values if values is not None else _values()
+    raw = _get(values, f"transcription.{caller}.backends") if caller else ""
+    raw = raw or _get(values, "transcription.backends")
     return [name.strip() for name in str(raw).split(",") if name.strip()]
 
 
@@ -75,12 +83,13 @@ def backend(name, values=None):
         "model": pick("model"),
         "checked": pick("health").lower() in ("on", "true", "1", "yes"),
         "timeout": timeout,
+        "kind": pick("kind").lower() or "openai",
     }
 
 
-def configured(values=None):
+def configured(values=None, caller=""):
     values = values if values is not None else _values()
-    found = (backend(name, values) for name in order(values))
+    found = (backend(name, values) for name in order(values, caller))
     return [b for b in found if b["base_url"] and b["model"] and b["api_key"]]
 
 
@@ -174,12 +183,30 @@ def _content_type(filename):
     return CONTENT_TYPES.get(filename.rsplit(".", 1)[-1].lower(), "application/octet-stream")
 
 
+def _keyterms():
+    terms = []
+    for rule in hearing.rules():
+        term = re.sub(r"[<>{}\[\]\\]", "", rule["right"]).strip()
+        if term and len(term) <= 50 and len(term.split()) <= 5 and term not in terms:
+            terms.append(term)
+    return terms[:KEYTERMS_MAX]
+
+
+def _request(b, filename):
+    """URL, headers and form fields for one clip, in the backend's own dialect."""
+    if b["kind"] == "elevenlabs":
+        fields = [("model_id", b["model"]), ("tag_audio_events", "false")]
+        fields += [("keyterms", term) for term in _keyterms()]
+        return f"{b['base_url']}/speech-to-text", {"xi-api-key": b["api_key"]}, fields
+    return f"{b['base_url']}/audio/transcriptions", _auth(b), [("model", b["model"])]
+
+
 def _post(b, data, filename):
+    url, headers, fields = _request(b, filename)
     response = httpx.post(
-        f"{b['base_url']}/audio/transcriptions",
-        headers=_auth(b),
-        files={"file": (filename, data, _content_type(filename))},
-        data={"model": b["model"]},
+        url,
+        headers=headers,
+        files=[("file", (filename, data, _content_type(filename)))] + [(k, (None, v)) for k, v in fields],
         timeout=httpx.Timeout(b["timeout"], connect=min(CONNECT_TIMEOUT, b["timeout"])),
     )
     try:
@@ -193,7 +220,7 @@ def _post(b, data, filename):
     response.raise_for_status()
     if body is None:
         raise ValueError("answer is not a JSON object")
-    return str(body.get("text", "")).strip(), _language(body.get("language")), model
+    return str(body.get("text", "")).strip(), _language(body.get("language") or body.get("language_code")), model
 
 
 def transcribe(data, filename):
@@ -201,12 +228,14 @@ def transcribe(data, filename):
     return text, language
 
 
-def transcribe_from(data, filename, skip=()):
+def transcribe_from(data, filename, skip=(), caller=""):
     """(text, language, backend). skip names backends the caller already knows are likely out,
-    the desk's own Whisper after gvoice failed; they are tried last instead of first."""
+    the desk's own Whisper after gvoice failed; they are tried last instead of first. caller, such
+    as phone, picks transcription.<caller>.backends when that is set, so a paid service can serve
+    the phone while the desk stays on the free ones."""
     skipped = []
     empty = None
-    backends = configured()
+    backends = configured(caller=caller)
     backends = [b for b in backends if b["name"] not in skip] + [b for b in backends if b["name"] in skip]
     for b in backends:
         if not healthy(b):
@@ -241,7 +270,7 @@ def _done(b, text, language, model, took, skipped):
         _last.update(backend=b["name"], at=time.time())
     note = f", after {'; '.join(skipped)}" if skipped else ""
     log.info("stt served by %s (%s) in %.2fs%s", b["name"], model, took, note)
-    return text, language, b["name"]
+    return hearing.fix(text), language, b["name"]
 
 
 def _known(b):
