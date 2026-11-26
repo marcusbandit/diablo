@@ -134,6 +134,7 @@ def test_run_boot_sent_tells_marcus_how_it_went(monkeypatch):
         turn = await brains.run_boot("main", "boot my pc", "voice")
         assert turn.text.startswith("Waking your PC") and len(started) == 1
         await started[0]
+    brains._booting.clear()
     asyncio.run(go(30))
     asyncio.run(go(None))
     assert "is up" in told[0] and "did not come up" in told[1]
@@ -202,14 +203,14 @@ def test_checked_lights_retries_once_then_reports_what_still_failed(monkeypatch)
 
 
 def test_run_direct_says_plainly_when_a_light_did_not_take(monkeypatch):
-    monkeypatch.setattr(brains, "lamps_now", lambda age=3.0: lamps(right={"reachable": False}))
+    monkeypatch.setattr(brains, "lamps_now", lambda age=3.0: lamps(right={"reachable": False}, left={"reachable": False}))
     monkeypatch.setattr(brains.hue, "hue_light", lambda *a, **k: "ok")
     monkeypatch.setattr(brains, "VERIFY_PAUSE_S", 0)
     decision = route.Decision(subject="home_control", tier="fast", reason="", path=[])
     decision.direct = {"kind": "hue", "action": "lights_on", "target": "all", "amount": "normal", "color": "none"}
     turn = asyncio.run(brains.run_direct("main", "lights on", decision))
     assert turn.backend == brains.DIRECT_FAILED
-    assert turn.text == "That did not take, sir: the wood lamp is not reachable."
+    assert turn.text == "That did not take, sir: the corner lamp is not reachable; the wood lamp is not reachable."
 
 
 class Desk:
@@ -284,4 +285,37 @@ def test_run_turns_a_read_back_miss_into_a_failure(desk, monkeypatch):
     monkeypatch.setattr(commands, "_run_act", lambda act: (True, ""))
     ok, why = commands.run({"action": "workspace", "workspace": 4})
     assert not ok and why == "I am not on workspace 4"
-    assert not commands.HISTORY
+    assert commands.HISTORY[-1]["action"] == "workspace" and commands.HISTORY[-1]["did"].startswith("tried")
+
+
+def test_the_boot_phrase_beats_a_confident_jev_light_action():
+    answer = jev_says(action="lights_on", confidence=0.99)
+    assert route.route("turn on my computer", jev=answer).direct == {"kind": "boot"}
+    assert route.route("turn on the lights", jev=answer).direct["kind"] == "hue"
+
+
+def test_a_bridge_that_gives_no_read_back_leaves_the_change_unchecked():
+    assert brains.light_problems([("left", "on", {})], []) == ([], [])
+
+
+def test_a_partly_failed_change_names_what_did_change(monkeypatch):
+    def gone(age=3.0):
+        return lamps(right={"reachable": False})
+    monkeypatch.setattr(brains, "lamps_now", gone)
+    monkeypatch.setattr(brains.hue, "hue_light", lambda *a, **k: "ok")
+    monkeypatch.setattr(brains, "VERIFY_PAUSE_S", 0)
+    decision = route.Decision(subject="home_control", tier="fast", reason="", path=[])
+    decision.direct = {"kind": "hue", "action": "lights_on", "target": "all", "amount": "normal", "color": "none"}
+    turn = asyncio.run(brains.run_direct("main", "lights on", decision))
+    assert turn.text == "Turned all lights on, except: the wood lamp is not reachable, sir."
+
+
+def test_a_second_boot_while_one_is_waking_sends_nothing(monkeypatch):
+    calls = []
+    monkeypatch.setattr(boot, "start", lambda: calls.append(1) or "sent")
+    monkeypatch.setattr(brains, "background", lambda coro: coro.close())
+    brains._booting.clear()
+    asyncio.run(brains.run_boot("main", "boot my pc"))
+    turn = asyncio.run(brains.run_boot("main", "boot my pc"))
+    brains._booting.clear()
+    assert calls == [1] and turn.text.startswith("Already waking")

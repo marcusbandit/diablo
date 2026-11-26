@@ -684,13 +684,14 @@ def boot_command(text):
 
 def apply_boot(decision, text, answer, images=False):
     """A boot order runs direct: the phrase match alone, or Jev sure of it on a short line that names the machine."""
-    if images or decision.explicit or decision.direct:
+    phrase = boot_command(text)
+    if images or decision.explicit or (decision.direct and not phrase):
         return decision
     words = len(str(text or "").split())
     sure = bool(answer) and answer.get("action") == "boot_pc" and \
         answer.get("action_confidence", 0) >= _threshold("route.direct_threshold", 0.9)
     named = re.search(rf"\b(?:{_boot_nouns()})\b", str(text or ""), re.I)
-    if boot_command(text) or (sure and words <= BOOT_WORDS and named):
+    if phrase or (sure and words <= BOOT_WORDS and named):
         decision.direct = {"kind": "boot"}
         decision.adjusted.append("direct boot of the desktop")
     return decision

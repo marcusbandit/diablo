@@ -1264,6 +1264,9 @@ def _in_gamut(xy, gamut):
 
 def light_problems(calls, after):
     """What the bridge reports that does not match the calls, one plain phrase per lamp, and the slots to retry."""
+    if not after:
+        logger.warning("the bridge gave no read-back, the light change stays unchecked")
+        return [], []
     by_slot = {lamp["id"]: lamp for lamp in after}
     problems, retry = [], []
     for target, word, options in calls:
@@ -1369,9 +1372,15 @@ async def run_direct(conv, text, decision, recent=None):
     keep = action if action["action"] != "undo" else None
     if problems:
         missed = "; ".join(problems)
-        did = f"tried to change the lights, but {missed}"
+        targeted = {lamp["id"] for target, _, _ in calls for lamp in lamps if target in ("all", lamp["id"])}
+        if len(problems) < len(targeted):
+            line = did[0].upper() + did[1:]
+            did = f"{did}, except: {missed}"
+            reply = f"{line}, except: {missed}, sir."
+        else:
+            did = f"tried to change the lights, but {missed}"
+            reply = f"That did not take, sir: {missed}."
         context.record(conv, text, did, device=slot, before=lamps, action=keep, via="direct")
-        reply = f"That did not take, sir: {missed}."
         context.answered(text, reply, did, "direct")
         return Turn(text=reply, backend=DIRECT_FAILED, model="hue", did=did)
     context.record(conv, text, did, device=slot, before=lamps, action=keep, via="direct")
@@ -1383,13 +1392,19 @@ async def run_direct(conv, text, decision, recent=None):
 DIRECT_FAILED = "direct-failed"
 
 
-async def confirm_boot(conv, origin):
+_booting = []
+
+
+async def confirm_boot(conv, origin, said=""):
     """Waits for the desktop to answer on the tailnet, then tells Marcus in the app whether it came up."""
     from . import deliver
 
-    seconds = await asyncio.to_thread(boot.wait_up)
+    try:
+        seconds = await asyncio.to_thread(boot.wait_up)
+    finally:
+        _booting.clear()
     line = boot.outcome_line(seconds)
-    context.record(conv, "boot check", "the desktop came up" if seconds is not None else "the desktop did not come up",
+    context.record(conv, said, "the desktop came up" if seconds is not None else "the desktop did not come up",
                    via="direct")
     try:
         await deliver.deliver(line, kind="report", origin=origin)
@@ -1404,15 +1419,20 @@ BOOT_REPLIES = {
     "no_packet": ("could not send the wake packet to the desktop", "I could not send the wake packet to your PC, sir. "
                   "The MAC or wakeonlan is missing on the Pi.", DIRECT_FAILED),
     "sent": ("sent the wake packet to the desktop", "Waking your PC, sir. I will say when it answers.", "direct"),
+    "waking": ("the desktop is already waking, sent nothing", "Already waking your PC, sir. I will say when it answers.",
+               "direct"),
 }
 
 
 async def run_boot(conv, text, origin=""):
-    """Boots the desktop from the Pi with no model: nothing sent when it already answers, else the packet and a check."""
-    state = await asyncio.to_thread(boot.start)
+    """Boots the desktop from the Pi with no model: nothing sent when it already answers or a wake is pending,
+    else the packet and a check. The desk's lock does not apply: a desktop that is up gets nothing sent, and one
+    that is off cannot be driven by anyone in the room."""
+    state = "waking" if _booting else await asyncio.to_thread(boot.start)
     did, reply, backend = BOOT_REPLIES[state]
     if state == "sent":
-        background(confirm_boot(conv, origin))
+        _booting.append(time.time())
+        background(confirm_boot(conv, origin, text))
     context.record(conv, text, did, via="direct")
     context.answered(text, reply, did, "direct")
     return Turn(text=reply, backend=backend, model="boot", did=did)

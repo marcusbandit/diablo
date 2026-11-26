@@ -643,6 +643,8 @@ def run(act):
         ok, missed = verify(act, before, sound)
         if not ok:
             log.warning("%s ran but did not take: %s", action, missed)
+            remember(action, f"tried: {act.get('did') or action}", before,
+                     act={k: v for k, v in act.items() if k != "did"}, **({"closed": closed} if closed else {}))
             return False, missed
     if ok:
         remember(action, why or act.get("did") or action, before,
@@ -652,8 +654,6 @@ def run(act):
 
 VERIFY_WAIT_S = 1.5
 VERIFY_STEP_S = 0.1
-VERIFIED = ("close_window", "focus_window", "stage_window", "workspace", "move_to_workspace", "play", "pause",
-            "volume_up", "volume_down", "mute", "unmute")
 VOLUME = re.compile(r"Volume:\s*([0-9.]+)(\s*\[MUTED\])?")
 
 
@@ -704,8 +704,8 @@ def _client(address):
 
 
 def verify(act, before=None, sound=None):
-    """(ok, why): reads back what an act should have changed. Only the acts in VERIFIED have a cheap read;
-    focus and stage check themselves in window.bring and window.stage. Keys, clicks, scrolling, next and
+    """(ok, why): reads back what an act should have changed: close, workspace, move to workspace, play, pause,
+    volume and mute. Focus and stage check themselves in window.bring and window.stage. Keys, clicks, scrolling, next and
     previous track, new windows, terminals and thread links have no cheap read-back and pass unchecked."""
     action = str((act or {}).get("action") or "")
     name = act.get("name") or "the window"
