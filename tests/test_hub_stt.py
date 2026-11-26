@@ -365,9 +365,9 @@ class TestFallback(SttCase):
 
 class TestHearingWords(SttCase):
     def test_a_rule_fixes_what_every_backend_heard(self):
-        settings.set_setting("hearing.words", "Annelise = Anna Lisa, Analise")
-        self.local.text = "dinner at anna lisa's place"
-        self.assertEqual(stt.transcribe(b"ogg", "voice.ogg")[0], "dinner at Annelise's place")
+        settings.set_setting("hearing.words", "Zorvane = Sore Vane, Zorvana")
+        self.local.text = "supper at sore vane's place"
+        self.assertEqual(stt.transcribe(b"ogg", "voice.ogg")[0], "supper at Zorvane's place")
 
 
 class TestPhoneOrder(SttCase):
@@ -393,7 +393,7 @@ class TestPhoneOrder(SttCase):
 
     def test_elevenlabs_is_asked_in_its_own_dialect_with_keyterms(self):
         settings.set_setting("transcription.phone.backends", "eleven")
-        settings.set_setting("hearing.words", "Annelise = Anna Lisa\nKastrup = cast rope")
+        settings.set_setting("hearing.words", "Zorvane = Sore Vane\nPlimbeck = plim back")
         stt.transcribe_from(b"wav", "clip.wav", caller="phone")
         post = self.eleven.posts[0]
         self.assertEqual(post["path"], "/v1/speech-to-text")
@@ -401,9 +401,18 @@ class TestPhoneOrder(SttCase):
         self.assertIsNone(post["auth"])
         body = post["body"].decode("latin-1")
         self.assertIn('name="model_id"\r\n\r\nscribe_v3', body)
-        self.assertIn('name="keyterms"\r\n\r\nAnnelise', body)
-        self.assertIn('name="keyterms"\r\n\r\nKastrup', body)
+        self.assertIn('name="keyterms"\r\n\r\nZorvane', body)
+        self.assertIn('name="keyterms"\r\n\r\nPlimbeck', body)
 
+
+    def test_scribe_three_letter_languages_read_as_two(self):
+        self.assertEqual(stt._language("dan"), "da")
+        self.assertEqual(stt._language("eng"), "en")
+
+    def test_a_scribe_clip_is_costed(self):
+        from hub import usage
+        self.assertAlmostEqual(usage.transcription_cost("elevenlabs", "scribe_v3", 3600), 0.24)
+        self.assertEqual(usage.service_for("https://api.elevenlabs.io/v1"), "elevenlabs")
 
 if __name__ == "__main__":
     unittest.main()

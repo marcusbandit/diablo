@@ -35,5 +35,5 @@ def fix(text, table=None):
     for rule in rules() if table is None else table:
         for wrong in sorted(rule["wrong"], key=len, reverse=True):
             pattern = r"(?<!\w)" + r"\s+".join(re.escape(part) for part in wrong.split()) + r"(?!\w)"
-            text = re.sub(pattern, rule["right"], text, flags=re.IGNORECASE)
+            text = re.sub(pattern, lambda _match, right=rule["right"]: right, text, flags=re.IGNORECASE)
     return text

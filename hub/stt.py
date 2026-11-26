@@ -170,8 +170,13 @@ def _served(b):
         _fails.pop(_cache_key(b), None)
 
 
+LANGUAGES = {"eng": "en", "dan": "da", "swe": "sv", "nor": "no", "nob": "no", "deu": "de", "ger": "de",
+             "fra": "fr", "fre": "fr", "spa": "es", "ita": "it", "nld": "nl", "dut": "nl", "por": "pt"}
+
+
 def _language(value):
     code = str(value or "en").strip().lower()
+    code = LANGUAGES.get(code, code)
     return code if len(code) == 2 and code.isalpha() else "en"
 
 
@@ -214,7 +219,7 @@ def _post(b, data, filename):
     except ValueError:
         body = None
     model = str((body or {}).get("model") or b["model"])
-    paid = usage.service_for(b["base_url"]) in usage.SERVICES
+    paid = usage.service_for(b["base_url"]) in usage.SERVICES + usage.STT_ONLY
     usage.record_transcription(b["base_url"], model, data, filename, response.headers,
                                ok=response.is_success and body is not None, service=None if paid else b["name"])
     response.raise_for_status()

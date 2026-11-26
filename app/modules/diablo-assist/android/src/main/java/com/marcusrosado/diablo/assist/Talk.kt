@@ -25,6 +25,7 @@ import java.io.IOException
 import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
 import kotlin.math.sqrt
 
@@ -86,13 +87,13 @@ object Talk {
 
   /** The phone's own recognizer, fed the clip as it is recorded, only to show his words live. */
   private var recognizer: SpeechRecognizer? = null
-  @Volatile private var feed: OutputStream? = null
+  @Volatile private var feed: Feeder? = null
   private var source: ParcelFileDescriptor? = null
   /** What the live recognizer has settled so far, and its guess at the piece being said. */
   private var settled = ""
   private var live = ""
   private var wordsAt = 0L
-  private var recording: Thread? = null
+  @Volatile private var recording: Thread? = null
   @Volatile private var stopRecording = false
   private var player: MediaPlayer? = null
   private var audio: AudioManager? = null
@@ -254,7 +255,11 @@ object Talk {
       }
 
       override fun onError(error: Int) {
-        if (recognizer === r) stopLive()
+        if (recognizer !== r) return
+        stopLive()
+        // A pause with nothing recognised ends this recognizer, not the line: a fresh one goes on.
+        val quiet = error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+        if (quiet && now.phase == Phase.LISTENING && recording != null) startLive(context)
       }
     })
     val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
@@ -268,7 +273,7 @@ object Talk {
       .putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE)
     val bias = words(context).rights
     if (bias.isNotEmpty()) intent.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(bias))
-    feed = ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])
+    feed = Feeder(ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]))
     try {
       r.startListening(intent)
     } catch (_: Exception) {
@@ -277,13 +282,8 @@ object Talk {
   }
 
   private fun stopLive() {
-    val f = feed
+    feed?.close()
     feed = null
-    try {
-      f?.close()
-    } catch (_: IOException) {
-      // Already closed by the other side.
-    }
     recognizer?.let {
       try {
         it.cancel()
@@ -310,15 +310,17 @@ object Talk {
     live = ""
     val mine = turn
     val thread = Thread {
+      val me = Thread.currentThread()
       val wav = try {
-        record()
+        record(me)
       } catch (e: SecurityException) {
         null
       }
-      if (stopRecording && recording !== Thread.currentThread()) return@Thread
+      // A newer line took over the microphone: this one is not his any more.
+      if (recording !== me) return@Thread
       recording = null
       micLevel = 0f
-      main.post { stopLive() }
+      main.post { if (recording == null) stopLive() }
       if (wav == null) {
         set(idle())
         return@Thread
@@ -351,7 +353,7 @@ object Talk {
 
   /** 16 kHz mono PCM as a WAV, or null when nothing was said. */
   @Suppress("MissingPermission")
-  private fun record(): ByteArray? {
+  private fun record(me: Thread): ByteArray? {
     val size = maxOf(AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), RATE / 5)
     val rec = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, size)
     val pcm = ByteArrayOutputStream()
@@ -362,7 +364,7 @@ object Talk {
     var totalMs = 0
     rec.startRecording()
     try {
-      while (!stopRecording) {
+      while (!stopRecording && recording === me) {
         val n = rec.read(frame, 0, frame.size)
         if (n <= 0) break
         var sum = 0.0
@@ -372,13 +374,7 @@ object Talk {
           bytes.putShort(frame[i])
         }
         pcm.write(bytes.array(), 0, n * 2)
-        feed?.let {
-          try {
-            it.write(bytes.array(), 0, n * 2)
-          } catch (_: IOException) {
-            if (feed === it) feed = null
-          }
-        }
+        feed?.offer(bytes.array().copyOf(n * 2))
         val rms = sqrt(sum / n)
         micLevel = (rms / 3000.0).toFloat().coerceIn(0f, 1f)
         val loud = rms > 900
@@ -397,7 +393,7 @@ object Talk {
       rec.stop()
       rec.release()
     }
-    if (!spoke || stopRecording) return null
+    if (!spoke || stopRecording || recording !== me) return null
     return wav(pcm.toByteArray())
   }
 
@@ -484,30 +480,41 @@ object Talk {
   private fun play(context: Context, file: File, started: () -> Unit, done: (Boolean) -> Unit) {
     stopPlayer()
     val manager = context.getSystemService(AudioManager::class.java)
+    val p = MediaPlayer()
+    var begun = false
+    var ended = false
+    val finish = { ok: Boolean ->
+      if (!ended) {
+        ended = true
+        if (player === p) stopPlayer()
+        done(ok)
+      }
+    }
     val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
       .setAudioAttributes(speech)
       .setOnAudioFocusChangeListener({ change ->
-        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) stopSpeaking()
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+          // Cut off before a sound came out, the reply still shows, silently.
+          if (begun) stopSpeaking()
+          finish(false)
+        }
       }, main)
       .build()
     if (manager == null || manager.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+      p.release()
       done(false)
       return
     }
     audio = manager
     focus = request
-    val p = MediaPlayer()
     player = p
-    val finish = { ok: Boolean ->
-      if (player === p) stopPlayer()
-      done(ok)
-    }
     try {
       p.setAudioAttributes(speech)
       p.setDataSource(file.path)
       p.setOnPreparedListener {
         if (player === p) {
           it.start()
+          begun = true
           started()
         }
       }
@@ -651,4 +658,44 @@ object Talk {
     .replace(Regex("https?://\\S+"), "the link")
     .replace(Regex("[*_`#>]+"), "")
     .trim()
+}
+
+/**
+ * Hands recorded frames to the live recognizer on a thread of its own. When the recognizer falls
+ * behind, frames are dropped, so the recording never waits on it.
+ */
+private class Feeder(private val out: OutputStream) {
+  private val frames = ArrayBlockingQueue<ByteArray>(100)
+  @Volatile private var open = true
+
+  init {
+    Thread {
+      try {
+        while (open) {
+          val frame = frames.take()
+          if (frame.isEmpty()) break
+          out.write(frame)
+        }
+      } catch (_: Exception) {
+        // The recognizer closed its end or the feed was closed: nothing more to hand over.
+      } finally {
+        open = false
+        try {
+          out.close()
+        } catch (_: IOException) {
+          // Already closed by the other side.
+        }
+      }
+    }.apply { isDaemon = true }.start()
+  }
+
+  fun offer(frame: ByteArray) {
+    if (open) frames.offer(frame)
+  }
+
+  fun close() {
+    open = false
+    frames.clear()
+    frames.offer(ByteArray(0))
+  }
 }
