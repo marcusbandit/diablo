@@ -170,7 +170,12 @@ class HubEndpointTest(unittest.TestCase):
             answer = self.client.post("/v1/stt", content=b"RIFFdata", headers={"Content-Type": "audio/wav"})
         self.assertEqual(answer.status_code, 200)
         self.assertEqual(answer.json(), {"text": "hello", "language": "en", "backend": "local"})
-        self.assertEqual(done.call_args.args, (b"RIFFdata", "clip.wav", ()))
+        self.assertEqual(done.call_args.args, (b"RIFFdata", "clip.wav", (), ""))
+
+    def test_the_phone_names_itself(self):
+        with mock.patch.object(self.server.stt, "transcribe_from", return_value=("hello", "en", "eleven")) as done:
+            self.client.post("/v1/stt", content=b"RIFFdata", headers={"X-Stt-For": "Phone!"})
+        self.assertEqual(done.call_args.args[3], "phone")
 
     def test_the_desk_can_skip_its_own_whisper(self):
         with mock.patch.object(self.server.stt, "transcribe_from", return_value=("hello", "en", "cloud")) as done:
