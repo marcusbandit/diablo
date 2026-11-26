@@ -637,11 +637,137 @@ def run(act):
     if action == "stage_window" and ADDRESS.match(str(act.get("window") or "")):
         before["stage"] = window.holder(act["window"])
     closed = _closed_info(str(act.get("window") or "")) if action == "close_window" else None
+    sound = _volume() if action in ("volume_up", "volume_down") else None
     ok, why = _run_act(act)
+    if ok:
+        ok, missed = verify(act, before, sound)
+        if not ok:
+            log.warning("%s ran but did not take: %s", action, missed)
+            return False, missed
     if ok:
         remember(action, why or act.get("did") or action, before,
                  act={k: v for k, v in act.items() if k != "did"}, **({"closed": closed} if closed else {}))
     return ok, why
+
+
+VERIFY_WAIT_S = 1.5
+VERIFY_STEP_S = 0.1
+VERIFIED = ("close_window", "focus_window", "stage_window", "workspace", "move_to_workspace", "play", "pause",
+            "volume_up", "volume_down", "mute", "unmute")
+VOLUME = re.compile(r"Volume:\s*([0-9.]+)(\s*\[MUTED\])?")
+
+
+def _volume():
+    """(level, muted) of the default output, or None when wpctl gives nothing to read."""
+    ok, out = _run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], timeout=2.0)
+    found = VOLUME.search(out) if ok else None
+    return (float(found.group(1)), bool(found.group(2))) if found else None
+
+
+def _statuses():
+    ok, out = _run(["playerctl", "-a", "-f", "{{playerInstance}}\t{{status}}", "status"], timeout=2.0)
+    rows = {}
+    for line in out.splitlines() if ok else []:
+        name, _, state = line.strip().partition("\t")
+        if name and state:
+            rows[name] = state.strip().lower()
+    return rows
+
+
+def _held():
+    try:
+        from . import speakers
+
+        return {str(name).lower() for name in speakers._shared.paused}
+    except Exception:
+        return set()
+
+
+def _until(check, wait=None):
+    """Reads the state back until check() holds or the wait runs out; True when it held."""
+    deadline = time.monotonic() + (VERIFY_WAIT_S if wait is None else wait)
+    while True:
+        if check():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(VERIFY_STEP_S)
+
+
+def _client(address):
+    ok, out = _run(["hyprctl", "-j", "clients"])
+    try:
+        clients = json.loads(out) if ok and out else []
+    except ValueError:
+        return None
+    return next((c for c in clients if isinstance(c, dict) and c.get("address") == address), None)
+
+
+def verify(act, before=None, sound=None):
+    """(ok, why): reads back what an act should have changed. Only the acts in VERIFIED have a cheap read;
+    focus and stage check themselves in window.bring and window.stage. Keys, clicks, scrolling, next and
+    previous track, new windows, terminals and thread links have no cheap read-back and pass unchecked."""
+    action = str((act or {}).get("action") or "")
+    name = act.get("name") or "the window"
+    if action == "close_window":
+        address = str(act.get("window") or "")
+        if _until(lambda: _client(address) is None):
+            return True, ""
+        return False, f"{name} is still open, it may be asking to save"
+    if action == "workspace":
+        number = int(act.get("workspace") or 0)
+
+        def on_it():
+            ok, out = _run(["hyprctl", "-j", "activeworkspace"])
+            try:
+                return ok and (json.loads(out) or {}).get("id") == number
+            except ValueError:
+                return False
+        return (True, "") if _until(on_it) else (False, f"I am not on workspace {number}")
+    if action == "move_to_workspace":
+        number = int(act.get("workspace") or 0)
+        address = str((before or {}).get("address") or "")
+        if not ADDRESS.match(address):
+            return True, ""
+
+        def moved():
+            client = _client(address)
+            return client is not None and (client.get("workspace") or {}).get("id") == number
+        return (True, "") if _until(moved) else (False, f"the window is not on workspace {number}")
+    if action in ("play", "pause"):
+        player = str(act.get("player") or "")
+        held = _held()
+
+        def took():
+            rows = _statuses()
+            chosen = {k: v for k, v in rows.items() if not player or k == player}
+            if not chosen:
+                return action == "pause"
+            if action == "play":
+                return any(v == "playing" or k.split(".")[0].lower() in held for k, v in chosen.items())
+            return all(v != "playing" for v in chosen.values())
+        if _until(took):
+            return True, ""
+        who = player.split(".")[0] if player else "the player"
+        return False, f"{who} is not {'playing' if action == 'play' else 'paused'}"
+    if action in ("mute", "unmute"):
+        want = action == "mute"
+        if _until(lambda: (_volume() or (None, want))[1] == want):
+            return True, ""
+        return False, f"the sound is not {'muted' if want else 'unmuted'}"
+    if action in ("volume_up", "volume_down") and sound is not None:
+        level = sound[0]
+        up = action == "volume_up"
+        if (up and level >= 1.0) or (not up and level <= 0.0):
+            return True, ""
+
+        def changed():
+            now = _volume()
+            return now is not None and (now[0] > level if up else now[0] < level)
+        if _until(changed):
+            return True, ""
+        return False, f"the sound stayed at {round(level * 100)} percent"
+    return True, ""
 
 
 def _run_act(act):

@@ -778,7 +778,8 @@ class TestContext(unittest.TestCase):
     def test_again_replays_the_last_act(self):
         commands.remember("volume_down", "turned the sound down", act={"action": "volume_down"})
         with mock.patch.object(commands, "_run_act", return_value=(True, "")) as run, \
-                mock.patch.object(commands, "_active", return_value={}):
+                mock.patch.object(commands, "_active", return_value={}), \
+                mock.patch.object(commands, "verify", return_value=(True, "")):
             self.assertTrue(commands.run({"action": "again"})[0])
         run.assert_called_once_with({"action": "volume_down"})
 

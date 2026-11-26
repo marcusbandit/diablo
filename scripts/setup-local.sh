@@ -53,6 +53,7 @@ put DIABLO_TAILNET "$tailnet"
 put DIABLO_HOME_SUBNET "$subnet"
 echo
 echo "Optional"
+ask DIABLO_DESKTOP_HOST "Tailnet host name of the desktop box, for \"boot my PC\""
 ask DIABLO_WOL_MAC "MAC address of the desktop box, for wake-on-LAN"
 ask DIABLO_MAIL_ACCOUNTS "Mail accounts as name=address pairs, comma separated"
 ask DIABLO_MAIL_AGENT "The one agent address allowed to get mail replies"

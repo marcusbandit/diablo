@@ -655,6 +655,47 @@ def apply_jev(decision, answer, images=False, recent_light=False, needs_context=
     return decision
 
 
+BOOT_VERB = (r"(?:boot|wake|start|turn on|power on|switch on|fire up|tænd(?: for)?|start(?:e)?|væk(?:ke)?|boot(?:e)?)"
+             r"(?: up| op)?")
+BOOT_NOUNS = r"pc|computer|desktop|machine|pc'en|pcen|computeren|maskinen|desktoppen"
+BOOT_TAIL = r"(?:\s+(?:up|on|op|now|please|sir|nu|tak|for mig))*"
+BOOT_ASK = r"(?:(?:hey\s+)?diablo,?\s+|please\s+|can you\s+|could you\s+|kan du\s+|vil du\s+|gider du\s+)*"
+BOOT_WORDS = 10
+
+
+def _boot_nouns():
+    from . import boot
+
+    name = boot.host()
+    return BOOT_NOUNS + ("|" + re.escape(name) if name else "")
+
+
+def boot_command(text):
+    """Whether the line is plainly one order to boot his desktop, in English or Danish. The desktop's
+    own host name counts as a name for it."""
+    text = str(text or "").strip()
+    if len(text.split()) > BOOT_WORDS:
+        return False
+    thing = rf"(?:(?:my|the|min|mit)\s+)?(?:{_boot_nouns()})"
+    pattern = (rf"^\s*{BOOT_ASK}(?:{BOOT_VERB}\s+{thing}|turn\s+{thing}\s+on|power\s+{thing}\s+on)"
+               rf"{BOOT_TAIL}\s*[.!?]*\s*$")
+    return bool(re.match(pattern, text, re.I))
+
+
+def apply_boot(decision, text, answer, images=False):
+    """A boot order runs direct: the phrase match alone, or Jev sure of it on a short line that names the machine."""
+    if images or decision.explicit or decision.direct:
+        return decision
+    words = len(str(text or "").split())
+    sure = bool(answer) and answer.get("action") == "boot_pc" and \
+        answer.get("action_confidence", 0) >= _threshold("route.direct_threshold", 0.9)
+    named = re.search(rf"\b(?:{_boot_nouns()})\b", str(text or ""), re.I)
+    if boot_command(text) or (sure and words <= BOOT_WORDS and named):
+        decision.direct = {"kind": "boot"}
+        decision.adjusted.append("direct boot of the desktop")
+    return decision
+
+
 DESKTOP_WINDOW = ("close_window", "focus_window", "stage_window")
 DESKTOP_WORKSPACE = ("workspace", "move_to_workspace")
 DESKTOP_MEDIA = ("play", "pause", "next", "previous")
@@ -818,6 +859,7 @@ def route(text, conv="main", images=False, now=None, jev=None, recent_light=Fals
     decision = classify(text, images)
     decision.id = secrets.token_hex(4)
     apply_jev(decision, jev, images, recent_light, needs_context)
+    apply_boot(decision, text, jev, images)
     if not decision.explicit:
         feats = decision.features
         if rank(decision.tier) > rank("standard") and not (feats["request"] or feats["question"]):
@@ -858,6 +900,10 @@ def describe():
     for name in SUBJECTS:
         tree = DECISION_TREES[name]
         parts.append(render(tree, "  ") if isinstance(tree, Split) else f"  [{name}]\n  -> {tree.value}   # {tree.reason}")
+    parts += ["", "DIRECT: no brain turn, each checked after it runs",
+              "  boot    'boot my PC', 'tænd min computer', or jev boot_pc   # wake-on-LAN from the Pi, then tailnet pings",
+              "  hue     jev " + ", ".join(DIRECT_ACTIONS) + "   # the bridge read back, one retry",
+              "  desktop jev desktop command on a line from the desk   # the ears read hyprctl, playerctl, wpctl back"]
     return "\n".join(parts)
 
 

@@ -318,6 +318,14 @@ class TestBrainLine(unittest.TestCase):
         self.client = TestClient(server.app)
         self.lamps = [{"id": "left", "name": "corner lamp", "on": True, "bri": 254}]
 
+    def hue_light(self, action, target="all", brightness=None, color=None, temperature=None):
+        for lamp in self.lamps:
+            if target in ("all", lamp["id"]):
+                lamp["on"] = action == "on"
+                if brightness is not None:
+                    lamp["bri"] = round(brightness * 254 / 100)
+        return "ok"
+
     def lines(self, text, jev=None, source="voice"):
         async def claude(conv, message, images, on_step, decision=None, **kwargs):
             if kwargs.get("on_say"):
@@ -327,7 +335,7 @@ class TestBrainLine(unittest.TestCase):
 
         with mock.patch.object(brains, "jev_answer", return_value=jev), \
                 mock.patch.object(brains, "lamps_now", side_effect=lambda *a: [dict(l) for l in self.lamps]), \
-                mock.patch.object(brains.hue, "hue_light", return_value="ok"), \
+                mock.patch.object(brains.hue, "hue_light", side_effect=self.hue_light), \
                 mock.patch.object(brains.hue, "lamp_states", side_effect=lambda: [dict(l) for l in self.lamps]), \
                 mock.patch.object(brains, "run_claude", side_effect=claude), mock.patch.object(server, "publish"):
             response = self.client.post("/v1/chat", headers=HEADERS, json={
