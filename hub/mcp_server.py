@@ -668,7 +668,9 @@ DIAGRAM_TOOL = {
         "drawn by hand, wobbly lines and handwriting, so keep labels short. The "
         "hub lays it out in rows from the sources down (direction down) or in columns left to right (direction right) and "
         "scales it to his monitor. At most 8 beats, 14 nodes, 20 edges. It stays up 45 s after the last beat; the next "
-        "drawing, point_on_screen clear, or sending you away takes it down. 3D stays for things that really turn in space."
+        "drawing, point_on_screen clear, or sending you away takes it down. On a typed turn from his app the same drawing "
+        "also lands in his chat as a picture by itself, so never emit it again as a page. 3D stays for things that really "
+        "turn in space."
     ),
     "inputSchema": {
         "type": "object",
