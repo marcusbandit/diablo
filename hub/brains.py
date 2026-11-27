@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import busy as busy_turns
 from . import agent, character, charter, context, db, events, hue, jev, lockguard, modules, questions, route, sentences, settings, standby, t3link, threads, usage
-from . import boot, learn, showcase, skillbook
+from . import boot, diagram, learn, showcase, skillbook
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ class Turn:
     said: list = field(default_factory=list)
     first_said_at: float = 0.0
     marks: dict = field(default_factory=dict)
+    drawings: list = field(default_factory=list)
 
     def mark(self, name):
         self.marks.setdefault(name, time.time())
@@ -283,6 +284,14 @@ def collect_object(turn, name, arguments):
                 turn.objects.append(agent.keep_object(arguments))
             except (OSError, ValueError):
                 logger.exception("could not keep the object")
+    elif short == "draw_diagram":
+        try:
+            drawn = diagram.page(arguments)
+        except Exception:
+            logger.exception("could not draw the diagram for the chat")
+            drawn = None
+        if drawn and not agent.object_problem(drawn):
+            turn.drawings.append(agent.clean_object(drawn))
     elif short.endswith("hue_light"):
         turn.modules.append("lights")
         wanted = str((arguments or {}).get("target") or "all").lower().strip()
@@ -1545,6 +1554,14 @@ def wants_beat(text):
     return bool(found.get("actions")) and not found.get("question")
 
 
+def shows_drawings(origin):
+    """Whether a diagram drawn on the screen also goes into the chat: not on Telegram and not
+    spoken, which never show pages."""
+    from . import deliver
+
+    return not deliver.from_telegram(origin) and not spoken(origin)
+
+
 def aloud(origin):
     """A line said out loud at his desk, answered out loud: not a voice note, not typed."""
     return "spoken aloud" in str(origin or "")
@@ -1754,6 +1771,8 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
     if handover and turn.error and not turn.text:
         give_back_handover(conv, handover)
     turn.did = turn.did or did_for(turn)
+    if turn.drawings and shows_drawings(origin):
+        turn.objects = list(turn.objects) + list(turn.drawings)
     try:
         if not beside:
             # A side turn has no turn id of its own; claiming would take the busy turn's questions.

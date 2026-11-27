@@ -1,7 +1,11 @@
 import itertools
 import json
 import random
+import re
+import tempfile
 import unittest
+import xml.etree.ElementTree as ET
+from pathlib import Path
 from unittest import mock
 
 from hub import diagram, pointing
@@ -299,6 +303,111 @@ class Tool(unittest.TestCase):
 
     def test_nothing_to_draw_is_said_plainly(self):
         self.assertIn("nothing to draw", self.mcp.draw_diagram({"title": "t", "beats": []}, screen=SCREEN))
+
+
+SVG = "{http://www.w3.org/2000/svg}"
+
+
+def drawn(document):
+    return ET.fromstring(re.search(r"<svg.*</svg>", document, re.S).group(0))
+
+
+def of_class(root, name):
+    return [el for el in root.iter() if el.get("class") == name]
+
+
+class ChatPicture(unittest.TestCase):
+    def test_a_sample_page_written_to_a_file_parses_as_one_svg(self):
+        made = diagram.page(diagram.SAMPLE)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "diagram.html"
+            path.write_text(made["html"], encoding="utf-8")
+            document = path.read_text(encoding="utf-8")
+        self.assertTrue(document.startswith("<!doctype html>"))
+        root = drawn(document)
+        self.assertEqual(root.tag, SVG + "svg")
+        self.assertEqual(len(of_class(root, "node")), 6)
+        self.assertEqual(len(of_class(root, "edge")), 6)
+        self.assertEqual(len(of_class(root, "head")), 6)
+        self.assertEqual(len(of_class(root, "ring")), 1)
+        self.assertEqual([t.text for t in of_class(root, "title")], ["How the Linux kernel runs a program"])
+        self.assertEqual({t.text for t in of_class(root, "label")},
+                         {"User program", "System call", "Kernel", "Scheduler", "Device drivers", "Hardware"})
+        self.assertEqual({t.text for t in of_class(root, "note")}, {"read, write, fork", "trap", "CPU time", "I/O"})
+        self.assertEqual(made["kind"], "html")
+        self.assertEqual(made["title"], "How the Linux kernel runs a program")
+        self.assertGreater(made["height"], 100)
+
+    def test_it_draws_the_same_boxes_and_arrows_the_overlay_gets(self):
+        beats, _, nodes, edges = laid_out(diagram.SAMPLE, diagram.DEFAULT_SCREEN)
+        root = ET.fromstring(diagram.svg(beats))
+        rects = {(float(r.get("x")), float(r.get("y")), float(r.get("width")), float(r.get("height")))
+                 for r in root.iter(SVG + "rect")}
+        for label, box in nodes.items():
+            if label != "Kernel":
+                self.assertIn((box["x"], box["y"], box["w"], box["h"]), rects)
+        tips = [tuple(float(v) for v in h.get("points").split()[0].split(",")) for h in of_class(root, "head")]
+        self.assertEqual(tips, [(e["end"]["x"], e["end"]["y"]) for e in edges])
+        x, y, w, h = (float(v) for v in root.get("viewBox").split())
+        for box in nodes.values():
+            self.assertGreaterEqual(box["x"], x)
+            self.assertGreaterEqual(box["y"], y)
+            self.assertLessEqual(box["x"] + box["w"], x + w)
+            self.assertLessEqual(box["y"] + box["h"], y + h)
+        self.assertEqual(diagram.page(diagram.SAMPLE)["html"].count("<svg"), 1)
+
+    def test_shapes_are_drawn_as_their_kind(self):
+        root = ET.fromstring(diagram.svg(laid_out(diagram.SAMPLE, diagram.DEFAULT_SCREEN)[0]))
+        rounded = [r for r in root.iter(SVG + "rect") if float(r.get("rx")) * 2 == float(r.get("height"))]
+        self.assertEqual(len(rounded), 1)
+        diamonds = [p for p in root.iter(SVG + "polygon") if p.get("class") == "node"]
+        self.assertEqual(len(diamonds), 1)
+        self.assertEqual(len(diamonds[0].get("points").split()), 4)
+
+    def test_it_uses_the_theme_and_loads_nothing(self):
+        document = diagram.page(diagram.SAMPLE)["html"]
+        for name in ("--bg", "--raised", "--ink", "--muted", "--line", "--accent"):
+            self.assertIn(f"var({name}", document)
+        self.assertNotIn("<script", document)
+        self.assertEqual(re.findall(r"https?://[^\"]+", document), ["http://www.w3.org/2000/svg"])
+        self.assertNotIn("\u2014", document)
+        self.assertNotIn("\u2013", document)
+
+    def test_labels_are_escaped(self):
+        made = diagram.page({"title": "a < b", "beats": [{"nodes": [{"id": "x", "label": "<b>&co"}]}]})
+        root = drawn(made["html"])
+        self.assertEqual([t.text for t in of_class(root, "label")], ["<b>&co"])
+        self.assertNotIn("<b>", made["html"])
+
+    def test_nothing_to_draw_gives_no_page(self):
+        self.assertIsNone(diagram.page({"title": "t", "beats": []}))
+        self.assertEqual(diagram.svg([]), "")
+
+
+class InTheChat(unittest.TestCase):
+    def setUp(self):
+        from hub import agent, brains
+
+        self.agent, self.brains = agent, brains
+
+    def test_a_draw_diagram_call_keeps_a_page_for_the_chat(self):
+        turn = self.brains.Turn()
+        self.brains.collect_object(turn, "mcp__diablo__draw_diagram", diagram.SAMPLE)
+        self.brains.collect_object(turn, "mcp__diablo__draw_diagram", {"title": "t", "beats": []})
+        self.assertEqual(turn.objects, [])
+        self.assertEqual(len(turn.drawings), 1)
+        self.assertEqual(turn.drawings[0]["kind"], "html")
+        self.assertEqual(self.agent.object_problem(turn.drawings[0]), "")
+
+    def test_only_typed_app_turns_show_it(self):
+        from hub import devices
+
+        self.assertTrue(self.brains.shows_drawings("desktop app on example-box"))
+        self.assertTrue(self.brains.shows_drawings("web app"))
+        self.assertFalse(self.brains.shows_drawings("telegram"))
+        self.assertFalse(self.brains.shows_drawings("telegram voice note"))
+        self.assertFalse(self.brains.shows_drawings(devices.KINDS["voice"]))
+        self.assertFalse(self.brains.shows_drawings(devices.SPOKEN_ON.format(host="example-box")))
 
 
 if __name__ == "__main__":

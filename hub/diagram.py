@@ -4,11 +4,13 @@ The brain gives beats, each a line he says and the boxes and arrows that line is
 cleans them, lays every node out at once in a layered layout inside about 70% of the focused
 monitor, and turns each beat into a marks beat with `keep`, so the overlay adds each beat's pieces
 to the ones already drawn. Boxes come out in global logical pixels, edges as points on the node
-borders with a control point for the curve.
+borders with a control point for the curve. page() turns the same laid-out marks into one inline SVG
+page for the desktop chat, so the picture there matches the one drawn on the screen.
 
 Standard library only, so the desktop and the preview can import it without the hub's packages.
 """
 
+import html
 import math
 import uuid
 
@@ -337,6 +339,137 @@ def summary(sent, beats, notes, failed=None):
         parts.append("Left out: " + "; ".join(notes[:6]))
     parts.append("Each beat draws while its line is said, so now say the beats' lines in order and nothing more")
     return ". ".join(parts) + "."
+
+
+PAD = 28
+CHAT_W = 760
+STYLE = (
+    "html,body{margin:0;background:var(--bg,#1e2024);color:var(--ink,#f2f1ee);"
+    "font-family:var(--font-sans,system-ui,sans-serif)}"
+    "svg{display:block;margin:0 auto;max-width:100%;height:auto}"
+    ".node{fill:var(--raised,#1a1c20);stroke:var(--line,rgba(242,241,238,.18));stroke-width:1.5}"
+    ".label{fill:var(--ink,#f2f1ee);text-anchor:middle;dominant-baseline:central}"
+    ".edge{fill:none;stroke:var(--muted,rgba(242,241,238,.66));stroke-width:2;stroke-linecap:round}"
+    ".head{fill:var(--muted,rgba(242,241,238,.66))}"
+    ".note{fill:var(--muted,rgba(242,241,238,.66));text-anchor:middle;dominant-baseline:central;"
+    "stroke:var(--bg,#1e2024);stroke-width:5;stroke-linejoin:round;paint-order:stroke}"
+    ".ring{fill:none;stroke:var(--accent,#2d81ff);stroke-width:3}"
+    ".title{fill:var(--ink,#f2f1ee);text-anchor:middle;dominant-baseline:central;font-weight:600}"
+)
+
+
+def _num(value):
+    return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
+def _text(value):
+    return html.escape(str(value or ""), quote=True)
+
+
+def _reach(mark):
+    """The corners a mark can reach, so the picture is cropped to what is drawn."""
+    kind = mark.get("kind")
+    if kind == "edge":
+        points = [mark["start"], mark["end"], mark["via"]]
+        out = [(p["x"], p["y"]) for p in points]
+        if mark.get("text"):
+            x, y = quad(*[(p["x"], p["y"]) for p in (mark["start"], mark["via"], mark["end"])], 0.5)
+            half = len(mark["text"]) * mark["size"] * 0.8 * CHAR / 2 + 4
+            out += [(x - half, y - mark["size"]), (x + half, y + mark["size"])]
+        return out
+    box = mark.get("box")
+    if not box:
+        return []
+    grow = 16 if kind == "ring" else 0
+    return [(box["x"] - grow, box["y"] - grow), (box["x"] + box["w"] + grow, box["y"] + box["h"] + grow)]
+
+
+def _shape(mark):
+    box, shape = mark["box"], mark.get("shape") or "box"
+    x, y, w, h = box["x"], box["y"], box["w"], box["h"]
+    if shape == "diamond":
+        points = [(x + w / 2, y), (x + w, y + h / 2), (x + w / 2, y + h), (x, y + h / 2)]
+        return '<polygon class="node" points="' + " ".join(f"{_num(a)},{_num(b)}" for a, b in points) + '"/>'
+    radius = h / 2 if shape == "round" else 8
+    return (f'<rect class="node" x="{_num(x)}" y="{_num(y)}" width="{_num(w)}" height="{_num(h)}" '
+            f'rx="{_num(radius)}"/>')
+
+
+def _label(mark, cls="label"):
+    cx, cy = middle(mark["box"])
+    return f'<text class="{cls}" x="{_num(cx)}" y="{_num(cy)}" font-size="{_num(mark["size"])}">{_text(mark["text"])}</text>'
+
+
+def _arrow(mark):
+    s, c, e = ((p["x"], p["y"]) for p in (mark["start"], mark["via"], mark["end"]))
+    size = max(7.0, mark["size"] * 0.6)
+    dx, dy = e[0] - c[0], e[1] - c[1]
+    length = math.hypot(dx, dy) or 1
+    ux, uy = dx / length, dy / length
+    back = (e[0] - ux * size * 1.4, e[1] - uy * size * 1.4)
+    wing = [(back[0] - uy * size * 0.6, back[1] + ux * size * 0.6), (back[0] + uy * size * 0.6, back[1] - ux * size * 0.6)]
+    path = f"M{_num(s[0])} {_num(s[1])} Q{_num(c[0])} {_num(c[1])} {_num(back[0])} {_num(back[1])}"
+    head = " ".join(f"{_num(a)},{_num(b)}" for a, b in [e, *wing])
+    out = [f'<path class="edge" d="{path}"/>', f'<polygon class="head" points="{head}"/>']
+    if mark.get("text"):
+        x, y = quad(s, c, e, 0.5)
+        out.append(f'<text class="note" x="{_num(x)}" y="{_num(y)}" font-size="{_num(mark["size"] * 0.8)}">'
+                   f'{_text(mark["text"])}</text>')
+    return out
+
+
+def frame(beats):
+    """The drawing's bounds with a margin, (x, y, w, h), or None when nothing is drawn."""
+    corners = [p for b in beats or [] for m in b.get("marks") or [] for p in _reach(m)]
+    if not corners:
+        return None
+    x0, y0 = min(p[0] for p in corners) - PAD, min(p[1] for p in corners) - PAD
+    return x0, y0, max(p[0] for p in corners) + PAD - x0, max(p[1] for p in corners) + PAD - y0
+
+
+def svg(beats):
+    """Every beat's marks as one SVG, cropped to the drawing: arrows under the boxes, rings and the
+    title on top, coloured by the app's theme variables. An empty string when nothing is drawn."""
+    marks = [m for b in beats or [] for m in b.get("marks") or []]
+    framed = frame(beats)
+    if not framed:
+        return ""
+    x0, y0, w, h = framed
+    title = next((m["text"] for m in marks if m.get("kind") == "title"), "")
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{_num(x0)} {_num(y0)} {_num(w)} {_num(h)}" '
+           f'width="{_num(w)}" height="{_num(h)}" role="img" aria-label="{_text(title or "Diagram")}">']
+    for mark in marks:
+        if mark.get("kind") == "edge":
+            out += _arrow(mark)
+    for mark in marks:
+        if mark.get("kind") == "node":
+            out += [_shape(mark), _label(mark)]
+    for mark in marks:
+        if mark.get("kind") == "ring":
+            cx, cy = middle(mark["box"])
+            out.append(f'<ellipse class="ring" cx="{_num(cx)}" cy="{_num(cy)}" rx="{_num(mark["box"]["w"] / 2 + 14)}" '
+                       f'ry="{_num(mark["box"]["h"] / 2 + 12)}"/>')
+        elif mark.get("kind") == "title":
+            out.append(_label(mark, "title"))
+    out.append("</svg>")
+    return "".join(out)
+
+
+def page(arguments, screen=None):
+    """The diagram as an emit_object html page for the desktop chat, laid out by plan() exactly as
+    the overlay gets it; None when there is nothing to draw."""
+    planned = plan(arguments, screen, show="chat")
+    if isinstance(planned, str):
+        return None
+    beats, _ = planned
+    picture = svg(beats)
+    if not picture:
+        return None
+    title = next((m["text"] for b in beats for m in b["marks"] if m["kind"] == "title"), "") or "Diagram"
+    _, _, w, h = frame(beats)
+    document = (f'<!doctype html><html><head><meta charset="utf-8"><title>{_text(title)}</title>'
+                f"<style>{STYLE}</style></head><body>{picture}</body></html>")
+    return {"kind": "html", "title": title, "html": document, "height": round(h * min(1.0, CHAT_W / w)) + 8}
 
 
 SAMPLE = {
