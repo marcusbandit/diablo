@@ -284,7 +284,7 @@ def collect_object(turn, name, arguments):
                 turn.objects.append(agent.keep_object(arguments))
             except (OSError, ValueError):
                 logger.exception("could not keep the object")
-    elif short == "draw_diagram":
+    elif short.endswith("draw_diagram"):
         try:
             drawn = diagram.page(arguments)
         except Exception:
@@ -1748,6 +1748,7 @@ async def _ask(conv, text, origin="telegram", images=None, on_step=None, notes=N
                 turn = await run_api(conv, text, origin)
                 turn.first_text, turn.first_text_at = failed.first_text, failed.first_text_at
                 turn.said, turn.first_said_at = failed.said, failed.first_said_at
+                turn.drawings = list(failed.drawings) + list(turn.drawings)
                 turn.marks = {**failed.marks, **turn.marks}
                 turn.note = f"{chosen} failed ({failed.error[:160]}), the api brain answered instead"
     except BaseException:

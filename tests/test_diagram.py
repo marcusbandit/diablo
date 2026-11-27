@@ -330,7 +330,8 @@ class ChatPicture(unittest.TestCase):
         self.assertEqual(len(of_class(root, "edge")), 6)
         self.assertEqual(len(of_class(root, "head")), 6)
         self.assertEqual(len(of_class(root, "ring")), 1)
-        self.assertEqual([t.text for t in of_class(root, "title")], ["How the Linux kernel runs a program"])
+        self.assertEqual(of_class(root, "title"), [])
+        self.assertEqual(root.get("aria-label"), "How the Linux kernel runs a program")
         self.assertEqual({t.text for t in of_class(root, "label")},
                          {"User program", "System call", "Kernel", "Scheduler", "Device drivers", "Hardware"})
         self.assertEqual({t.text for t in of_class(root, "note")}, {"read, write, fork", "trap", "CPU time", "I/O"})
@@ -379,6 +380,26 @@ class ChatPicture(unittest.TestCase):
         self.assertEqual([t.text for t in of_class(root, "label")], ["<b>&co"])
         self.assertNotIn("<b>", made["html"])
 
+    def test_the_height_hint_fits_the_chat_and_text_stays_readable(self):
+        made = diagram.page(diagram.SAMPLE)
+        beats = laid_out(diagram.SAMPLE, diagram.DEFAULT_SCREEN)[0]
+        _, _, w, h = diagram.frame(beats)
+        self.assertLessEqual(w, diagram.CHAT_W)
+        self.assertEqual(made["height"], round(h) + 8)
+        self.assertIn(f"max-width:{diagram._num(w)}px", made["html"])
+        row = {"title": "Wide", "direction": "right", "beats": [{
+            "nodes": [{"id": f"n{i}", "label": f"Stage number {i} here"} for i in range(6)],
+            "edges": [{"from": f"n{i}", "to": f"n{i + 1}", "label": "then"} for i in range(5)]}]}
+        beats = laid_out(row, diagram.DEFAULT_SCREEN)[0]
+        _, _, w, h = diagram.frame(beats)
+        font = min(m["size"] for b in beats for m in b["marks"] if m["kind"] == "node")
+        readable, shown = diagram.widths(beats, w)
+        self.assertGreater(shown, diagram.CHAT_W)
+        self.assertAlmostEqual(font * readable / w, diagram.MIN_TEXT)
+        wide = diagram.page(row)
+        self.assertIn(f"min-width:{diagram._num(readable)}px", wide["html"])
+        self.assertGreaterEqual(wide["height"], h * shown / w + diagram.SCROLLBAR)
+
     def test_nothing_to_draw_gives_no_page(self):
         self.assertIsNone(diagram.page({"title": "t", "beats": []}))
         self.assertEqual(diagram.svg([]), "")
@@ -398,6 +419,8 @@ class InTheChat(unittest.TestCase):
         self.assertEqual(len(turn.drawings), 1)
         self.assertEqual(turn.drawings[0]["kind"], "html")
         self.assertEqual(self.agent.object_problem(turn.drawings[0]), "")
+        self.brains.collect_object(turn, "diablo_draw_diagram", diagram.SAMPLE)
+        self.assertEqual(len(turn.drawings), 2)
 
     def test_only_typed_app_turns_show_it(self):
         from hub import devices

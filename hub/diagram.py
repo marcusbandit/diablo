@@ -4,8 +4,9 @@ The brain gives beats, each a line he says and the boxes and arrows that line is
 cleans them, lays every node out at once in a layered layout inside about 70% of the focused
 monitor, and turns each beat into a marks beat with `keep`, so the overlay adds each beat's pieces
 to the ones already drawn. Boxes come out in global logical pixels, edges as points on the node
-borders with a control point for the curve. page() turns the same laid-out marks into one inline SVG
-page for the desktop chat, so the picture there matches the one drawn on the screen.
+borders with a control point for the curve. page() turns plan()'s marks into one inline SVG page for
+the desktop chat, laid out for the overlay's default monitor: the same boxes, arrows and labels as on
+the screen, with the spacing of a 16:9 monitor.
 
 Standard library only, so the desktop and the preview can import it without the hub's packages.
 """
@@ -343,10 +344,13 @@ def summary(sent, beats, notes, failed=None):
 
 PAD = 28
 CHAT_W = 760
+MIN_TEXT = 11
+SCROLLBAR = 16
 STYLE = (
     "html,body{margin:0;background:var(--bg,#1e2024);color:var(--ink,#f2f1ee);"
     "font-family:var(--font-sans,system-ui,sans-serif)}"
-    "svg{display:block;margin:0 auto;max-width:100%;height:auto}"
+    "html,body{height:100%}body{display:flex;overflow-x:auto}"
+    "svg{display:block;flex:none;margin:auto;height:auto}"
     ".node{fill:var(--raised,#1a1c20);stroke:var(--line,rgba(242,241,238,.18));stroke-width:1.5}"
     ".label{fill:var(--ink,#f2f1ee);text-anchor:middle;dominant-baseline:central}"
     ".edge{fill:none;stroke:var(--muted,rgba(242,241,238,.66));stroke-width:2;stroke-linecap:round}"
@@ -354,7 +358,6 @@ STYLE = (
     ".note{fill:var(--muted,rgba(242,241,238,.66));text-anchor:middle;dominant-baseline:central;"
     "stroke:var(--bg,#1e2024);stroke-width:5;stroke-linejoin:round;paint-order:stroke}"
     ".ring{fill:none;stroke:var(--accent,#2d81ff);stroke-width:3}"
-    ".title{fill:var(--ink,#f2f1ee);text-anchor:middle;dominant-baseline:central;font-weight:600}"
 )
 
 
@@ -418,26 +421,32 @@ def _arrow(mark):
     return out
 
 
+def untitled(beats):
+    return [{**b, "marks": [m for m in b.get("marks") or [] if m.get("kind") != "title"]} for b in beats or []]
+
+
 def frame(beats):
     """The drawing's bounds with a margin, (x, y, w, h), or None when nothing is drawn."""
-    corners = [p for b in beats or [] for m in b.get("marks") or [] for p in _reach(m)]
+    corners = [p for b in untitled(beats) for m in b["marks"] for p in _reach(m)]
     if not corners:
         return None
     x0, y0 = min(p[0] for p in corners) - PAD, min(p[1] for p in corners) - PAD
     return x0, y0, max(p[0] for p in corners) + PAD - x0, max(p[1] for p in corners) + PAD - y0
 
 
-def svg(beats):
-    """Every beat's marks as one SVG, cropped to the drawing: arrows under the boxes, rings and the
-    title on top, coloured by the app's theme variables. An empty string when nothing is drawn."""
-    marks = [m for b in beats or [] for m in b.get("marks") or []]
+def svg(beats, style=""):
+    """Every beat's marks but the title as one SVG, cropped to the drawing: arrows under the boxes,
+    rings on top, coloured by the app's theme variables. The chat card prints the title above it.
+    An empty string when nothing is drawn."""
+    title = next((m["text"] for b in beats or [] for m in b.get("marks") or [] if m.get("kind") == "title"), "")
     framed = frame(beats)
     if not framed:
         return ""
     x0, y0, w, h = framed
-    title = next((m["text"] for m in marks if m.get("kind") == "title"), "")
+    marks = [m for b in untitled(beats) for m in b["marks"]]
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{_num(x0)} {_num(y0)} {_num(w)} {_num(h)}" '
-           f'width="{_num(w)}" height="{_num(h)}" role="img" aria-label="{_text(title or "Diagram")}">']
+           f'width="{_num(w)}" height="{_num(h)}" role="img" aria-label="{_text(title or "Diagram")}"'
+           + (f' style="{style}"' if style else "") + ">"]
     for mark in marks:
         if mark.get("kind") == "edge":
             out += _arrow(mark)
@@ -449,27 +458,37 @@ def svg(beats):
             cx, cy = middle(mark["box"])
             out.append(f'<ellipse class="ring" cx="{_num(cx)}" cy="{_num(cy)}" rx="{_num(mark["box"]["w"] / 2 + 14)}" '
                        f'ry="{_num(mark["box"]["h"] / 2 + 12)}"/>')
-        elif mark.get("kind") == "title":
-            out.append(_label(mark, "title"))
     out.append("</svg>")
     return "".join(out)
 
 
 def page(arguments, screen=None):
-    """The diagram as an emit_object html page for the desktop chat, laid out by plan() exactly as
-    the overlay gets it; None when there is nothing to draw."""
+    """The diagram as an emit_object html page for the desktop chat, laid out by plan() for the
+    given screen or the overlay's default one; None when there is nothing to draw."""
     planned = plan(arguments, screen, show="chat")
     if isinstance(planned, str):
         return None
     beats, _ = planned
-    picture = svg(beats)
-    if not picture:
+    framed = frame(beats)
+    if not framed:
         return None
+    _, _, w, h = framed
+    readable, shown = widths(beats, w)
+    picture = svg(beats, f"width:100%;max-width:{_num(w)}px;min-width:{_num(readable)}px")
     title = next((m["text"] for b in beats for m in b["marks"] if m["kind"] == "title"), "") or "Diagram"
-    _, _, w, h = frame(beats)
     document = (f'<!doctype html><html><head><meta charset="utf-8"><title>{_text(title)}</title>'
                 f"<style>{STYLE}</style></head><body>{picture}</body></html>")
-    return {"kind": "html", "title": title, "html": document, "height": round(h * min(1.0, CHAT_W / w)) + 8}
+    height = h * shown / w + (SCROLLBAR if shown > CHAT_W else 0)
+    return {"kind": "html", "title": title, "html": document, "height": round(height) + 8}
+
+
+def widths(beats, w):
+    """The narrowest the picture may get before its labels drop under MIN_TEXT pixels, and the
+    width it shows at in the desktop chat: it fits the chat when it can, else it scrolls sideways.
+    No frame narrower than the chat shows it taller than that."""
+    sizes = [m["size"] for b in beats for m in b["marks"] if m.get("kind") == "node"]
+    readable = min(w, w * MIN_TEXT / min(sizes)) if sizes else 0
+    return readable, max(min(w, CHAT_W), readable)
 
 
 SAMPLE = {
