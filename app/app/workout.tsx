@@ -12,26 +12,31 @@ import { mood } from "../src/mood";
 import { MoodBlock } from "../src/MoodBlock";
 import { color, font, radius, space, type, type State } from "../src/tokens";
 import { engine, useEngine } from "../src/useEngine";
-import { amount, clamp, type Exercise, logAct, readLogger, searchExercises, type Session } from "../src/workout";
+import { amount, clamp, type Exercise, formatWeight, logAct, readLogger, searchExercises, type Session } from "../src/workout";
 
 const SECTION = "workout";
 const WIDE = 600;
 
-/** Every line this room shows, in one place. */
 const T = {
   state: { resting: "Resting", listening: "Listening", thinking: "Thinking", speaking: "Speaking", trouble: "Trouble" } as Record<State, string>,
   back: "Back to the den",
   title: "Workout",
   setsToday: (n: number) => (n === 1 ? "set today" : "sets today"),
-  search: "Search exercises",
+  search: "Search or add any exercise",
   recent: "Recent",
   more: "More",
   noMatch: "No matching exercises",
+  addCustom: (name: string) => `Add "${name}"`,
   change: "Change",
   sets: "Sets",
   reps: "Reps",
   seconds: "Seconds",
-  log: (sets: number, reps: string) => (sets === 1 ? `Log ${reps}` : `Log ${sets} × ${reps}`),
+  weight: "Weight (kg)",
+  restDay: "Rest day",
+  log: (sets: number, reps: string, w: string) => {
+    const tail = w ? ` @ ${w}` : "";
+    return sets === 1 ? `Log ${reps}${tail}` : `Log ${sets} x ${reps}${tail}`;
+  },
   done: "Finish",
   today: "Today",
   nothingToday: "No sets today",
@@ -40,7 +45,7 @@ const T = {
   talk: "Talk to Diablo",
 } as const;
 
-type Picked = Pick<Exercise, "id" | "name" | "timed">;
+type Picked = Pick<Exercise, "id" | "name" | "timed" | "point">;
 
 function Chip({ label, onPress, strong }: { label: string; onPress: () => void; strong?: boolean }) {
   return (
@@ -105,11 +110,16 @@ function Stepper({ label, value, onChange, low, high, step = 1 }: { label: strin
 }
 
 function SessionRow({ s }: { s: Session }) {
+  const parts = s.sets.map((n, i) => {
+    const w = s.weights?.[i] ?? s.weightKg;
+    const wt = formatWeight(w, s.weightKind);
+    return wt ? `${amount(n, s.timed)} @ ${wt}` : amount(n, s.timed);
+  });
   return (
     <View style={{ flexDirection: "row", alignItems: "baseline", gap: space(3), paddingVertical: space(2.5), borderBottomWidth: 1, borderBottomColor: color.line }}>
       <View style={{ flex: 1, minWidth: 0, gap: space(0.5) }}>
         <Text style={{ color: color.text, fontFamily: font.medium, ...type.body }}>{s.name}</Text>
-        <Text style={{ color: color.sub, fontFamily: font.regular, ...type.sub }}>{s.sets.map((n) => amount(n, s.timed)).join("  ·  ")}</Text>
+        <Text style={{ color: color.sub, fontFamily: font.regular, ...type.sub }}>{parts.join("  ·  ")}</Text>
       </View>
       <Text style={{ color: s.open ? color.text : color.dim, fontFamily: font.medium, ...type.sub }}>{s.open ? T.now : s.at}</Text>
     </View>
@@ -134,14 +144,27 @@ export default function Workout() {
   const [changing, setChanging] = useState(false);
   const [sets, setSets] = useState(3);
   const [reps, setReps] = useState(10);
+  const [weightText, setWeightText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
 
   const logger = useMemo(() => readLogger(blocks), [blocks]);
   const open = logger?.current ?? null;
-  const target: Picked | null = picked ?? (open && !changing ? { id: open.exercise, name: open.name, timed: open.timed } : null);
+  const openMeta = open && logger ? logger.library.find((e) => e.id === open.exercise) : undefined;
+  const target: Picked | null = picked ?? (open && !changing ? { id: open.exercise, name: open.name, timed: open.timed, point: openMeta?.point } : null);
   const onOpen = !!open && !!target && target.id === open.exercise;
+
+  const parsedWeight = useMemo((): { kg?: number; kind?: "total" | "added" | "assisted" } => {
+    const raw = weightText.trim();
+    if (!raw) return {};
+    const m = /^([+-])?\s*(\d+(?:\.\d+)?)$/.exec(raw);
+    if (!m) return {};
+    const kg = Number(m[2]);
+    if (!Number.isFinite(kg) || kg <= 0) return {};
+    const kind: "total" | "added" | "assisted" = m[1] === "+" ? "added" : m[1] === "-" ? "assisted" : "total";
+    return { kg, kind };
+  }, [weightText]);
 
   const load = useCallback(() => {
     void engine.panel(SECTION).then((got) => {
@@ -187,13 +210,25 @@ export default function Workout() {
     if (!target || busy) return;
     setBusy(true);
     setError("");
-    const out = await engine.act(logAct(target.id, sets, reps), SECTION);
+    const out = await engine.act(logAct(target.id, sets, reps, parsedWeight.kg, parsedWeight.kind), SECTION);
     setBusy(false);
     if ("error" in out) return setError(out.error);
     if (out.panel) setBlocks(out.panel);
     else load();
     setPicked(null);
     setChanging(false);
+    setWeightText("");
+  };
+
+  const markRest = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    const out = await engine.act({ module: "workout", action: "rest", args: {} }, SECTION);
+    setBusy(false);
+    if ("error" in out) return setError(out.error);
+    if (out.panel) setBlocks(out.panel);
+    else load();
   };
 
   const close = async () => {
@@ -226,6 +261,7 @@ export default function Workout() {
         <Text style={{ flex: 1, minWidth: 0, color: color.text, fontFamily: font.heavy, ...type.title }}>{target.name}</Text>
         <Chip label={T.change} onPress={() => (setPicked(null), setChanging(true))} />
       </View>
+      {target.point ? <Text style={{ color: color.sub, fontFamily: font.regular, ...type.sub }}>{target.point}</Text> : null}
       {onOpen && open ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space(2) }}>
           {open.sets.map((n, i) => (
@@ -239,6 +275,17 @@ export default function Workout() {
         <Stepper label={T.sets} value={sets} onChange={setSets} low={1} high={20} />
         <Stepper label={target.timed ? T.seconds : T.reps} value={reps} onChange={setReps} low={1} high={1000} step={target.timed ? 5 : 1} />
       </View>
+      <View style={{ gap: space(1.5) }}>
+        <Heading>{T.weight}</Heading>
+        <TextInput
+          value={weightText}
+          onChangeText={setWeightText}
+          placeholder="Optional, e.g. 60 or +10"
+          placeholderTextColor={color.dim}
+          keyboardType="numbers-and-punctuation"
+          style={{ backgroundColor: color.raised, borderRadius: radius.field, paddingHorizontal: space(3), paddingVertical: space(2.5), color: color.text, fontFamily: font.regular, ...type.body }}
+        />
+      </View>
       <View style={{ flexDirection: "row", gap: space(3) }}>
         <Pressable
           onPress={log}
@@ -246,7 +293,7 @@ export default function Workout() {
           accessibilityRole="button"
           style={({ pressed }) => ({ flex: 1, alignItems: "center", backgroundColor: color.text, opacity: busy ? 0.5 : pressed ? 0.8 : 1, borderRadius: radius.field, paddingVertical: space(3.5) })}
         >
-          <Text style={{ color: color.bg, fontFamily: font.heavy, ...type.body }}>{T.log(sets, amount(reps, target.timed))}</Text>
+          <Text style={{ color: color.bg, fontFamily: font.heavy, ...type.body }}>{T.log(sets, amount(reps, target.timed), formatWeight(parsedWeight.kg, parsedWeight.kind))}</Text>
         </Pressable>
         {onOpen ? (
           <Pressable
@@ -277,22 +324,31 @@ export default function Workout() {
           style={{ backgroundColor: color.raised, borderRadius: radius.field, paddingHorizontal: space(3), paddingVertical: space(3), color: color.text, fontFamily: font.regular, ...type.body }}
         />
         {query ? (
-          hits.length ? (
-            <View>
-              {hits.map((e) => (
-                <Pressable
-                  key={e.id}
-                  onPress={() => pick(e)}
-                  accessibilityRole="button"
-                  style={({ pressed }) => ({ paddingVertical: space(3), borderBottomWidth: 1, borderBottomColor: color.line, opacity: pressed ? 0.6 : 1 })}
-                >
-                  <Text style={{ color: color.text, fontFamily: font.medium, ...type.body }}>{e.name}</Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : (
-            <Text style={{ color: color.sub, fontFamily: font.regular, ...type.body }}>{T.noMatch}</Text>
-          )
+          <View>
+            {hits.map((e) => (
+              <Pressable
+                key={e.id}
+                onPress={() => pick(e)}
+                accessibilityRole="button"
+                style={({ pressed }) => ({ paddingVertical: space(3), borderBottomWidth: 1, borderBottomColor: color.line, opacity: pressed ? 0.6 : 1 })}
+              >
+                <Text style={{ color: color.text, fontFamily: font.medium, ...type.body }}>{e.name}</Text>
+                {e.point ? <Text style={{ color: color.sub, fontFamily: font.regular, ...type.small }}>{e.point}</Text> : null}
+              </Pressable>
+            ))}
+            <Pressable
+              onPress={() => {
+                const trimmed = query.trim();
+                if (!trimmed) return;
+                const nice = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+                pick({ id: trimmed.toLowerCase(), name: nice, timed: /\b(hold|plank|hang|lean|lever)\b/i.test(trimmed) });
+              }}
+              accessibilityRole="button"
+              style={({ pressed }) => ({ paddingVertical: space(3), opacity: pressed ? 0.6 : 1 })}
+            >
+              <Text style={{ color: color.text, fontFamily: font.medium, ...type.body }}>{T.addCustom(query.trim())}</Text>
+            </Pressable>
+          </View>
         ) : (
           <>
             {logger.recent.length ? (
@@ -319,9 +375,25 @@ export default function Workout() {
     ) : null;
 
   const big = (
-    <View>
-      <Text style={{ color: color.text, fontFamily: font.heavy, ...type.big, letterSpacing: -1 }}>{logger?.setsToday ?? 0}</Text>
-      <Text style={{ color: color.sub, fontFamily: font.medium, ...type.body }}>{T.setsToday(logger?.setsToday ?? 0)}</Text>
+    <View style={{ gap: space(2) }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: space(3) }}>
+        <View>
+          <Text style={{ color: color.text, fontFamily: font.heavy, ...type.big, letterSpacing: -1 }}>{logger?.setsToday ?? 0}</Text>
+          <Text style={{ color: color.sub, fontFamily: font.medium, ...type.body }}>{T.setsToday(logger?.setsToday ?? 0)}</Text>
+        </View>
+        {logger?.plan && !logger.plan.rest ? <Chip label={T.restDay} onPress={markRest} /> : null}
+      </View>
+      {logger?.plan ? (
+        <View style={{ backgroundColor: color.raised, borderRadius: radius.field, padding: space(3), gap: space(1) }}>
+          <Text style={{ color: color.text, fontFamily: font.medium, ...type.body }}>{logger.plan.label}</Text>
+          {logger.plan.reason ? <Text style={{ color: color.sub, fontFamily: font.regular, ...type.sub }}>{logger.plan.reason}</Text> : null}
+          {logger.plan.hurtingTendons.length ? (
+            <Text style={{ color: color.attention, fontFamily: font.regular, ...type.small }}>
+              Protecting: {logger.plan.hurtingTendons.map((h) => `${h.side} ${h.label.toLowerCase()}`).join(", ")}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 

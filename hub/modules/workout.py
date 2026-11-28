@@ -23,7 +23,7 @@ ID = "workout"
 TITLE = "Workout"
 
 EFFORTS = ("easy", "normal", "hard")
-ACTIVITIES = ("climbing", "bouldering", "weights", "running", "cycling", "swimming", "football", "hiit", "yoga", "walking", "other")
+ACTIVITIES = ("climbing", "bouldering", "weights", "gym", "running", "cycling", "swimming", "football", "hiit", "yoga", "walking", "other")
 GROUPS = ("push", "pull", "legs", "core")
 GROUP_COLORS = {"push": "#2d81ff", "pull": "#3fd6b8", "legs": "#f2a516", "core": "#e5484d"}
 GROUP_TONES = {"push": "accent", "pull": "ok", "legs": "warn", "core": "ink"}
@@ -31,40 +31,83 @@ REFRESH_MIN = 15
 STALE_S = 3600
 BAR_DAYS = 14
 DAY_ROLL_H = 7
-PUSH_UPS = ("pushups", "declinepushups")
-WRITES = ("workout_log",)
+PUSH_UPS = ("pushups", "declinepushups", "widepushups", "diamondpushups", "inclinepushups", "pseudoplanchepushups")
+WRITES = ("workout_log", "workout_config")
 MAX_SETS = 20
 SET_SPACING_S = 90
 LOG_TAIL = 256 * 1024
 PLAN_GROUPS = ("push", "legs", "pull", "core")
-PLAN_DEFAULT = {"push": "push-ups", "legs": "squats", "pull": "inverted rows", "core": "plank"}
+PLAN_DEFAULT = {"push": "push-ups", "legs": "squats", "pull": "inverted rows", "core": "lying leg raises"}
 PLAN_TASK = "Plan Marcus's next"
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+DAY_TYPES = ("push", "pull", "legs", "core", "planche", "lever", "full", "climbing", "gym", "rest")
+VALID_GOALS = ("planche", "front_lever", "core", "climbing", "physique", "legs", "flexibility")
+VALID_GEAR = ("chair", "table", "bar", "chairs", "parallettes", "gym")
+
+TENDON_ALIASES = {
+    "finger pulleys": ("finger pulley", "finger tendon", "finger tendons", "a2 pulley", "a4 pulley", "pulley", "fingers"),
+    "wrist tendons": ("wrist", "wrists", "wrist tendon", "wrist flexor", "wrist extensor"),
+    "medial elbow": ("golfer's elbow", "golfers elbow", "inner elbow", "medial epicondyle", "elbow tendon"),
+    "lateral elbow": ("tennis elbow", "outer elbow", "lateral epicondyle"),
+    "biceps tendon": ("bicep tendon", "distal biceps"),
+    "triceps tendon": ("tricep tendon", "back of elbow"),
+    "shoulder tendon": ("rotator cuff", "supraspinatus", "shoulder joint"),
+    "hip flexor tendon": ("groin tendon", "hip tendon", "psoas tendon"),
+    "patellar tendon": ("knee", "knees", "knee tendon", "patellar", "quad tendon", "it band"),
+    "hamstring tendon": ("proximal hamstring", "back of knee"),
+    "achilles tendon": ("achilles", "ankle tendon", "ankle", "ankles"),
+}
+TENDON_PART = {
+    "finger pulleys": "pull", "wrist tendons": "push", "medial elbow": "pull", "lateral elbow": "pull",
+    "biceps tendon": "pull", "triceps tendon": "push", "shoulder tendon": "push", "hip flexor tendon": "core",
+    "patellar tendon": "legs", "hamstring tendon": "legs", "achilles tendon": "legs",
+}
+MUSCLE_PART = {
+    "chest": "push", "upper chest": "push", "mid chest": "push", "lower chest": "push", "serratus": "push",
+    "shoulders": "push", "front delts": "push", "side delts": "push", "rear delts": "pull",
+    "triceps": "push", "triceps long head": "push", "triceps lateral head": "push",
+    "biceps": "pull", "brachialis": "pull", "forearms": "pull", "forearm flexors": "pull", "forearm extensors": "pull",
+    "traps": "pull", "upper traps": "pull", "mid traps": "pull", "lats": "pull",
+    "abs": "core", "upper abs": "core", "lower abs": "core", "obliques": "core", "lower back": "core", "hip flexors": "core",
+    "glutes": "legs", "glute medius": "legs", "adductors": "legs", "quads": "legs", "hamstrings": "legs", "calves": "legs", "tibialis": "legs",
+}
 
 TOOLS = [
     {
         "name": "workout_log",
         "description": (
-            "Log training Marcus did into his pushup log, as sets and reps. A session is a few sets of one exercise and "
-            "stays open until he says he is done or about 20 minutes pass without a set. kind set is one set: did is "
-            "the reps (seconds for a hold like plank). Leave exercise out, or say these, for \"I did 10 of these\": "
-            "it goes on the open session, or the exercise he logged last. kind sets is several at once, reps a list "
-            "with one number a set (\"3 sets of 10\" is [10, 10, 10]). kind close ends the open session. kind "
-            "session is training like climbing or running, with minutes and effort. Exercise names resolve to one "
-            "correct name (pushup, Push-up and push ups are all Push-ups); an unknown one is refused with the closest "
-            "names, so pick one of those or search with workout_exercises. pushup counts it the next time it reads "
-            "its inbox. Say what you logged in a short line."
+            "Log ANY training, set, weight, pain (muscle or tendon), or rest day into Marcus's workout log. "
+            "Never refuse an exercise name: known exercises resolve to their canonical name (including plain-English "
+            "descriptions like 'lying leg raises' for lifting straight legs on your back), and any new exercise is "
+            "automatically added to his custom library with inferred or provided muscles, tendons, and group. "
+            "kind set logs one set (did = reps or seconds, optional weight_kg and weight_kind: total/added/assisted). "
+            "kind sets logs several sets at once (reps = list of numbers, optional weight_kg). "
+            "kind close ends the open session. "
+            "kind session logs training like climbing, bouldering, gym, or running with minutes and effort. "
+            "kind hurt / healed records a sore muscle or tendon (pass where like 'left finger pulley' or 'right medial elbow', "
+            "or spots as [[name, side, kind]]) so pushup protects it automatically. "
+            "kind rest / resume_day marks today as a guilt-free rest day or clears it. "
+            "Say what you logged in one short line."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "kind": {"type": "string", "enum": ["set", "sets", "close", "session"]},
-                "exercise": {"type": "string", "description": "for set and sets: the exercise; left out or these means the open session or the last one logged"},
+                "kind": {"type": "string", "enum": ["set", "sets", "close", "session", "hurt", "healed", "rest", "resume_day"]},
+                "exercise": {"type": "string", "description": "for set and sets: any exercise name or description; left out or 'these' uses the open or last exercise"},
                 "did": {"type": "integer", "description": "for set: reps done, or seconds for a hold, 1 to 1000"},
                 "reps": {"type": "array", "items": {"type": "integer"}, "description": "for sets: reps of each set in order, 1 to 1000 each, at most 20 sets"},
+                "weight_kg": {"type": "number", "description": "optional weight in kg (e.g. 60 for 60 kg bench press, or 10 with weight_kind added for +10 kg pull-ups)"},
+                "weight_kind": {"type": "string", "enum": ["total", "added", "assisted"], "description": "total (default for weighted lifts), added (+kg), or assisted (-kg)"},
+                "group": {"type": "string", "enum": list(exercises.GROUPS), "description": "optional group when adding a custom exercise"},
+                "timed": {"type": "boolean", "description": "optional timed flag when adding a custom exercise"},
+                "muscles": {"type": "object", "description": "optional {muscle: 0..1} weights when adding a custom exercise"},
+                "tendons": {"type": "object", "description": "optional {tendon: 0..1} weights when adding a custom exercise"},
+                "point": {"type": "string", "description": "optional short explanation of what muscles the custom exercise hits and why"},
                 "activity": {"type": "string", "description": "for a session: one of " + ", ".join(ACTIVITIES) + ", or its own name"},
                 "minutes": {"type": "integer", "description": "for a session: how long, 1 to 1440"},
                 "effort": {"type": "string", "enum": list(EFFORTS)},
+                "where": {"type": "string", "description": "for hurt/healed: e.g. 'left finger pulley', 'right medial elbow', 'both wrist tendons', 'left front delts', or 'arms'"},
+                "spots": {"type": "array", "items": {"type": "array"}, "description": "for hurt/healed: list of [name, side, kind] like [['finger pulleys', 'left', 'tendon']]"},
                 "minutes_ago": {"type": "integer", "description": "when it ended, in minutes before now; 0 or left out for just now"},
             },
             "required": ["kind"],
@@ -73,20 +116,35 @@ TOOLS = [
     {
         "name": "workout_stats",
         "description": (
-            "Marcus's training right now: the open session, today's sessions with their sets and reps, the push-up "
-            "challenge, his streak, the last seven days, the muscles he worked least this week and anything logged "
-            "that pushup has not counted yet. The Workout panel in his app shows the same, so answer with the one or "
-            "two numbers he asked about."
+            "Marcus's training right now: today's scheduled day focus and why, active goals, home gear, "
+            "muscle and tendon recovery status, active muscle/tendon pain spots, the open session, today's sets "
+            "with weights, streak, and last seven days. Answer with the short facts he asked about."
         ),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "workout_exercises",
         "description": (
-            "Find exercises by their correct names. With a query, the best matches, spelling slips forgiven; without "
-            "one, his recent exercises and the defaults. Use it before workout_log when a name is unclear."
+            "Find exercises by name or plain-English description (e.g. 'lying on back lifting straight legs' -> Lying leg raises), "
+            "showing what muscles each hits and why. Without a query, lists recent and default exercises."
         ),
         "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+    },
+    {
+        "name": "workout_config",
+        "description": (
+            "View or update Marcus's weekly day split (mon..sun -> push, pull, legs, core, planche, lever, full, climbing, gym, rest), "
+            "his training goals (planche, front_lever, core, climbing, physique, legs, flexibility), "
+            "and his home gear (chair, table, bar, chairs, parallettes, gym). Synced to pushup through the inbox."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "split": {"type": "object", "description": "partial or full map of weekday (mon..sun) to focus (push, pull, legs, core, planche, lever, full, climbing, gym, rest)"},
+                "goals": {"type": "array", "items": {"type": "string"}, "description": "list of active goals"},
+                "gear": {"type": "array", "items": {"type": "string"}, "description": "list of gear available at home"},
+            },
+        },
     },
     {
         "name": "workout_plan",
@@ -123,6 +181,19 @@ def inbox_dir():
 
 def own_file():
     return inbox_dir() / f"diablo-{socket.gethostname()}.jsonl"
+
+
+def custom_file():
+    return inbox_dir() / "custom-exercises.json"
+
+
+def _sync_custom():
+    exercises.CUSTOM_BY_ID.clear()
+    try:
+        path = custom_file()
+    except Exception:
+        return
+    exercises.load_custom(path)
 
 
 def _number(key, default, low, high):
@@ -247,9 +318,7 @@ def done_sets(lines=None, tail=None):
 
 
 def sessions(lines, tail=None):
-    """The sets grouped into sessions, oldest first: the ones logged here, and the desktop card's
-    sessions from pushup's own log (its sets carry a session_id too). A line with no session is its own.
-    The desktop runs its own sessions to the end, so the hub never treats one of them as open."""
+    _sync_custom()
     desk = [e for e in (log_tail() if tail is None else tail) if e.get("session_id") and e.get("result") == "done"]
     lines = sorted([*lines, *desk], key=lambda e: e["ts"]) if desk else lines
     closed = {e.get("session_id") for e in lines if e.get("result") == "close"}
@@ -261,12 +330,19 @@ def sessions(lines, tail=None):
         if sid not in by_id:
             ident = exercises.resolve(entry.get("exercise"))
             by_id[sid] = {"id": sid, "exercise": ident or str(entry.get("exercise") or ""), "name": exercises.name_of(entry.get("exercise")),
-                          "timed": exercises.timed(entry.get("exercise")), "sets": [], "start": entry["ts"], "end": entry["ts"],
+                          "timed": exercises.timed(entry.get("exercise")), "sets": [], "weights": [], "weight_kg": None, "weight_kind": None,
+                          "start": entry["ts"], "end": entry["ts"],
                           "closed": sid in closed or not entry.get("session_id") or entry.get("result") == "done",
                           "source": "desktop" if entry.get("result") == "done" else entry.get("source") or "diablo"}
             out.append(by_id[sid])
         session = by_id[sid]
         session["sets"].append(entry["did"])
+        w = entry.get("weight_kg")
+        w_val = round(float(w), 2) if isinstance(w, (int, float)) and not isinstance(w, bool) and w > 0 else None
+        session["weights"].append(w_val)
+        if w_val is not None:
+            session["weight_kg"] = w_val
+            session["weight_kind"] = entry.get("weight_kind") or "total"
         session["end"] = max(session["end"], entry["ts"])
     return out
 
@@ -315,11 +391,32 @@ def usual_reps(ident, lines=None, tail=None):
     return max(1, int(round(statistics.median(history))))
 
 
+def format_weight(weight_kg, weight_kind=None):
+    if not isinstance(weight_kg, (int, float)) or isinstance(weight_kg, bool) or weight_kg <= 0:
+        return ""
+    num = int(weight_kg) if float(weight_kg).is_integer() else round(float(weight_kg), 1)
+    if weight_kind == "added":
+        return f"+{num} kg"
+    if weight_kind == "assisted":
+        return f"-{num} kg"
+    return f"{num} kg"
+
+
 def describe(entry):
     if entry.get("result") == "session":
         name = entry.get("label") or entry.get("activity") or "training"
         return f"{name}, {entry.get('minutes')} min, {entry.get('effort') or 'normal'}"
-    return f"{entry.get('did')} {exercises.name_of(entry.get('exercise')).lower()}"
+    if entry.get("result") == "rest":
+        return "rest day"
+    if entry.get("result") in ("hurt", "healed"):
+        spots = entry.get("spots") or []
+        if spots:
+            what = ", ".join(f"{s[1]} {s[0]}" for s in spots if isinstance(s, list) and len(s) >= 2)
+            return f"{entry['result']}: {what}"
+        return f"{entry['result']}: {entry.get('part') or 'body'}"
+    w = format_weight(entry.get("weight_kg"), entry.get("weight_kind"))
+    base = f"{entry.get('did')} {exercises.name_of(entry.get('exercise')).lower()}"
+    return f"{base} @ {w}" if w else base
 
 
 def _ago(arguments):
@@ -339,27 +436,102 @@ def _reps(value, what="did"):
     return value
 
 
-def pick_exercise(raw, lines, data, now):
-    """The id a set goes on: the name given, or for these and none the open session, then the last one logged."""
+def _weight(arguments):
+    raw = arguments.get("weight_kg")
+    if raw is None or raw == "":
+        return None, None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not 0 < raw <= 1000:
+        raise ValueError("weight_kg must be a number from 0.5 to 1000")
+    kind = str(arguments.get("weight_kind") or "total").strip().lower()
+    if kind not in ("total", "added", "assisted"):
+        kind = "total"
+    return round(float(raw), 2), kind
+
+
+def parse_where(where):
+    text = " ".join(str(where or "").lower().replace("_", " ").split())
+    if not text:
+        return None, []
+    words = text.split()
+    side = None
+    spots = []
+    part = None
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w in ("left", "right", "both"):
+            side, i = w, i + 1
+            continue
+        if w in ("my", "the", "and", "tendon"):
+            i += 1
+            continue
+        matched = None
+        for span in (3, 2, 1):
+            if i + span > len(words):
+                continue
+            cand = " ".join(words[i:i + span])
+            if cand in TENDON_PART:
+                matched = (cand, TENDON_PART[cand], "tendon", span)
+                break
+            for tkey, aliases in TENDON_ALIASES.items():
+                if cand in aliases:
+                    matched = (tkey, TENDON_PART[tkey], "tendon", span)
+                    break
+            if matched:
+                break
+            if cand in MUSCLE_PART:
+                matched = (cand, MUSCLE_PART[cand], "muscle", span)
+                break
+            if cand + "s" in MUSCLE_PART:
+                matched = (cand + "s", MUSCLE_PART[cand + "s"], "muscle", span)
+                break
+        if matched:
+            name, p, kind, span = matched
+            sides = ("left", "right") if side in (None, "both") else (side,)
+            for s in sides:
+                spots.append([name, s, kind])
+            part = part or p
+            side, i = None, i + span
+            continue
+        if w in ("push", "pull", "legs", "core"):
+            part = w
+        elif w in ("arms", "arm"):
+            part = "push"
+        elif w == "back":
+            part = "pull"
+        i += 1
+    return part, spots
+
+
+def pick_exercise(raw, lines, data, now, arguments=None):
+    _sync_custom()
     text = " ".join(str(raw or "").split())
     if text and not exercises.is_deictic(text):
         ident = exercises.resolve(text)
         if ident:
-            return ident
-        near = exercises.closest(text)
-        hint = f"; closest: {', '.join(near)}" if near else "; search with workout_exercises"
-        raise ValueError(f"I do not know the exercise {text!r}{hint}")
+            return ident, False
+        args = arguments or {}
+        created = exercises.register_custom(
+            text,
+            path=custom_file(),
+            group=args.get("group"),
+            timed=args.get("timed"),
+            muscles=args.get("muscles"),
+            tendons=args.get("tendons"),
+            point=args.get("point"),
+        )
+        return created["id"], True
     open_now = current(lines, now)
     if open_now:
-        return open_now["exercise"]
+        return open_now["exercise"], False
     last = last_exercise(lines, data)
     if last:
-        return last[0]
+        return last[0], False
     raise ValueError("there is no open session and nothing logged yet, so say which exercise")
 
 
 def entries_for(arguments, now, lines=None, data=None, source="diablo"):
-    """The inbox lines one workout_log call writes."""
+    _sync_custom()
     lines = inbox_lines() if lines is None else lines
     kind = str(arguments.get("kind") or "").strip()
     ago = _ago(arguments)
@@ -376,6 +548,24 @@ def entries_for(arguments, now, lines=None, data=None, source="diablo"):
         entry.update(result="session", activity=activity, minutes=int(round(minutes)), effort=effort if effort in EFFORTS else "normal")
         if activity not in ACTIVITIES:
             entry["label"] = activity
+        return [entry]
+    if kind in ("rest", "resume_day"):
+        entry = _base(now, ts, source)
+        entry.update(result=kind)
+        return [entry]
+    if kind in ("hurt", "healed"):
+        spots = arguments.get("spots") if isinstance(arguments.get("spots"), list) else []
+        part, parsed_spots = parse_where(arguments.get("where"))
+        all_spots = spots or parsed_spots
+        if not all_spots and not part:
+            raise ValueError("say which muscle, tendon, or body part hurts (e.g. 'left finger pulley', 'right medial elbow', or 'arms')")
+        if all_spots and not part:
+            first_name = all_spots[0][0]
+            part = TENDON_PART.get(first_name) or MUSCLE_PART.get(first_name) or "push"
+        entry = _base(now, ts, source)
+        entry.update(result=kind, part=part)
+        if all_spots:
+            entry["spots"] = all_spots
         return [entry]
     if kind == "close":
         open_now = current(lines, now)
@@ -394,8 +584,9 @@ def entries_for(arguments, now, lines=None, data=None, source="diablo"):
             raise ValueError(f"at most {MAX_SETS} sets at once")
         reps = [_reps(value, "each set's reps") for value in raw]
     else:
-        raise ValueError("kind must be set, sets, close or session")
-    ident = pick_exercise(arguments.get("exercise"), lines, data, now)
+        raise ValueError("kind must be set, sets, close, session, hurt, healed, rest, or resume_day")
+    weight_kg, weight_kind = _weight(arguments)
+    ident, created = pick_exercise(arguments.get("exercise"), lines, data, now, arguments)
     open_now = current(lines, now)
     first_ts = ts - SET_SPACING_S * (len(reps) - 1)
     step = SET_SPACING_S
@@ -406,10 +597,24 @@ def entries_for(arguments, now, lines=None, data=None, source="diablo"):
             step = max(0.001, (ts - first_ts) / (len(reps) - 1)) if len(reps) > 1 else 0
     else:
         sid, start_no = f"s-{uuid.uuid4().hex[:10]}", 1
+    meta = exercises.entry(ident) or {}
     out = []
     for index, did in enumerate(reps):
         entry = _base(now, first_ts + step * index, source)
         entry.update(result="manual", exercise=exercises.stored(ident), did=did, session_id=sid, set_no=start_no + index)
+        if weight_kg is not None:
+            entry["weight_kg"] = weight_kg
+            entry["weight_kind"] = weight_kind
+        if created or meta.get("custom"):
+            if meta.get("muscles"):
+                entry["muscles"] = meta["muscles"]
+            if meta.get("tendons"):
+                entry["tendons"] = meta["tendons"]
+            if meta.get("point"):
+                entry["point"] = meta["point"]
+            entry["timed"] = bool(meta.get("timed"))
+            if created and index == 0:
+                entry["added_custom"] = True
         out.append(entry)
     return out
 
@@ -432,24 +637,41 @@ def log(arguments, now=None, source="diablo"):
 
 def reps_text(session):
     unit = " s" if session["timed"] else ""
-    return ", ".join(f"{n}{unit}" for n in session["sets"])
+    weights = session.get("weights") or []
+    parts = []
+    for idx, n in enumerate(session["sets"]):
+        w = format_weight(weights[idx], session.get("weight_kind")) if idx < len(weights) and weights[idx] else ""
+        parts.append(f"{n}{unit} @ {w}" if w else f"{n}{unit}")
+    return ", ".join(parts)
 
 
 def logged_text(entries, lines_after, now):
     first = entries[0]
-    if first.get("result") == "session":
+    res = first.get("result")
+    if res == "session":
         return f"logged {describe(first)}; pushup counts it when it next reads its inbox"
-    if first.get("result") == "close":
+    if res == "rest":
+        return "marked today as a rest day; pushup will hold off when it next reads its inbox"
+    if res == "resume_day":
+        return "cleared today's rest day; back to today's plan"
+    if res in ("hurt", "healed"):
+        spots = first.get("spots") or []
+        what = ", ".join(f"{s[1]} {s[0]}" + (" (tendon)" if len(s) >= 3 and s[2] == "tendon" else "") for s in spots) if spots else (first.get("part") or "body")
+        return f"logged {res} ({what}); pushup protects it when it next reads its inbox"
+    if res == "close":
         done = next((s for s in sessions(lines_after) if s["id"] == first["session_id"]), None)
         if done:
             return f"closed the {done['name'].lower()} session: {plural(len(done['sets']), 'set')}, {reps_text(done)}"
         return "closed the session"
     session = next((s for s in sessions(lines_after) if s["id"] == first["session_id"]), None)
     name = exercises.name_of(first["exercise"])
+    w = format_weight(first.get("weight_kg"), first.get("weight_kind"))
+    w_part = f" @ {w}" if w else ""
+    added = " (added to your exercise library)" if first.get("added_custom") else ""
     if len(entries) == 1:
-        said = f"logged set {first['set_no']} of {name.lower()}: {first['did']}{' s' if session and session['timed'] else ''}"
+        said = f"logged set {first['set_no']} of {name.lower()}: {first['did']}{' s' if session and session['timed'] else ''}{w_part}{added}"
     else:
-        said = f"logged {plural(len(entries), 'set')} of {name.lower()}: " + ", ".join(str(e["did"]) for e in entries)
+        said = f"logged {plural(len(entries), 'set')} of {name.lower()}: " + ", ".join(str(e["did"]) for e in entries) + f"{w_part}{added}"
     if session and len(session["sets"]) > len(entries):
         said += f" (this session: {reps_text(session)})"
     return said + "; pushup counts it when it next reads its inbox"
@@ -545,14 +767,69 @@ def plan(arguments, now=None):
 
 
 def exercises_text(query):
+    _sync_custom()
     if str(query or "").strip():
         hits = exercises.search(query)
         if not hits:
-            return f"no exercise matches {query!r}"
-        return "matches: " + ", ".join(h["name"] for h in hits)
+            return f"no exercise matches {query!r} yet; you can log it directly with workout_log and it will be added automatically"
+        parts = [f"{h['name']} ({h['group']})" + (f": {h['point']}" if h.get("point") else "") for h in hits]
+        return "matches:\n" + "\n".join(parts)
     have = recent()
     defaults = [exercises.entry(i) for i in exercises.DEFAULTS if i not in {e["id"] for e in have}]
     return "recent: " + (", ".join(e["name"] for e in have) or "none yet") + "\ndefaults: " + ", ".join(e["name"] for e in defaults)
+
+
+def config_update(arguments, now=None):
+    now = time.time() if now is None else now
+    args = arguments or {}
+    payload = {}
+    if isinstance(args.get("split"), dict) and args["split"]:
+        clean = {}
+        for k, v in args["split"].items():
+            d = str(k).strip().lower()[:3]
+            f = str(v).strip().lower()
+            if d not in WEEKDAYS:
+                raise ValueError(f"unknown day {k!r}; use mon..sun")
+            if f not in DAY_TYPES:
+                raise ValueError(f"unknown focus {v!r}; use {', '.join(DAY_TYPES)}")
+            clean[d] = f
+        payload["split"] = clean
+    if isinstance(args.get("goals"), list) and args["goals"]:
+        bad = [g for g in args["goals"] if str(g).strip().lower() not in VALID_GOALS]
+        if bad:
+            raise ValueError(f"unknown goals {bad}; pick from {', '.join(VALID_GOALS)}")
+        payload["goals"] = [str(g).strip().lower() for g in args["goals"]]
+    if isinstance(args.get("gear"), list):
+        bad = [g for g in args["gear"] if str(g).strip().lower() not in VALID_GEAR]
+        if bad:
+            raise ValueError(f"unknown gear {bad}; pick from {', '.join(VALID_GEAR)}")
+        payload["gear"] = [str(g).strip().lower() for g in args["gear"]]
+    if not payload:
+        plan_data = (overview() or {}).get("plan") or {}
+        if not plan_data:
+            return "no workout config synced yet; pass split, goals, or gear to set them"
+        lines = []
+        if plan_data.get("split"):
+            lines.append("split: " + ", ".join(f"{d}={plan_data['split'].get(d, '?')}" for d in WEEKDAYS))
+        if plan_data.get("goals"):
+            lines.append("goals: " + ", ".join(plan_data["goals"]))
+        if "gear" in plan_data:
+            lines.append("gear: " + (", ".join(plan_data["gear"]) or "floor and wall only"))
+        return "\n".join(lines) or "no workout config set yet"
+    entry = _base(now, now, "diablo")
+    entry.update(result="config", **payload)
+    path = own_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as handle:
+        handle.write(json.dumps(entry) + "\n")
+    summary_parts = []
+    if "split" in payload:
+        summary_parts.append("split " + ", ".join(f"{k}={v}" for k, v in payload["split"].items()))
+    if "goals" in payload:
+        summary_parts.append("goals " + ", ".join(payload["goals"]))
+    if "gear" in payload:
+        summary_parts.append("gear " + (", ".join(payload["gear"]) or "none"))
+    return "updated workout config (" + "; ".join(summary_parts) + "); pushup applies it on next sync"
 
 
 def day_of(ts):
@@ -602,6 +879,22 @@ def stats_text(data, waiting, lines=(), now=None):
     else:
         today = data.get("today") or {}
         out = [f"Today ({data.get('day')}): {today.get('line') or 'no sets yet'}."]
+        day_plan = data.get("plan") or {}
+        if day_plan:
+            line = f"Plan: {day_plan.get('label') or day_plan.get('focus')}"
+            if day_plan.get("reason"):
+                line += f" ({day_plan['reason']})"
+            out.append(line + ".")
+            if day_plan.get("goals"):
+                out.append("Goals: " + ", ".join(day_plan["goals"]) + ".")
+            if day_plan.get("sore_parts"):
+                out.append("Recovering muscles: " + ", ".join(day_plan["sore_parts"]) + ".")
+            if day_plan.get("sore_tendons"):
+                out.append("Recovering tendons: " + ", ".join(day_plan["sore_tendons"]) + ".")
+            if day_plan.get("hurting_tendons"):
+                out.append("Protected tendons: " + ", ".join(f"{h['side']} {h['label'].lower()}" for h in day_plan["hurting_tendons"]) + ".")
+            if day_plan.get("hurting_muscles"):
+                out.append("Sore muscles: " + ", ".join(f"{h['side']} {h['label'].lower()}" for h in day_plan["hurting_muscles"]) + ".")
         challenge = data.get("challenge")
         if challenge:
             out.append(
@@ -646,15 +939,21 @@ def call(name, arguments):
         return stats_text(data, pending(float((data or {}).get("generated") or 0), lines), lines)
     if name == "workout_exercises":
         return exercises_text((arguments or {}).get("query"))
+    if name == "workout_config":
+        try:
+            return config_update(arguments or {})
+        except ValueError as error:
+            return f"not updated: {error}"
+        except OSError as error:
+            return f"not updated, the inbox is not writable here: {error}"
     if name == "workout_plan":
         return plan(arguments or {})
     raise LookupError(name)
 
 
 def act(action, args):
-    """A tap in the app: log sets of one exercise, end the open session, or search."""
     args = dict(args or {})
-    if action in ("set", "sets", "close"):
+    if action in ("set", "sets", "close", "rest", "resume_day", "hurt", "healed"):
         try:
             entries = log({**args, "kind": action}, source="app")
         except OSError as error:
@@ -801,13 +1100,19 @@ def actions_for(data, open_now=None, last=None):
 
 
 def session_block(session, now):
-    return {"id": session["id"], "exercise": session["exercise"], "name": session["name"], "timed": session["timed"],
-            "sets": list(session["sets"]), "start": session["start"], "end": session["end"],
-            "at": time.strftime("%H:%M", time.localtime(session["end"])), "open": False}
+    out = {"id": session["id"], "exercise": session["exercise"], "name": session["name"], "timed": session["timed"],
+           "sets": list(session["sets"]), "start": session["start"], "end": session["end"],
+           "at": time.strftime("%H:%M", time.localtime(session["end"])), "open": False}
+    if session.get("weight_kg") is not None:
+        out["weight_kg"] = session["weight_kg"]
+        out["weight_kind"] = session.get("weight_kind") or "total"
+    if any(session.get("weights") or ()):
+        out["weights"] = list(session["weights"])
+    return out
 
 
 def sets_block(lines, data, now, tail=None):
-    """What the app's logger needs: the open session, today's sessions, recent and default exercises, the full list."""
+    _sync_custom()
     open_now = current(lines, now)
     have = recent(lines, tail)
     seen = {e["id"] for e in have}
@@ -823,6 +1128,7 @@ def sets_block(lines, data, now, tail=None):
         "recent": have,
         "defaults": [exercises.entry(i) for i in exercises.DEFAULTS if i not in seen],
         "library": exercises.library(),
+        "plan": (data or {}).get("plan") or None,
     }
     if block["current"]:
         block["current"]["suggest"] = usual_reps(open_now["exercise"], lines, tail) if open_now["exercise"] in exercises.BY_ID else open_now["sets"][-1]

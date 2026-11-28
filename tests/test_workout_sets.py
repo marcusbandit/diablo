@@ -166,10 +166,13 @@ class TestSetsAndReps(SetsCase):
         workout.log({"kind": "close"}, now=NOW + 60)
         self.assertEqual([e["result"] for e in workout.pending(0)], ["manual"])
 
-    def test_an_unknown_exercise_is_refused_with_the_closest_names(self):
-        with self.assertRaisesRegex(ValueError, "closest: Push-ups"):
-            workout.log({"kind": "set", "exercise": "pushpus", "did": 10}, now=NOW)
-        self.assertEqual(self.lines(), [])
+    def test_a_new_exercise_is_added_automatically_and_logged(self):
+        written = workout.log({"kind": "sets", "exercise": "cable woodchoppers", "reps": [12, 12], "weight_kg": 20}, now=NOW)
+        self.assertEqual([e["did"] for e in written], [12, 12])
+        self.assertEqual(written[0]["exercise"], "cable woodchoppers")
+        self.assertEqual(written[0]["weight_kg"], 20.0)
+        self.assertTrue(written[0].get("added_custom"))
+        self.assertEqual(exercises.resolve("cable woodchoppers"), "cable woodchoppers")
 
     def test_bad_sets_are_refused(self):
         for args in (
@@ -307,8 +310,8 @@ class TestPlan(SetsCase):
         workout.log({"kind": "sets", "exercise": "push-ups", "reps": [14, 16, 15]}, now=self.MONDAY - 3600)
         slot = next(s for s in workout.plan_slots(now=self.MONDAY, days=1) if s["group"] == "push")
         self.assertEqual((slot["exercise"], slot["reps"]), ("push-ups", 15))
-        plank = next(s for s in workout.plan_slots(now=self.MONDAY, days=2) if s["group"] == "core")
-        self.assertEqual((plank["exercise"], plank["reps"], plank["timed"]), ("plank", 30, True))
+        core = next(s for s in workout.plan_slots(now=self.MONDAY, days=2) if s["group"] == "core")
+        self.assertEqual((core["exercise"], core["reps"], core["timed"]), ("lying leg raises", 10, False))
 
     def test_a_proposal_sets_nothing_and_schedule_goes_through_add_reminder(self):
         with mock.patch("hub.modules.reminders.call", return_value="set #1") as add:
