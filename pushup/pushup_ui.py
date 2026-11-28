@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import socket
 import subprocess
@@ -548,10 +549,10 @@ class FigureView(Gtk.DrawingArea):
         figure.draw(cr, self.move, t, self.accent, self.scale)
 
 
-TILE_CROP = (24, 16, 144, 112)  # where the figure is, at scale 2: drops the empty edges
-STAGE_CROP = (42, 0, 200, 192)  # the card's figure at scale 3, without the empty margins
-SMALL_CROP = (34, 22, 124, 102)  # tighter, for the intro's grid of every move
-GEAR_LABELS = {"bar": "Pull-up bar", "table": "Sturdy table", "chairs": "Two chairs", "parallettes": "Parallettes"}
+TILE_CROP = (24, 16, 144, 112)
+STAGE_CROP = (42, 0, 200, 192)
+SMALL_CROP = (34, 22, 124, 102)
+GEAR_LABELS = {"chair": "Chair", "bar": "Pull-up bar", "table": "Sturdy table", "chairs": "Two chairs", "parallettes": "Parallettes", "gym": "Gym"}
 
 
 def move_for(name):
@@ -593,13 +594,10 @@ class MuscleView(Gtk.DrawingArea):
 
 
 class PainMap(Gtk.DrawingArea):
-    """The body map you click to say where it hurts: every muscle, left and right on its own.
-    Hovering names the spot, a click marks it red, another click lets it go."""
-
-    def __init__(self, scale, changed):
+    def __init__(self, scale, changed, on_zoom=None):
         super().__init__()
-        self.scale, self.changed = scale, changed
-        self.picked, self.hot = [], None
+        self.scale, self.changed, self.on_zoom = scale, changed, on_zoom
+        self.picked, self.hot, self.layer = [], None, "muscles"
         w, h = musclemap.size(scale)
         self.set_content_width(w)
         self.set_content_height(h)
@@ -609,11 +607,22 @@ class PainMap(Gtk.DrawingArea):
         motion.connect("leave", lambda *_: self.hover(None))
         self.add_controller(motion)
         click = Gtk.GestureClick()
-        click.connect("pressed", lambda _g, _n, x, y: self.toggle(self.spot(x, y)))
+        click.connect("pressed", lambda _g, _n, x, y: self.on_press(x, y))
         self.add_controller(click)
 
+    def set_layer(self, layer):
+        self.layer = layer
+        self.hot = None
+        self.queue_draw()
+        self.changed()
+
     def spot(self, x, y):
-        return musclemap.hit(x / self.scale, y / self.scale)
+        got = musclemap.hit(x / self.scale, y / self.scale, layer=self.layer)
+        if not got:
+            return None
+        if len(got) == 3:
+            return got
+        return (got[0], got[1], "muscle")
 
     def hover(self, spot):
         if spot != self.hot:
@@ -622,6 +631,20 @@ class PainMap(Gtk.DrawingArea):
             self.queue_draw()
             self.changed()
 
+    def on_press(self, x, y):
+        gx, gy = x / self.scale, y / self.scale
+        if self.layer == "tendons":
+            s = self.spot(x, y)
+            if s and s[2] == "tendon":
+                self.toggle(s)
+                return
+        if self.on_zoom:
+            reg = musclemap.region_at(gx, gy)
+            if reg:
+                self.on_zoom(reg[0], reg[1])
+                return
+        self.toggle(self.spot(x, y))
+
     def toggle(self, spot):
         if spot:
             (self.picked.remove if spot in self.picked else self.picked.append)(spot)
@@ -629,19 +652,74 @@ class PainMap(Gtk.DrawingArea):
             self.changed()
 
     def clear(self):
-        self.picked, self.hot = [], None
+        self.picked, self.hot, self.layer = [], None, "muscles"
         self.queue_draw()
 
     def draw(self, _area, cr, _w, _h):
-        marks = {s: musclemap.PAIN for s in self.picked}
+        marks = {}
+        t_marks = {}
+        for s in self.picked:
+            name, side, kind = s[0], s[1], s[2] if len(s) > 2 else "muscle"
+            if kind == "tendon":
+                t_marks[(name, side)] = musclemap.TENDON_PAIN
+            else:
+                inf = catalog.spot_info(name)
+                base = inf.get("base", name) if inf else name
+                marks[(base, side)] = musclemap.PAIN
         if self.hot:
-            marks[self.hot] = musclemap.PAIN_HOVER if self.hot in self.picked else musclemap.HOVER
-        musclemap.draw(cr, {}, {}, self.scale, marks=marks)
+            name, side, kind = self.hot[0], self.hot[1], self.hot[2] if len(self.hot) > 2 else "muscle"
+            if kind == "tendon":
+                t_marks[(name, side)] = musclemap.PAIN_HOVER if self.hot in self.picked else musclemap.TENDON_HOVER
+            else:
+                marks[(name, side)] = musclemap.PAIN_HOVER if self.hot in self.picked else musclemap.HOVER
+        musclemap.draw(cr, {}, {}, self.scale, marks=marks, layer=self.layer, tendon_marks=t_marks)
+
+
+class RegionMap(Gtk.DrawingArea):
+    def __init__(self, scale, on_pick, on_hover):
+        super().__init__()
+        self.scale, self.on_pick, self.on_hover = scale, on_pick, on_hover
+        self.region, self.side = "arm", "left"
+        self.picked, self.hot = [], None
+        w, h = musclemap.region_size(scale)
+        self.set_content_width(w)
+        self.set_content_height(h)
+        self.set_draw_func(self.draw)
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", lambda _c, x, y: self.hover(musclemap.hit_region(self.region, self.side, x / self.scale, y / self.scale)))
+        motion.connect("leave", lambda *_: self.hover(None))
+        self.add_controller(motion)
+        click = Gtk.GestureClick()
+        click.connect("pressed", lambda _g, _n, x, y: self.press(x, y))
+        self.add_controller(click)
+
+    def show_region(self, region, side, picked):
+        self.region, self.side, self.picked, self.hot = region, side, picked, None
+        self.queue_draw()
+
+    def hover(self, spot):
+        if spot != self.hot:
+            self.hot = spot
+            self.set_cursor_from_name("pointer" if spot else "default")
+            self.queue_draw()
+            self.on_hover(spot)
+
+    def press(self, x, y):
+        spot = musclemap.hit_region(self.region, self.side, x / self.scale, y / self.scale)
+        if spot:
+            self.on_pick(spot)
+
+    def draw(self, _area, cr, _w, _h):
+        musclemap.draw_region(cr, self.region, self.side, self.scale, picked=self.picked, hot=self.hot)
 
 
 def spot_name(spot):
-    """'Left triceps'."""
-    return f"{spot[1].capitalize()} {spot[0]}"
+    name, side = spot[0], spot[1]
+    kind = spot[2] if len(spot) > 2 else "muscle"
+    inf = catalog.spot_info(name)
+    label_text = inf["label"] if inf else name
+    suffix = " (tendon)" if kind == "tendon" else ""
+    return f"{side.capitalize()} {label_text.lower()}{suffix}"
 
 
 def clickable(b):
@@ -1575,13 +1653,18 @@ class Card:
             if name in ("Return", "KP_Enter"):
                 self.hurt_in()
             elif name in ("Escape", "BackSpace"):
-                self.where_back()
+                if getattr(self, "pain_zoom_region", None):
+                    self.pain_back_to_body()
+                else:
+                    self.where_back()
             return True
         step = {"Left": -1, "Right": 1, "Down": -5, "Up": 5, "Page_Down": -5, "Page_Up": 5}.get(name)
         if name in ("Tab", "ISO_Left_Tab"):
             self.swap(-1 if name == "ISO_Left_Tab" else 1)
         elif name in ("t", "T") and not self.calm:
             self.finish(json.dumps({"result": "trained"}))
+        elif name in ("r", "R") and not self.calm:
+            self.finish(json.dumps({"result": "rest"}))
         elif name in ("h", "H"):
             self.say_hurt()
         elif name in ("s", "S") and self.stretching:
@@ -1825,12 +1908,15 @@ class Card:
             brow, brow_color = EYEBROWS[self.tier].format(skips=a.skips), EYEBROW_COLOR[self.tier]
             if self.challenge and self.tier == 0:
                 brow = f"DAY {self.challenge['day']} OF {self.challenge['days']}"
+            elif first.get("day_label") and self.tier == 0:
+                brow = first["day_label"].upper()
             if self.easy and not rolling:
                 self.said = (random.choice(HURT_LINES[self.spice]), {"part": catalog.PART_NAMES[self.easy]})
                 brow = f"{brow}: GO EASY" if self.challenge else "GO EASY"
                 brow_color = STRETCHED
+            elif first.get("gentle") and not rolling:
+                brow_color = STRETCHED
             if rolling:
-                # A run of done cards gets said out loud, in the colour of a goal hit.
                 brow = f"{brow}: {m} IN A ROW" if self.challenge else f"{m} IN A ROW"
                 brow_color = WIN
         if self.said:
@@ -1865,22 +1951,28 @@ class Card:
         # One leg's number, said out loud: EACH LEG, and what that makes in total.
         self.side = PixelText(" ", 18, self.accent, spacing=2)
         self.side.set_margin_top(10)
-        # The challenge: where today stands, moving with the slider.
         self.progress = label(" ", "meta", wrap=True, width=38)
         self.progress.set_justify(Gtk.Justification.CENTER)
-        self.progress.set_margin_top(14)
-        count = vbox(0, self.hero, self.unit, self.side, self.progress)
+        self.progress.set_margin_top(10)
+        self.hits_label = label(" ", "meta", wrap=True, width=42)
+        self.hits_label.set_justify(Gtk.Justification.CENTER)
+        self.hits_label.set_margin_top(6)
+        self.point_label = label(" ", "legend", wrap=True, width=42)
+        self.point_label.set_justify(Gtk.Justification.CENTER)
+        self.point_label.set_margin_top(4)
+        count = vbox(0, self.hero, self.unit, self.side, self.progress, self.hits_label, self.point_label)
         count.set_valign(Gtk.Align.CENTER)
         count.set_hexpand(True)
-        count.set_size_request(300, -1)
+        count.set_size_request(320, -1)
         self.stage_row = stage_row = hbox(24, stage, count)
         stage_row.set_margin_top(18)
 
         self.swap_btn = keyed("Another stretch" if self.stretching else "Another exercise", "Tab", "pill",
                               lambda: self.swap())
         trained = keyed("I trained today", "T", "pill", lambda: self.finish(json.dumps({"result": "trained"})))
-        self.armed += [self.swap_btn, trained]
-        pills = hbox(12, self.swap_btn, *([] if self.calm else [trained]))
+        rest_btn = keyed("Rest day", "R", "pill", lambda: self.finish(json.dumps({"result": "rest"})))
+        self.armed += [self.swap_btn, trained, rest_btn]
+        pills = hbox(12, self.swap_btn, *([] if self.calm else [trained, rest_btn]))
         pills.set_margin_top(14)
         self.swap_btn.set_visible(len(self.offer) > 1)
         card = vbox(0, self.eyebrow, line_slot, stage_row, pills)
@@ -1977,6 +2069,12 @@ class Card:
             self.eyebrow.set_text(self.session_brow(o))
         self.figure.set_move(move_for(self.exercise))
         self.muscles.show(*muscles_of(self.exercise))
+        hits = o.get("muscles_text") or catalog.muscle_summary(self.exercise)
+        pt = o.get("point") or catalog.point_of(self.exercise)
+        self.hits_label.set_label(f"Hits: {hits}" if hits else " ")
+        self.hits_label.set_visible(bool(hits))
+        self.point_label.set_label(pt or " ")
+        self.point_label.set_visible(bool(pt))
         if self.stretching:
             self.eyebrow.set_text(("REST DAY: " if self.calm else "STRETCH: ")
                                   + catalog.GOALS[catalog.STRETCHES[self.exercise]["goal"]].upper())
@@ -1985,14 +2083,12 @@ class Card:
         self.adj.set_value(self.goal)
         self.on_slide(self.adj)
         self.slider.queue_draw()
-        # A stretch's goal is already in the eyebrow; only a rest day needs explaining.
         why = o.get("why") if not (self.stretching and not self.calm) else ""
         notes = ([why] if why else []) + (
             [f"{self.args.paused} is paused until you're done"] if self.args.paused else [])
         self.below.set_label(". ".join(notes) or "nothing paused")
         if self.said and self.at:
             set_headline(self.line, self.said[0].format(**self.said[1], **self.words(self.goal)))
-        # Already eased, or a stretch: nothing to say hurts.
         hurts = not (self.calm or self.stretching or o.get("easy"))
         self.hurt_btn.set_visible(hurts)
         self.hold_w = HOLD_W - HURT_W - 12 if hurts else HOLD_W
@@ -2000,51 +2096,146 @@ class Card:
         self.below.set_opacity(1 if notes else 0)
 
     def words(self, n):
-        """What a coach line can say about this set: the count, the set with its unit ('30 seconds
-        of plank'), and where to go for it ('Wall.', 'get to the wall')."""
         go, get = catalog.place(self.exercise)
         return {"n": n, "ex": self.exercise, "set": f"{n} {catalog.unit(self.exercise, n)}",
                 "go": go, "get": get, "Get": get[0].upper() + get[1:]}
 
     def easy_now(self):
-        """The part that hurts if the move on screen leans on it, else ''."""
         o = self.offer[self.at] if self.offer else {}
-        return "" if self.calm or self.bonus or o.get("stretch") else o.get("easy") or ""
+        if self.calm or self.bonus or o.get("stretch"):
+            return ""
+        if o.get("easy"):
+            return o["easy"]
+        return "recovery" if o.get("gentle") else ""
 
     def where_page(self):
-        """Where it hurts: the body map, big, in place of the move and the slider. Click every
-        spot that hurts, then log it."""
-        title = label("Click every spot that hurts, left and right apart. Click again to let it go.", "meta big")
-        title.set_margin_top(10)
-        self.pain = PainMap(PAIN_SCALE, self.pain_changed)
+        self.pain_zoom_region = None
+        self.pain_zoom_side = "left"
+        title = label("Click a body zone to zoom into individual muscles and tendons, or switch to the Tendons layer.", "meta big", wrap=True, width=64)
+        title.set_margin_top(8)
+
+        self.layer_buttons = {}
+        for key, text in (("muscles", "Muscles"), ("tendons", "Tendons")):
+            b = button(text, "tab", lambda k=key: self.pain_set_layer(k))
+            self.layer_buttons[key] = b
+        layer_bar = hbox(8, *self.layer_buttons.values())
+        layer_bar.set_margin_top(12)
+
+        region_bar = hbox(6)
+        region_bar.set_margin_top(10)
+        for reg_key, reg_meta in catalog.REGIONS.items():
+            rb = button(reg_meta["label"], "pill", lambda rk=reg_key: self.pain_zoom(rk, self.pain_zoom_side))
+            region_bar.append(rb)
+
+        self.pain = PainMap(PAIN_SCALE, self.pain_changed, on_zoom=self.pain_zoom)
         self.pain.set_halign(Gtk.Align.CENTER)
-        self.pain.set_margin_top(18)
+        self.pain.set_margin_top(14)
         gw, gap = musclemap.GW * PAIN_SCALE, 6 * PAIN_SCALE
         front, back = label("FRONT", "hint"), label("BACK", "hint")
         front.set_size_request(gw, -1)
         back.set_size_request(gw, -1)
         sides = hbox(gap, front, back)
         sides.set_margin_top(6)
+        body_page = vbox(0, layer_bar, region_bar, self.pain, sides)
+
+        self.zoom_back_btn = button("Back to full body", "pill", self.pain_back_to_body)
+        self.zoom_title = PixelText("ARM AND ELBOW", 20, SLATE["fg10"], spacing=2)
+        self.zoom_side_btns = {}
+        for s_key, s_text in (("left", "Left"), ("right", "Right")):
+            sb = button(s_text, "tab", lambda sk=s_key: self.pain_set_side(sk))
+            self.zoom_side_btns[s_key] = sb
+        zoom_top = hbox(12, self.zoom_back_btn, self.zoom_title, *self.zoom_side_btns.values())
+        zoom_top.set_margin_top(12)
+
+        self.region_map = RegionMap(4, self.pain_toggle_spot, self.pain_zoom_hover)
+        self.region_map.set_valign(Gtk.Align.CENTER)
+        self.zoom_chips_box = vbox(6)
+        self.zoom_chips_box.set_valign(Gtk.Align.CENTER)
+        self.zoom_chips_box.set_size_request(320, -1)
+        zoom_body = hbox(24, self.region_map, self.zoom_chips_box)
+        zoom_body.set_margin_top(14)
+        zoom_page = vbox(0, zoom_top, zoom_body)
+
+        self.pain_stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=140)
+        self.pain_stack.add_named(body_page, "body")
+        self.pain_stack.add_named(zoom_page, "zoom")
+
         self.pain_name = PixelText(" ", 18, self.accent, spacing=2)
         self.pain_name.set_margin_top(14)
-        self.pain_list = label(" ", "meta", wrap=True, width=60)
+        self.pain_list = label(" ", "meta", wrap=True, width=64)
         self.pain_list.set_justify(Gtk.Justification.CENTER)
         self.pain_list.set_margin_top(6)
         self.pain_log = button("Log it", "primary huge", self.hurt_in)
         self.pain_log.set_halign(Gtk.Align.CENTER)
-        self.pain_log.set_margin_top(18)
-        keys = hint(("Click", "pick a spot"), ("Enter", "log"), ("Esc", "back"))
-        keys.set_margin_top(18)
-        return vbox(0, title, self.pain, sides, self.pain_name, self.pain_list, self.pain_log, keys)
+        self.pain_log.set_margin_top(16)
+        keys = hint(("Click", "zoom or pick"), ("Enter", "log"), ("Esc", "back"))
+        keys.set_margin_top(14)
+        self.pain_set_layer("muscles")
+        return vbox(0, title, self.pain_stack, self.pain_name, self.pain_list, self.pain_log, keys)
+
+    def pain_set_layer(self, layer):
+        self.pain.set_layer(layer)
+        for k, b in self.layer_buttons.items():
+            (b.add_css_class if k == layer else b.remove_css_class)("on")
+
+    def pain_zoom(self, region, side="left"):
+        self.pain_zoom_region = region
+        self.pain_zoom_side = side if side in ("left", "right") else "left"
+        self.zoom_title.set_text(catalog.REGIONS[region]["label"].upper())
+        self.pain_set_side(self.pain_zoom_side)
+        self.pain_stack.set_visible_child_name("zoom")
+
+    def pain_set_side(self, side):
+        self.pain_zoom_side = side
+        for k, b in self.zoom_side_btns.items():
+            (b.add_css_class if k == side else b.remove_css_class)("on")
+        if self.pain_zoom_region:
+            self.region_map.show_region(self.pain_zoom_region, side, self.pain.picked)
+            self.rebuild_zoom_chips()
+
+    def rebuild_zoom_chips(self):
+        child = self.zoom_chips_box.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.zoom_chips_box.remove(child)
+            child = nxt
+        items = musclemap.region_items(self.pain_zoom_region)
+        muscles = [it for it in items if it[2] == "muscle"]
+        tendons = [it for it in items if it[2] == "tendon"]
+        for heading, group in (("MUSCLES", muscles), ("TENDONS", tendons)):
+            if not group:
+                continue
+            self.zoom_chips_box.append(label(heading, "hint", xalign=0))
+            for name, lbl, kind in group:
+                spot = (name, self.pain_zoom_side, kind)
+                b = button(lbl, "tab", lambda sp=spot: self.pain_toggle_spot(sp))
+                if spot in self.pain.picked:
+                    b.add_css_class("on")
+                self.zoom_chips_box.append(b)
+
+    def pain_toggle_spot(self, spot):
+        self.pain.toggle(spot)
+        if self.pain_zoom_region:
+            self.region_map.show_region(self.pain_zoom_region, self.pain_zoom_side, self.pain.picked)
+            self.rebuild_zoom_chips()
+
+    def pain_zoom_hover(self, spot):
+        self.pain_name.set_text((spot_name(spot) if spot else "Hover a muscle or tendon").upper())
+
+    def pain_back_to_body(self):
+        self.pain_zoom_region = None
+        self.pain_stack.set_visible_child_name("body")
+        self.pain.queue_draw()
+        self.pain_changed()
 
     def pain_changed(self):
-        """Say the spot under the pointer, what's picked, and what Log will save."""
         hot, picked = self.pain.hot, self.pain.picked
-        self.pain_name.set_text((spot_name(hot) if hot else "Hover a muscle").upper())
+        if not getattr(self, "pain_zoom_region", None):
+            self.pain_name.set_text((spot_name(hot) if hot else "Click a zone to zoom or pick a tendon").upper())
         part = catalog.hurt_part(self.exercise)
         self.pain_list.set_label("Picked: " + catalog.spots_text([list(s) for s in picked]) if picked
                                  else f"Nothing picked yet. Log it now and it's just your {catalog.PART_NAMES[part]}."
-                                 if part else "Pick at least one spot.")
+                                 if part else "Pick at least one muscle or tendon.")
         self.pain_log.set_label(f"Log {len(picked)} spot{'s' if len(picked) != 1 else ''}" if picked else "Log it")
         self.pain_log.set_sensitive(bool(picked or part))
 
@@ -2053,6 +2244,9 @@ class Card:
             return
         self.hold_stop()
         self.pain.clear()
+        self.pain_zoom_region = None
+        self.pain_stack.set_visible_child_name("body")
+        self.pain_set_layer("muscles")
         self.pain_changed()
         self.swap_btn.get_parent().set_visible(False)
         self.stage_row.set_visible(False)
@@ -2322,7 +2516,8 @@ class Card:
             # Past the target nothing is short: it's all extra.
             pool = [f"{did} extra. Every one counts.", "Bonus reps are still reps. Logged."]
         elif self.easy_now() and did < n:
-            pool = [f"{did} on sore {catalog.PART_NAMES[self.easy_now()]}. That counts.", f"{did}. Gentle is fine today. Logged."]
+            part_txt = "recovery day" if self.easy_now() == "recovery" else f"sore {catalog.PART_NAMES.get(self.easy_now(), 'muscles')}"
+            pool = [f"{did} on {part_txt}. That counts.", f"{did}. Gentle is fine today. Logged."]
         elif did > n:
             pool = [f"{did}? Hell yes. Above the ask.", f"{did} when I asked for {n}. That's how it's done."] if spicy \
                 else [f"{did}. Above the ask. That's strength showing up.", f"{did} when I asked for {n}. Good."]
@@ -2418,7 +2613,10 @@ class Card:
             self.eyebrow.set_color(SLATE["fg8"])
             if self.easy_now() and not (self.calm or self.bonus):
                 set_headline(self.line, random.choice(HURT_PASSES))
-                self.after.append(label(f"Your {catalog.PART_NAMES[self.easy_now()]} hurt. A pass doesn't count against you.", "meta big"))
+                why_msg = ("Recovering from heavy training. A pass doesn't count against you."
+                           if self.easy_now() == "recovery"
+                           else f"Your {catalog.PART_NAMES.get(self.easy_now(), 'muscles')} hurt. A pass doesn't count against you.")
+                self.after.append(label(why_msg, "meta big"))
             elif self.calm:
                 set_headline(self.line, "Fine. Rest up, then.")
                 self.after.append(label("Rest days don't count against you.", "meta big"))
@@ -3237,10 +3435,13 @@ class Card:
         days = hbox(6, *self.day_buttons.values(), center=False)
         self.effort_box = vbox(12, efforts, days)
         self.effort_box.set_margin_top(18)
-        # Home exercises and stretches: how many sets of that number, all logged in one go.
         self.sets_buttons = {n: button(f"{n} set{'s' if n > 1 else ''}", "tab", lambda n=n: self.pick_sets(n))
                              for n in range(1, 6)}
-        self.sets_box = hbox(6, *self.sets_buttons.values(), center=False)
+        self.weight_kg = 0.0
+        self.weight_entry = Gtk.Entry()
+        self.weight_entry.set_placeholder_text("Weight kg (optional, e.g. 60 or +10)")
+        self.weight_entry.set_width_chars(24)
+        self.sets_box = vbox(10, hbox(6, *self.sets_buttons.values(), center=False), hbox(8, label("Weight", "meta"), self.weight_entry, center=False))
         self.sets_box.set_margin_top(18)
         self.recent = json.loads(self.args.recent or "{}")
         self.sets = 1
@@ -3370,7 +3571,14 @@ class Card:
             what = f"{catalog.describe(out)}{', yesterday' if self.days_ago else ''}"
         else:
             out = {"result": "manual", "did": v, "exercise": self.add_name, "sets": self.sets}
-            what = (f"{self.sets} sets of " if self.sets > 1 else "") + catalog.describe_set(self.add_name, v)
+            raw_w = self.weight_entry.get_text().strip() if hasattr(self, "weight_entry") else ""
+            if raw_w:
+                m = re.fullmatch(r"([+-])?\s*(\d+(?:\.\d+)?)\s*(?:kg)?", raw_w.lower())
+                if m and float(m[2]) > 0:
+                    out["weight_kg"] = round(float(m[2]), 2)
+                    out["weight_kind"] = "added" if m[1] == "+" else "assisted" if m[1] == "-" else "total"
+            what = (f"{self.sets} sets of " if self.sets > 1 else "") + catalog.describe_set(
+                self.add_name, v, out.get("weight_kg"), out.get("weight_kind"))
         self.closing = True
         self.add_head.set_text("Logged")
         self.add_after.set_label(f"{what[0].upper()}{what[1:]}. Good.")

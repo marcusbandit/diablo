@@ -1,39 +1,32 @@
-"""Pixel figures that show how a move goes.
-
-A figure is a skeleton posed by keyframes: where the hip sits, the angle of the torso and head,
-and where the hands and feet are. Elbows and knees come from two-bone IK, so a hand stays on the
-floor while the shoulder above it moves. Frames are drawn on a small surface without
-antialiasing and scaled up whole pixels at a time, so they match the card's Monocraft type.
-
-Coordinates are figure units: x to the right, y up from the floor. Angles are degrees, 0 to the
-right and 90 straight up. Side-view figures face right. A figure lying on its back with its head
-to the right is a mirror image of that, so its elbows and knees bend the other way: those moves
-are marked supine.
-
-Hand and foot targets come in three kinds:
-  (x, y)                  a fixed point, for a hand planted on the floor
-  ("torso", at, out)      a point `at` of the way up the torso and `out` in front, hands on hips
-  ("arm", angle, reach)   swung from the shoulder (or "leg" from the hip): a limb that moves
-                          through the air stays straight instead of folding between keyframes
-"""
-
 import math
 
-import cairo
+try:
+    import cairo
+except ImportError:
+    cairo = None
 
-W, H = 96, 64  # the canvas, in figure units
-GROUND = 4  # how far the floor line sits above the bottom edge
+W, H = 96, 64
+GROUND = 6
 
 THIGH, SHIN, FOOT = 11, 11, 4
-STEP = 1.5  # a foot that moves further than this between keyframes steps instead of sliding
+STEP = 1.5
 TORSO, NECK, HEAD = 15, 2, 4
 UPPER, FORE = 9, 9
 ARM, LEG = UPPER + FORE, THIGH + SHIN
+SHOULDER_HALF = 4.2
+HIP_HALF = 2.8
 
-FG = (0.933, 0.949, 0.961)  # fg10
-FAR = (0.471, 0.514, 0.561)  # fg7
-PROP = (0.329, 0.365, 0.404)  # fg6
-FLOOR = (0.227, 0.255, 0.286)  # bg5
+FG = (0.933, 0.949, 0.961)
+FAR = (0.520, 0.565, 0.615)
+PROP = (0.329, 0.365, 0.404)
+PROP_TOP = (0.415, 0.455, 0.502)
+FLOOR = (0.227, 0.255, 0.286)
+SHADOW = (0.145, 0.165, 0.190)
+
+ISO_YAW = math.radians(30)
+ISO_PITCH = math.radians(22)
+COS_Y, SIN_Y = math.cos(ISO_YAW), math.sin(ISO_YAW)
+COS_P, SIN_P = math.cos(ISO_PITCH), math.sin(ISO_PITCH)
 
 
 def rgb(hexcolor):
@@ -50,15 +43,67 @@ def polar(p, length, deg):
     return (p[0] + length * math.cos(a), p[1] + length * math.sin(a))
 
 
+def vadd(a, b):
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def vsub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def vscale(a, s):
+    return (a[0] * s, a[1] * s, a[2] * s)
+
+
+def vdot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def vlen(a):
+    return math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
+
+
+def vnorm(a):
+    n = vlen(a)
+    return (a[0] / n, a[1] / n, a[2] / n) if n > 1e-6 else (0.0, 1.0, 0.0)
+
+
+def project(pt, yaw=ISO_YAW, pitch=ISO_PITCH):
+    x, y, z = pt[0] - 48.0, pt[1], pt[2]
+    cy, sy = (COS_Y, SIN_Y) if yaw == ISO_YAW else (math.cos(yaw), math.sin(yaw))
+    cp, sp = (COS_P, SIN_P) if pitch == ISO_PITCH else (math.cos(pitch), math.sin(pitch))
+    u = x * cy - z * sy
+    depth = x * sy + z * cy
+    v = y * cp - depth * sp
+    return (48.0 + u, H - GROUND - 6.0 - v), depth
+
+
 def two_bone(root, target, l1, l2, bend):
-    """The middle joint of a limb from root to target. bend +1 swings it counterclockwise of the
-    root-to-target line, -1 clockwise. Out of reach, the limb straightens toward the target."""
     dx, dy = target[0] - root[0], target[1] - root[1]
     d = max(abs(l1 - l2) + 1e-3, min(l1 + l2 - 1e-3, math.hypot(dx, dy)))
     base = math.atan2(dy, dx)
     off = math.acos(max(-1.0, min(1.0, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))))
     mid = (root[0] + l1 * math.cos(base + bend * off), root[1] + l1 * math.sin(base + bend * off))
     end = polar(mid, l2, math.degrees(math.atan2(target[1] - mid[1], target[0] - mid[0])))
+    return mid, end
+
+
+def two_bone_3d(root, target, l1, l2, pole):
+    diff = vsub(target, root)
+    dist = vlen(diff)
+    d = max(abs(l1 - l2) + 1e-3, min(l1 + l2 - 1e-3, dist))
+    dir_v = vnorm(diff)
+    proj = vdot(pole, dir_v)
+    perp = vsub(pole, vscale(dir_v, proj))
+    if vlen(perp) < 1e-4:
+        perp = (0.0, 1.0, 0.0) if abs(dir_v[1]) < 0.9 else (1.0, 0.0, 0.0)
+        perp = vsub(perp, vscale(dir_v, vdot(perp, dir_v)))
+    perp = vnorm(perp)
+    along = (l1 * l1 + d * d - l2 * l2) / (2.0 * d)
+    h = math.sqrt(max(0.0, l1 * l1 - along * along))
+    mid = vadd(root, vadd(vscale(dir_v, along), vscale(perp, h)))
+    end_dir = vnorm(vsub(target, mid))
+    end = vadd(mid, vscale(end_dir, l2))
     return mid, end
 
 
@@ -76,11 +121,16 @@ def angle_lerp(a, b, t):
     return a + ((b - a + 180) % 360 - 180) * t
 
 
-# Facing right, an elbow flexes counterclockwise and a knee clockwise; for IK that means
-# bend -1 for elbows and +1 for knees. Supine figures are mirrored and take the opposite.
 UPRIGHT = {"elbows": (-1, -1), "knees": (1, 1)}
 SUPINE = {"elbows": (1, 1), "knees": (-1, -1)}
-BASE = {"head": None, "toes": (0, 0), "far": (1.5, 0), "fold": 0}
+BASE = {
+    "head": None, "toes": (0, 0), "far": (1.5, 0), "fold": 0,
+    "hand_z": (SHOULDER_HALF, -SHOULDER_HALF),
+    "foot_z": (HIP_HALF, -HIP_HALF),
+    "elbow_flare": 0.28,
+    "knee_flare": 0.12,
+    "yaw": None,
+}
 
 
 def pose(supine=False, **kw):
@@ -93,7 +143,7 @@ def pose(supine=False, **kw):
 def blend(a, b, t, lift=0.45):
     out = {}
     for k in a:
-        if k in ("elbows", "knees", "far"):
+        if k in ("elbows", "knees", "far", "yaw"):
             out[k] = a[k] if t < 0.5 else b[k]
         elif k == "torso":
             out[k] = angle_lerp(a[k], b[k], t)
@@ -118,29 +168,22 @@ def blend_target(a, b, t):
             return (a[0], angle_lerp(a[1], b[1], t), lerp(a[2], b[2], t))
         return (a[0], lerp(a[1], b[1], t), lerp(a[2], b[2], t))
     if isinstance(a[0], str) or isinstance(b[0], str):
-        # Two kinds, an arm swinging down to a hand planted on the floor: resolve both, then blend.
         return ("mix", a, b, t)
     return lerp(a, b, t)
 
 
 def lifted(a, b, t, lift=0.45):
-    """A foot going from one spot to another steps there: it lifts in an arc on the way instead
-    of sliding along the floor. A foot that stays put stays put."""
     if isinstance(a[0], str) or isinstance(b[0], str) or abs(b[0] - a[0]) < STEP:
         return blend_target(a, b, t)
-    # Up first, across, then down: the foot leaves and lands straight, never skimming the floor.
     out = lerp(a, b, ease(min(1, max(0, (t - 0.2) / 0.6))))
     return (out[0], out[1] + min(6, lift * abs(b[0] - a[0])) * math.sin(math.pi * t))
 
 
 def tip(x, angle, y=0):
-    """The ankle of a foot whose toe tip rests at (x, y): rising onto the toes pivots the foot
-    there, so the tip stays where it was on the floor."""
     return polar((x, y), FOOT, angle + 180)
 
 
 def resolve(target, root, hip, shoulder, torso):
-    """A target as a point. root is the shoulder or hip the limb hangs from."""
     if target[0] == "mix":
         _, a, b, t = target
         return lerp(resolve(a, root, hip, shoulder, torso), resolve(b, root, hip, shoulder, torso), t)
@@ -153,13 +196,9 @@ def resolve(target, root, hip, shoulder, torso):
 
 
 class Move:
-    """One move's loop: keyframes as (pose, hold, move) seconds, plus what lights up. glide is for
-    moves done in place, a run or a bike, where the feet travel without stepping. lift is how high a
-    stepping foot rises for each unit it travels."""
-
-    def __init__(self, frames, work=(), view="side", props=(), plate=False, glide=False, lift=0.45):
+    def __init__(self, frames, work=(), view="side", props=(), plate=False, glide=False, lift=0.45, yaw=None):
         self.frames, self.work, self.view, self.props, self.plate = frames, set(work), view, props, plate
-        self.glide, self.lift = glide, lift
+        self.glide, self.lift, self.yaw = glide, lift, yaw
         self.period = sum(h + m for _, h, m in frames)
 
     def at(self, t):
@@ -175,9 +214,7 @@ class Move:
 
 
 def skeleton(p, front=False):
-    """Joint positions for a pose: the spine, and per side an arm and a leg as lists of points."""
     hip, torso = p["hip"], p["torso"]
-    # Seen from the front, a fold toward you shortens the torso instead of tilting it.
     squash = math.cos(math.radians(p["fold"])) if front else 1
     shoulder = polar(hip, TORSO * squash, torso)
     head_angle = p["head"] if p["head"] is not None else torso
@@ -185,7 +222,6 @@ def skeleton(p, front=False):
     head = polar(neck, HEAD * max(squash, 0.6), head_angle)
     limbs = {}
     for side in (0, 1):
-        # Front view: shoulders and hips spread across the body, square to the spine.
         spread = (-1 if side == 0 else 1) if front else 0
         sh = polar(shoulder, 3 * spread, torso - 90) if front else shoulder
         hp = polar(hip, 2 * spread, torso - 90) if front else hip
@@ -198,6 +234,64 @@ def skeleton(p, front=False):
     return {"hip": hip, "shoulder": shoulder, "neck": neck, "head": head, "limbs": limbs}
 
 
+def skeleton_3d(p, front=False):
+    sk2 = skeleton(p, front)
+    if front:
+        hip3 = (sk2["hip"][0], sk2["hip"][1], 0.0)
+        sh3 = (sk2["shoulder"][0], sk2["shoulder"][1], 0.0)
+        neck3 = (sk2["neck"][0], sk2["neck"][1], 0.0)
+        head3 = (sk2["head"][0], sk2["head"][1], 0.0)
+        limbs3 = {}
+        for side in (0, 1):
+            arm2 = sk2["limbs"][side]["arm"]
+            leg2 = sk2["limbs"][side]["leg"]
+            limbs3[side] = {
+                "arm": [(q[0], q[1], 0.0) for q in arm2],
+                "leg": [(q[0], q[1], 0.0) for q in leg2],
+            }
+        return {"hip": hip3, "shoulder": sh3, "neck": neck3, "head": head3, "limbs": limbs3}
+
+    hip3 = (sk2["hip"][0], sk2["hip"][1], 0.0)
+    sh3 = (sk2["shoulder"][0], sk2["shoulder"][1], 0.0)
+    neck3 = (sk2["neck"][0], sk2["neck"][1], 0.0)
+    head3 = (sk2["head"][0], sk2["head"][1], 0.0)
+    hand_z = p.get("hand_z", (SHOULDER_HALF, -SHOULDER_HALF))
+    foot_z = p.get("foot_z", (HIP_HALF, -HIP_HALF))
+    ef = float(p.get("elbow_flare", 0.28))
+    kf = float(p.get("knee_flare", 0.12))
+    limbs3 = {}
+    for side in (0, 1):
+        z_sign = 1.0 if side == 0 else -1.0
+        sh_s = (sh3[0], sh3[1], SHOULDER_HALF * z_sign)
+        hp_s = (hip3[0], hip3[1], HIP_HALF * z_sign)
+        arm2 = sk2["limbs"][side]["arm"]
+        leg2 = sk2["limbs"][side]["leg"]
+        hand3 = (arm2[2][0], arm2[2][1], hand_z[side])
+        foot3 = (leg2[2][0], leg2[2][1], foot_z[side])
+        toe3 = (leg2[3][0], leg2[3][1], foot_z[side])
+
+        e_mid2 = lerp(arm2[0], arm2[2], 0.5)
+        e_vec2 = (arm2[1][0] - e_mid2[0], arm2[1][1] - e_mid2[1])
+        if math.hypot(*e_vec2) < 1e-3:
+            ang = math.atan2(arm2[2][1] - arm2[0][1], arm2[2][0] - arm2[0][0]) + p["elbows"][side] * math.pi / 2
+            e_vec2 = (math.cos(ang), math.sin(ang))
+        el_len = max(1.0, math.hypot(*e_vec2))
+        e_pole = (e_vec2[0] / el_len, e_vec2[1] / el_len, z_sign * ef)
+        elbow3, wrist3 = two_bone_3d(sh_s, hand3, UPPER, FORE, e_pole)
+
+        k_mid2 = lerp(leg2[0], leg2[2], 0.5)
+        k_vec2 = (leg2[1][0] - k_mid2[0], leg2[1][1] - k_mid2[1])
+        if math.hypot(*k_vec2) < 1e-3:
+            ang = math.atan2(leg2[2][1] - leg2[0][1], leg2[2][0] - leg2[0][0]) + p["knees"][side] * math.pi / 2
+            k_vec2 = (math.cos(ang), math.sin(ang))
+        kn_len = max(1.0, math.hypot(*k_vec2))
+        k_pole = (k_vec2[0] / kn_len, k_vec2[1] / kn_len, z_sign * kf)
+        knee3, ankle3 = two_bone_3d(hp_s, foot3, THIGH, SHIN, k_pole)
+
+        limbs3[side] = {"arm": [sh_s, elbow3, wrist3], "leg": [hp_s, knee3, ankle3, toe3]}
+    return {"hip": hip3, "shoulder": sh3, "neck": neck3, "head": head3, "limbs": limbs3}
+
+
 def fill_disc(c, cx, cy, r2, reach):
     for dy in range(-reach, reach + 1):
         for dx in range(-reach, reach + 1):
@@ -206,141 +300,203 @@ def fill_disc(c, cx, cy, r2, reach):
     c.fill()
 
 
-def draw_props(cr, props, to):
+def draw_box_3d(c, x0, x1, y0, y1, z0, z1, to3):
+    def poly(pts, col):
+        c.set_source_rgb(*col)
+        p0 = to3(pts[0])
+        c.move_to(*p0)
+        for q in pts[1:]:
+            c.line_to(*to3(q))
+        c.close_path()
+        c.fill()
+
+    poly([(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)], PROP)
+    poly([(x1, y0, z0), (x1, y0, z1), (x1, y1, z1), (x1, y1, z0)], mix(PROP, SHADOW, 0.25))
+    poly([(x0, y1, z0), (x1, y1, z0), (x1, y1, z1), (x0, y1, z1)], PROP_TOP)
+
+
+def draw_floor_3d(c, to3, front=False):
+    c.set_source_rgb(*FLOOR)
+    if front:
+        for x in range(6, W - 6, 4):
+            px, py = to3((x, 0, 0))
+            c.rectangle(px, py, 2, 1)
+        c.fill()
+        return
+    c.set_line_width(1)
+    for z in (-14, 0, 14):
+        p0, p1 = to3((16, 0, z)), to3((80, 0, z))
+        c.move_to(*p0)
+        c.line_to(*p1)
+    for x in (16, 48, 80):
+        p0, p1 = to3((x, 0, -14)), to3((x, 0, 14))
+        c.move_to(*p0)
+        c.line_to(*p1)
+    c.stroke()
+
+
+def draw_props_3d(cr, props, to3, front=False):
     cr.set_source_rgb(*PROP)
     for kind, *a in props:
         if kind in ("chair", "bar"):
-            # A chair: seat from x0 to x1 at height h, backrest on the left. A bar is the same
-            # without the backrest: a pull-up bar, dip bars, a table edge.
             x0, x1, h = a
-            back = ((x0, h, 2, 14),) if kind == "chair" else ()
-            for x, y, w, hgt in ((x0, h, x1 - x0, 2), (x0, 0, 2, h), (x1 - 2, 0, 2, h), *back):
-                px, py = to((x, y + hgt))
-                cr.rectangle(px, py, w, hgt)
-        elif kind == "table":  # a top from x0 to x1 at height h, the edge at x1 and a leg at the far end
+            z0, z1 = (-9, 9) if not front else (-2, 2)
+            draw_box_3d(cr, x0, x1, h - 2, h, z0, z1, to3)
+            for lx in (x0, x1 - 2):
+                for lz in (z0, z1 - 2):
+                    draw_box_3d(cr, lx, lx + 2, 0, h - 2, lz, lz + 2, to3)
+            if kind == "chair":
+                draw_box_3d(cr, x0, x0 + 2, h, h + 13, z0, z1, to3)
+        elif kind == "table":
             x0, x1, h = a
-            for x, y, w, hgt in ((x0, h, x1 - x0, 2), (x0, 0, 2, h)):
-                px, py = to((x, y + hgt))
-                cr.rectangle(px, py, w, hgt)
-        elif kind == "box":  # a step from x0 to x1, h high
+            z0, z1 = (-12, 12)
+            draw_box_3d(cr, x0, x1, h - 2, h, z0, z1, to3)
+            for lz in (z0, z1 - 2):
+                draw_box_3d(cr, x0, x0 + 2, 0, h - 2, lz, lz + 2, to3)
+        elif kind == "box":
             x0, x1, h = a
-            px, py = to((x0, h))
-            cr.rectangle(px, py, x1 - x0, h)
-        elif kind == "wall":  # a wall whose face is at x, holds as (x, y) bumps on it
+            draw_box_3d(cr, x0, x1, 0, h, -10, 10, to3)
+        elif kind == "wall":
             x, holds = a[0], (a[1] if len(a) > 1 else ())
-            px, py = to((x - 3, H))
-            cr.rectangle(px, py, 3, H - GROUND)
+            draw_box_3d(cr, x - 3, x, 0, 50, -12, 12, to3)
+            cr.set_source_rgb(*PROP_TOP)
             for hx, hy in holds:
-                px, py = to((x - 1, hy + 1))
-                cr.rectangle(px, py, 3, 2)
-        elif kind == "overhang":  # a boulder wall leaning out over you: its face from (x0, 0) to (x1, H)
+                px, py = to3((x, hy, 4))
+                cr.rectangle(px - 1, py - 1, 3, 2)
+            cr.fill()
+        elif kind == "overhang":
             x0, x1, holds = a
+            cr.set_source_rgb(*PROP)
             cr.set_line_width(3)
-            cr.move_to(*to((x0 + 1.5, 0)))
-            cr.line_to(*to((x1 + 1.5, H)))
+            cr.move_to(*to3((x0 + 1.5, 0, -4)))
+            cr.line_to(*to3((x1 + 1.5, H, -4)))
             cr.stroke()
+            cr.set_source_rgb(*PROP_TOP)
             for hx, hy in holds:
-                px, py = to((hx - 1, hy + 1))
-                cr.rectangle(px, py, 3, 2)
-        elif kind == "pad":  # a crash pad from x0 to x1, h thick
+                px, py = to3((hx, hy, 2))
+                cr.rectangle(px - 1, py - 1, 3, 2)
+            cr.fill()
+        elif kind == "pad":
             x0, x1, h = a
-            px, py = to((x0, h))
-            cr.rectangle(px, py, x1 - x0, h)
-        elif kind == "bike":  # wheels at x0 and x1, radius r
+            draw_box_3d(cr, x0, x1, 0, h, -10, 10, to3)
+        elif kind == "bike":
             x0, x1, r = a
+            cr.set_source_rgb(*PROP)
             cr.set_line_width(1)
             for x in (x0, x1):
-                px, py = to((x, r))
+                px, py = to3((x, r, 0))
                 cr.arc(px, py, r, 0, 2 * math.pi)
                 cr.stroke()
-            pts = [(x0, r), (x0 + 13, r), (x0 + 8, 19), (x0, r)]
-            cr.move_to(*to(pts[0]))
+            pts = [(x0, r, 0), (x0 + 13, r, 0), (x0 + 8, 19, 0), (x0, r, 0)]
+            cr.move_to(*to3(pts[0]))
             for q in pts[1:]:
-                cr.line_to(*to(q))
-            cr.move_to(*to((x0 + 13, r)))
-            cr.line_to(*to((x1 - 4, 20)))
-            cr.line_to(*to((x1, r)))
-            cr.move_to(*to((x0 + 8, 19)))
-            cr.line_to(*to((x1 - 4, 20)))
+                cr.line_to(*to3(q))
+            cr.move_to(*to3((x0 + 13, r, 0)))
+            cr.line_to(*to3((x1 - 4, 20, 0)))
+            cr.line_to(*to3((x1, r, 0)))
+            cr.move_to(*to3((x0 + 8, 19, 0)))
+            cr.line_to(*to3((x1 - 4, 20, 0)))
             cr.stroke()
-            for x, y, w in ((x0 + 5, 21, 6), (x1 - 6, 24, 4)):  # saddle, bars
-                px, py = to((x, y))
-                cr.rectangle(px, py, w, 2)
-        elif kind == "water":  # a wavy surface at height h
+        elif kind == "water":
             h = a[0]
-            for x in range(2, W - 2, 6):
-                px, py = to((x, h))
+            cr.set_source_rgb(*PROP)
+            for x in range(10, W - 10, 6):
+                px, py = to3((x, h, 0))
                 cr.rectangle(px, py, 3, 1)
                 cr.rectangle(px + 3, py + 1, 3, 1)
+            cr.fill()
         elif kind == "ball":
-            px, py = to(a[0])
+            px, py = to3((a[0][0], a[0][1], 0))
+            cr.set_source_rgb(*PROP_TOP)
             fill_disc(cr, px, py, 5, 2)
-        cr.fill()
 
 
 def draw(cr, move, t, accent, scale=3, floor=True):
-    """Draw one frame. cr is a surface W*scale by H*scale."""
     small = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
     c = cairo.Context(small)
     c.set_antialias(cairo.ANTIALIAS_NONE)
     c.set_line_cap(cairo.LINE_CAP_ROUND)
     c.set_line_join(cairo.LINE_JOIN_ROUND)
 
-    def to(p):
-        return (round(p[0]), round(H - GROUND - p[1]))
-
     p = move.at(t)
     front = move.view == "front"
-    sk = skeleton(p, front)
+    yaw = move.yaw if move.yaw is not None else (0.0 if front else p.get("yaw") or ISO_YAW)
+    pitch = 0.0 if front else ISO_PITCH
+
+    def to3(pt):
+        if front:
+            return (round(pt[0]), round(H - GROUND - pt[1]))
+        (px, py), _ = project(pt, yaw=yaw, pitch=pitch)
+        return (round(px), round(py))
+
+    def depth_of(pt):
+        if front:
+            return 0.0
+        return project(pt, yaw=yaw, pitch=pitch)[1]
+
+    sk = skeleton_3d(p, front)
     hot = rgb(accent)
-    hot_far = mix(hot, (0.08, 0.09, 0.1), 0.45)
+    hot_far = mix(hot, (0.08, 0.09, 0.1), 0.42)
 
     if floor:
-        c.set_source_rgb(*FLOOR)
-        for x in range(4, W - 4, 4):
-            c.rectangle(x, H - GROUND, 2, 1)
+        draw_floor_3d(c, to3, front)
+    draw_props_3d(c, move.props, to3, front)
+
+    if not front:
+        c.set_source_rgb(*SHADOW)
+        for side in (0, 1):
+            w_pt = sk["limbs"][side]["arm"][2]
+            f_pt = sk["limbs"][side]["leg"][2]
+            for pt in (w_pt, f_pt):
+                sx, sy = to3((pt[0], 0.0, pt[2]))
+                c.rectangle(sx - 1, sy, 3, 1)
         c.fill()
-    draw_props(c, move.props, to)
+
     if move.plate:
-        # A barbell seen end on: a plate centred between the hands, behind the near arm.
         hands = [sk["limbs"][s]["arm"][2] for s in (0, 1)]
-        cx, cy = to(lerp(hands[0], hands[1], 0.5))
+        mid = lerp(hands[0], hands[1], 0.5)
+        cx, cy = to3(mid)
         c.set_source_rgb(*PROP)
         fill_disc(c, cx, cy, 27, 5)
-
-    def stroke(points, color, width):
-        c.set_source_rgb(*color)
-        c.set_line_width(width)
-        c.move_to(*to(points[0]))
-        for q in points[1:]:
-            c.line_to(*to(q))
-        c.stroke()
-
-    fx, fy = (0, 0) if front else p["far"]
-    near, far = sk["limbs"][0], sk["limbs"][1]
 
     def lit(part, back=False):
         if part in move.work:
             return hot_far if back else hot
         return FAR if back else FG
 
-    # Far limbs first, so the near ones cross over them.
-    if front:
-        stroke(far["leg"], lit("legs"), 2)
-        stroke(far["arm"], lit("arms"), 2)
-    else:
-        stroke([(x + fx, y + fy) for x, y in far["leg"]], lit("legs", True), 2)
-        stroke([(x + fx, y + fy) for x, y in far["arm"]], lit("arms", True), 2)
+    segments = []
+
+    def add_seg(points, color, width):
+        d = sum(depth_of(q) for q in points) / len(points)
+        segments.append((d, "line", points, color, width))
+
+    near, far = sk["limbs"][0], sk["limbs"][1]
     core = lit("core")
-    stroke([sk["hip"], sk["shoulder"], sk["neck"]], core, 3)
-    if front:
-        stroke([near["arm"][0], far["arm"][0]], core, 2)
-        stroke([near["leg"][0], far["leg"][0]], core, 2)
-    stroke(near["leg"], lit("legs"), 2)
-    stroke(near["arm"], lit("arms"), 2)
-    hx, hy = to(sk["head"])
-    c.set_source_rgb(*FG)
-    fill_disc(c, hx, hy, 10, 3)
+    for side, limb, back in ((1, far, not front), (0, near, False)):
+        add_seg([limb["leg"][0], limb["leg"][1]], lit("legs", back), 2)
+        add_seg([limb["leg"][1], limb["leg"][2]], lit("legs", back), 2)
+        add_seg([limb["leg"][2], limb["leg"][3]], lit("legs", back), 2)
+        add_seg([limb["arm"][0], limb["arm"][1]], lit("arms", back), 2)
+        add_seg([limb["arm"][1], limb["arm"][2]], lit("arms", back), 2)
+
+    add_seg([sk["hip"], sk["shoulder"], sk["neck"]], core, 3)
+    add_seg([near["arm"][0], far["arm"][0]], core, 2)
+    add_seg([near["leg"][0], far["leg"][0]], core, 2)
+    segments.append((depth_of(sk["head"]) + 0.5, "head", sk["head"], FG, 3))
+
+    segments.sort(key=lambda item: item[0])
+    for _, kind, payload, color, width in segments:
+        if kind == "head":
+            hx, hy = to3(payload)
+            c.set_source_rgb(*color)
+            fill_disc(c, hx, hy, 10, 3)
+        else:
+            c.set_source_rgb(*color)
+            c.set_line_width(width)
+            c.move_to(*to3(payload[0]))
+            for q in payload[1:]:
+                c.line_to(*to3(q))
+            c.stroke()
 
     cr.save()
     cr.scale(scale, scale)
@@ -349,9 +505,6 @@ def draw(cr, move, t, accent, scale=3, floor=True):
     cr.paint()
     cr.restore()
 
-
-# Shared poses. Push-up geometry: the body is a straight line from the ankles (y 3, on the toes)
-# to the shoulders, 37 units long, with the hands planted under the shoulders.
 
 def plank_line(shoulder_y, ankle=(22, 3)):
     dy = shoulder_y - ankle[1]
@@ -363,24 +516,52 @@ def plank_line(shoulder_y, ankle=(22, 3)):
 
 _hip, _tor, _sx = plank_line(ARM)
 PUSH_UP_TOP = pose(hip=_hip, torso=_tor, head=_tor + 8, hands=((_sx, 0), (_sx, 0)), feet=((22, 3), (22, 3)),
-                   toes=(-55, -55))
+                   toes=(-55, -55), hand_z=(5.5, -5.5), foot_z=(2.8, -2.8), elbow_flare=0.35)
 _hip, _tor, _ = plank_line(8)
 PUSH_UP_LOW = pose(hip=_hip, torso=_tor, head=_tor + 8, hands=((_sx, 0), (_sx, 0)), feet=((22, 3), (22, 3)),
-                   toes=(-55, -55))
-# Decline: the toes on a box 19 high, so the line from the ankles runs down to the shoulders.
-_DECLINE_FEET = (27, 22)
+                   toes=(-55, -55), hand_z=(5.5, -5.5), foot_z=(2.8, -2.8), elbow_flare=0.45)
+
+WIDE_PUSH_UP_TOP = pose(**{**PUSH_UP_TOP, "hand_z": (12.5, -12.5), "elbow_flare": 0.95})
+WIDE_PUSH_UP_LOW = pose(**{**PUSH_UP_LOW, "hand_z": (12.5, -12.5), "elbow_flare": 1.15})
+
+DIAMOND_PUSH_UP_TOP = pose(**{**PUSH_UP_TOP, "hand_z": (1.3, -1.3), "elbow_flare": 0.12})
+DIAMOND_PUSH_UP_LOW = pose(**{**PUSH_UP_LOW, "hand_z": (1.3, -1.3), "elbow_flare": 0.16})
+
+_ih_top, _it_top, _isx = plank_line(30, ankle=(20, 3))
+INCLINE_TOP = pose(hip=_ih_top, torso=_it_top, head=_it_top + 6, hands=((_isx + 5, 14), (_isx + 5, 14)),
+                   feet=((20, 3), (20, 3)), toes=(-45, -45), hand_z=(5.5, -5.5), elbow_flare=0.35)
+_ih_low, _it_low, _ = plank_line(21, ankle=(20, 3))
+INCLINE_LOW = pose(hip=_ih_low, torso=_it_low, head=_it_low + 6, hands=((_isx + 5, 14), (_isx + 5, 14)),
+                   feet=((20, 3), (20, 3)), toes=(-45, -45), hand_z=(5.5, -5.5), elbow_flare=0.45)
+
+_DECLINE_FEET = (27, 20)
 _hip, _tor, _dsx = plank_line(ARM, _DECLINE_FEET)
 DECLINE_TOP = pose(hip=_hip, torso=_tor, head=_tor + 8, hands=((_dsx, 0), (_dsx, 0)),
-                   feet=(_DECLINE_FEET, _DECLINE_FEET), toes=(-55, -55))
+                   feet=(_DECLINE_FEET, _DECLINE_FEET), toes=(-55, -55), hand_z=(5.5, -5.5), elbow_flare=0.38)
 _hip, _tor, _ = plank_line(8, _DECLINE_FEET)
 DECLINE_LOW = pose(hip=_hip, torso=_tor, head=_tor + 8, hands=((_dsx, 0), (_dsx, 0)),
-                   feet=(_DECLINE_FEET, _DECLINE_FEET), toes=(-55, -55))
+                   feet=(_DECLINE_FEET, _DECLINE_FEET), toes=(-55, -55), hand_z=(5.5, -5.5), elbow_flare=0.48)
+
+_pl_h, _pl_t, _pl_sx = plank_line(17, ankle=(26, 3))
+PLANCHE_LEAN_A = pose(hip=_pl_h, torso=_pl_t, head=_pl_t + 6, hands=((_pl_sx - 5, 0), (_pl_sx - 5, 0)),
+                      feet=((26, 3), (26, 3)), toes=(-55, -55), hand_z=(6.0, -6.0), elbow_flare=0.15)
+_pl_h2, _pl_t2, _ = plank_line(14.5, ankle=(26, 3))
+PLANCHE_LEAN_B = pose(hip=_pl_h2, torso=_pl_t2, head=_pl_t2 + 6, hands=((_pl_sx - 5, 0), (_pl_sx - 5, 0)),
+                      feet=((26, 3), (26, 3)), toes=(-55, -55), hand_z=(6.0, -6.0), elbow_flare=0.15)
+
+_pp_h1, _pp_t1, _pp_sx = plank_line(17, ankle=(28, 3))
+PPPU_TOP = pose(hip=_pp_h1, torso=_pp_t1, head=_pp_t1 + 6, hands=((_pp_sx - 7, 0), (_pp_sx - 7, 0)),
+                feet=((28, 3), (28, 3)), toes=(-55, -55), hand_z=(6.5, -6.5), elbow_flare=0.2)
+_pp_h2, _pp_t2, _ = plank_line(7.5, ankle=(28, 3))
+PPPU_LOW = pose(hip=_pp_h2, torso=_pp_t2, head=_pp_t2 + 6, hands=((_pp_sx - 7, 0), (_pp_sx - 7, 0)),
+                feet=((28, 3), (28, 3)), toes=(-55, -55), hand_z=(6.5, -6.5), elbow_flare=0.25)
+
 _fhip, _ftor, _fsx = plank_line(9)
 FOREARM_PLANK = pose(hip=_fhip, torso=_ftor, head=_ftor + 6, hands=((_fsx + 9, 0), (_fsx + 9, 0)),
-                     feet=((22, 3), (22, 3)), toes=(-55, -55))
+                     feet=((22, 3), (22, 3)), toes=(-55, -55), hand_z=(4.5, -4.5), elbow_flare=0.15)
 
-HANG = ("arm", -95, ARM)  # arms hanging at the sides
-HIPS = ("torso", 0.12, 2)  # hands on hips
+HANG = ("arm", -95, ARM)
+HIPS = ("torso", 0.12, 2)
 
 
 def stand(x=48, hands=(HANG, HANG), **kw):
@@ -388,17 +569,15 @@ def stand(x=48, hands=(HANG, HANG), **kw):
 
 
 def squat_low(x=46, hands=(("arm", 0, ARM), ("arm", 0, ARM))):
-    return pose(hip=(x - 9, 12), torso=62, hands=hands, feet=((x, 1), (x, 1)))
+    return pose(hip=(x - 9, 12), torso=62, hands=hands, feet=((x, 1), (x, 1)), foot_z=(4.5, -4.5), knee_flare=0.35)
 
 
 def jack(t):
-    """Jumping jacks, t from 0 (feet together, arms down) to 1 (feet wide, arms overhead)."""
     return pose(hip=(48, 23 + 2 * t), torso=90, hands=(("arm", -100 - 135 * t, ARM), ("arm", -80 + 135 * t, ARM)),
                 feet=((46 - 9 * t, 1 + 2 * t), (50 + 9 * t, 1 + 2 * t)), toes=(180, 0), knees=(-1, 1))
 
 
 def held(p, **wobble):
-    """A hold: the pose, and the same pose eased a little deeper, so it breathes."""
     deeper = dict(p)
     for k, v in wobble.items():
         deeper[k] = v
@@ -407,8 +586,6 @@ def held(p, **wobble):
 
 
 def lunge(side):
-    """One forward lunge: the front foot steps out and plants, the body sinks between the feet and
-    rises, and the foot steps back. The back foot never moves; its heel lifts off the floor."""
     back = tip(48, -50)
     at = lambda front, rear, toes: pose(**{**front, "feet": rear[::1 - 2 * side], "toes": toes[::1 - 2 * side]})
     up = stand(44, hands=(HIPS, HIPS))
@@ -423,11 +600,6 @@ def lunge(side):
 
 
 class Swing(Move):
-    """A move that goes back and forth along one path: at_u(u) is the pose from u=0 to u=1, held
-    at each end. Each frame comes straight off the path, so a body rocking on its heels stays
-    straight all the way, where a blend between two keyframes would cut the arc and fold the knees.
-    It has no keyframes to borrow."""
-
     def __init__(self, at_u, low, up, top, down, **kw):
         super().__init__([], **kw)
         self.at_u, self.phases = at_u, (low, up, top, down)
@@ -447,31 +619,52 @@ class Swing(Move):
         return self.at_u(1 - ease((t - top) / down))
 
 
-# An inverted row: lying on the back under a table, knees bent and feet flat on the floor, the torso
-# under the top and the head out past the edge the hands hold. The body stays a straight line from
-# knees to shoulders and swings about the knees, from arms long up to the chest at the edge.
-# Lying face up, the elbows drop toward the floor and the hips: supine.
 _ROW_ANKLE = (30, 2)
 _ROW_KNEE = polar(_ROW_ANKLE, SHIN, 65)
 _ROW_HAND = (60.5, 25)
-_ROW_LOW, _ROW_TOP = -10.2, 13.3  # the body's angle off level, arms long and chest up
+_ROW_LOW, _ROW_TOP = -10.2, 13.3
 
 
-def row(u):
+def row(u, hand_z=(5.5, -5.5), flare=0.35):
     angle = lerp(_ROW_LOW, _ROW_TOP, u)
     hip = polar(_ROW_KNEE, THIGH, angle)
     return pose(supine=True, hip=hip, torso=angle, head=angle - 8 * u, hands=(_ROW_HAND, _ROW_HAND),
-                feet=(_ROW_ANKLE, _ROW_ANKLE), toes=(180, 180))
+                feet=(_ROW_ANKLE, _ROW_ANKLE), toes=(180, 180), hand_z=hand_z, elbow_flare=flare)
+
+
+def wide_row(u):
+    return row(u, hand_z=(11.5, -11.5), flare=0.95)
+
+
+def scap_row(u):
+    angle = lerp(_ROW_LOW, _ROW_LOW + 5.5, u)
+    hip = polar(_ROW_KNEE, THIGH, angle)
+    return pose(supine=True, hip=hip, torso=angle, head=angle, hands=(_ROW_HAND, _ROW_HAND),
+                feet=(_ROW_ANKLE, _ROW_ANKLE), toes=(180, 180), hand_z=(6.5, -6.5), elbow_flare=0.25)
 
 
 _bulg_chair = ("chair", 16, 30, 14)
 _pike_hip = (41, 20)
 
 MOVES = {
-    "push-ups": Move([(PUSH_UP_TOP, 0.35, 0.8), (PUSH_UP_LOW, 0.15, 0.6)], work=("arms",)),
+    "push-ups": Move([(PUSH_UP_TOP, 0.35, 0.8), (PUSH_UP_LOW, 0.15, 0.6)], work=("arms",), yaw=math.radians(36)),
+    "wide push-ups": Move([(WIDE_PUSH_UP_TOP, 0.35, 0.8), (WIDE_PUSH_UP_LOW, 0.15, 0.6)], work=("arms", "core"), yaw=math.radians(46)),
+    "diamond push-ups": Move([(DIAMOND_PUSH_UP_TOP, 0.35, 0.8), (DIAMOND_PUSH_UP_LOW, 0.15, 0.6)], work=("arms",), yaw=math.radians(44)),
+    "incline push-ups": Move([(INCLINE_TOP, 0.35, 0.8), (INCLINE_LOW, 0.15, 0.6)], work=("arms",),
+                             props=(("box", round(_isx + 1), round(_isx + 16), 14),), yaw=math.radians(34)),
     "decline push-ups": Move([(DECLINE_TOP, 0.35, 0.8), (DECLINE_LOW, 0.15, 0.6)], work=("arms",),
-                             props=(("box", 16, 31, 19),)),
-    "squats": Move([(stand(46), 0.3, 0.9), (squat_low(46), 0.2, 0.8)], work=("legs",)),
+                             props=(("box", 16, 31, 18),), yaw=math.radians(34)),
+    "planche lean": Move([(PLANCHE_LEAN_A, 0.8, 1.2), (PLANCHE_LEAN_B, 1.2, 1.2)], work=("arms", "core"), yaw=math.radians(34)),
+    "pseudo planche push-ups": Move([(PPPU_TOP, 0.35, 0.85), (PPPU_LOW, 0.2, 0.65)], work=("arms", "core"), yaw=math.radians(38)),
+    "frog stand": Move(held(
+        pose(hip=(40, 13), torso=16, head=18, hands=((52, 0), (52, 0)),
+             feet=((38, 10), (38, 10)), toes=(155, 155), hand_z=(6.5, -6.5), foot_z=(4.5, -4.5), elbow_flare=0.75, knee_flare=0.85),
+        hip=(41, 14), torso=12), work=("arms", "core"), yaw=math.radians(38)),
+    "tuck planche": Move(held(
+        pose(hip=(42, 17), torso=8, head=12, hands=((52, 0), (52, 0)),
+             feet=((44, 9), (44, 9)), toes=(145, 145), hand_z=(6.2, -6.2), foot_z=(3.2, -3.2), elbow_flare=0.15, knee_flare=0.25),
+        hip=(43, 18.2), torso=5), work=("arms", "core"), yaw=math.radians(36)),
+    "squats": Move([(stand(46, foot_z=(4.5, -4.5)), 0.3, 0.9), (squat_low(46), 0.2, 0.8)], work=("legs",)),
     "lunges": Move(lunge(0) + lunge(1), work=("legs",)),
     "bulgarian split squats": Move([
         (pose(hip=(46, 20), torso=86, hands=(HANG, HANG), feet=((57, 1), (28, 15.5)), toes=(0, 185)), 0.3, 0.9),
@@ -502,6 +695,46 @@ MOVES = {
         (stand(48), 0.3, 0.6),
         (stand(48, hip=(49.3, 25.9), feet=(tip(52, -48), tip(52, -48)), toes=(-48, -48)), 0.4, 0.6),
     ], work=("legs",)),
+    "lying leg raises": Move([
+        (pose(supine=True, hip=(44, 2), torso=2, head=4, hands=(("arm", 180, 16), ("arm", 180, 16)),
+              feet=(("leg", 172, LEG), ("leg", 172, LEG)), toes=(155, 155), hand_z=(7.5, -7.5), foot_z=(2.2, -2.2)), 0.25, 0.85),
+        (pose(supine=True, hip=(44, 2), torso=2, head=4, hands=(("arm", 180, 16), ("arm", 180, 16)),
+              feet=(("leg", 92, LEG), ("leg", 92, LEG)), toes=(10, 10), hand_z=(7.5, -7.5), foot_z=(2.2, -2.2)), 0.25, 0.85),
+    ], work=("core", "legs"), yaw=math.radians(32)),
+    "hollow hold": Move(held(
+        pose(supine=True, hip=(46, 2), torso=12, head=16, hands=(("arm", 10, ARM), ("arm", 10, ARM)),
+             feet=(("leg", 170, LEG), ("leg", 170, LEG)), toes=(160, 160)),
+        torso=16, feet=(("leg", 165, LEG), ("leg", 165, LEG))), work=("core",)),
+    "hollow rocks": Move([
+        (pose(supine=True, hip=(46, 2), torso=8, head=12, hands=(("arm", 6, ARM), ("arm", 6, ARM)),
+              feet=(("leg", 162, LEG), ("leg", 162, LEG)), toes=(152, 152)), 0.1, 0.55),
+        (pose(supine=True, hip=(46, 2), torso=24, head=28, hands=(("arm", 22, ARM), ("arm", 22, ARM)),
+              feet=(("leg", 174, LEG), ("leg", 174, LEG)), toes=(166, 166)), 0.1, 0.55),
+    ], work=("core",)),
+    "dragon flag negatives": Move([
+        (pose(supine=True, hip=(54, 16), torso=-52, head=-5, hands=((66, 3), (66, 3)),
+              feet=(("leg", 118, LEG), ("leg", 118, LEG)), toes=(110, 110), hand_z=(5.5, -5.5)), 0.3, 1.4),
+        (pose(supine=True, hip=(48, 4), torso=-6, head=0, hands=((66, 3), (66, 3)),
+              feet=(("leg", 174, LEG), ("leg", 174, LEG)), toes=(165, 165), hand_z=(5.5, -5.5)), 0.35, 0.9),
+    ], work=("core", "arms"), props=(("table", 64, 80, 22),)),
+    "dead bugs": Move([
+        (pose(supine=True, hip=(46, 2), torso=0, head=2, hands=(("arm", 90, ARM), ("arm", 8, ARM)),
+              feet=(("leg", 172, LEG), ("leg", 95, 15)), toes=(160, 180)), 0.2, 0.65),
+        (pose(supine=True, hip=(46, 2), torso=0, head=2, hands=(("arm", 8, ARM), ("arm", 90, ARM)),
+              feet=(("leg", 95, 15), ("leg", 172, LEG)), toes=(180, 160)), 0.2, 0.65),
+    ], work=("core",)),
+    "flutter kicks": Move([
+        (pose(supine=True, hip=(45, 2), torso=6, head=10, hands=((48, 1), (48, 1)),
+              feet=(("leg", 156, LEG), ("leg", 175, LEG)), toes=(150, 170), hand_z=(7.0, -7.0)), 0.05, 0.28),
+        (pose(supine=True, hip=(45, 2), torso=6, head=10, hands=((48, 1), (48, 1)),
+              feet=(("leg", 175, LEG), ("leg", 156, LEG)), toes=(170, 150), hand_z=(7.0, -7.0)), 0.05, 0.28),
+    ], work=("core", "legs")),
+    "v-ups": Move([
+        (pose(supine=True, hip=(46, 2), torso=6, head=8, hands=(("arm", 8, ARM), ("arm", 8, ARM)),
+              feet=(("leg", 174, LEG), ("leg", 174, LEG)), toes=(165, 165)), 0.25, 0.7),
+        (pose(supine=True, hip=(46, 3), torso=62, head=58, hands=(("arm", 125, ARM), ("arm", 125, ARM)),
+              feet=(("leg", 125, LEG), ("leg", 125, LEG)), toes=(115, 115)), 0.2, 0.7),
+    ], work=("core",)),
     "sit-ups": Move([
         (pose(supine=True, hip=(48, 3), torso=2, head=4, hands=(("torso", 0.75, -3), ("torso", 0.75, -3)),
               feet=((32, 1), (32, 1))), 0.25, 0.8),
@@ -513,10 +746,6 @@ MOVES = {
         pose(hip=(41.4, 13.5), torso=28, head=32, hands=(("arm", 95, ARM), ("arm", -90, ARM)),
              feet=(("leg", 208, LEG), ("leg", 208, LEG)), toes=(118, 118), knees=(-1, 1), elbows=(-1, 1)),
         hip=(41.4, 14.3)), work=("core",), view="front"),
-    "hollow hold": Move(held(
-        pose(supine=True, hip=(46, 2), torso=12, head=16, hands=(("arm", 10, ARM), ("arm", 10, ARM)),
-             feet=(("leg", 170, LEG), ("leg", 170, LEG)), toes=(160, 160)),
-        torso=16, feet=(("leg", 165, LEG), ("leg", 165, LEG))), work=("core",)),
     "glute bridges": Move([
         (pose(supine=True, hip=(46, 3), torso=0, head=0, hands=(("arm", 181, ARM), ("arm", 181, ARM)),
               feet=((32, 1), (32, 1))), 0.25, 0.8),
@@ -528,10 +757,10 @@ MOVES = {
         (pose(hip=(42, 9), torso=88, hands=((37, 15), (37, 15)), feet=((55, 1), (55, 1))), 0.15, 0.8),
     ], work=("arms",), props=(("chair", 22, 38, 14),)),
     "pike push-ups": Move([
-        (pose(hip=_pike_hip, torso=-40, head=-50, hands=((60, 0), (60, 0)), feet=((30, 1), (30, 1)), toes=(-30, -30)),
-         0.3, 0.8),
-        (pose(hip=_pike_hip, torso=-58, head=-75, hands=((60, 0), (60, 0)), feet=((30, 1), (30, 1)), toes=(-30, -30)),
-         0.15, 0.7),
+        (pose(hip=_pike_hip, torso=-40, head=-50, hands=((60, 0), (60, 0)), feet=((30, 1), (30, 1)), toes=(-30, -30),
+              hand_z=(6.5, -6.5), elbow_flare=0.55), 0.3, 0.8),
+        (pose(hip=_pike_hip, torso=-58, head=-75, hands=((60, 0), (60, 0)), feet=((30, 1), (30, 1)), toes=(-30, -30),
+              hand_z=(6.5, -6.5), elbow_flare=0.65), 0.15, 0.7),
     ], work=("arms",)),
     "jumping jacks": Move([(jack(0), 0.05, 0.3), (jack(1), 0.05, 0.3)], work=("arms", "legs"), view="front"),
     "mountain climbers": Move([
@@ -556,43 +785,40 @@ MOVES = {
         (pose(hip=(44, 3), torso=12, head=22, hands=(("arm", 22, ARM), ("arm", 22, ARM)), feet=(("leg", 165, LEG),) * 2,
               toes=(170, 170)), 0.6, 0.8),
     ], work=("core",)),
-    # Feet on a chair behind take some of the weight; the chin comes over the bar.
     "assisted pull-ups": Move([
         (pose(hip=(47.5, 20.5), torso=92, head=95, hands=((48, 53), (48, 53)), feet=((32, 15.5), (32, 15.5)),
-              toes=(185, 185)), 0.3, 0.9),
+              toes=(185, 185), hand_z=(8.0, -8.0)), 0.3, 0.9),
         (pose(hip=(47.5, 31), torso=92, head=85, hands=((48, 53), (48, 53)), feet=((32, 15.5), (32, 15.5)),
-              toes=(185, 185)), 0.25, 0.8),
+              toes=(185, 185), hand_z=(8.0, -8.0)), 0.25, 0.8),
     ], work=("arms",), props=(("bar", 30, 66, 52), ("chair", 22, 36, 14))),
-    # Between two bars, the toes resting on a box in front for help.
     "assisted dips": Move([
-        (pose(hip=(47.5, 32), torso=92, hands=((48, 29), (48, 29)), feet=((62, 15), (62, 15)), toes=(-20, -20)),
-         0.3, 0.8),
+        (pose(hip=(47.5, 32), torso=92, hands=((48, 29), (48, 29)), feet=((62, 15), (62, 15)), toes=(-20, -20),
+              hand_z=(6.5, -6.5)), 0.3, 0.8),
         (pose(hip=(48.5, 24), torso=80, head=82, hands=((48, 29), (48, 29)), feet=((62, 15), (62, 15)),
-              toes=(-20, -20)), 0.15, 0.8),
+              toes=(-20, -20), hand_z=(6.5, -6.5)), 0.15, 0.8),
     ], work=("arms",), props=(("bar", 36, 60, 27), ("box", 56, 72, 14))),
-    # Under a table, feet flat and knees bent, the body straight from knees to shoulders and the head
-    # out past the edge; the chest comes up to it.
-    "inverted rows": Swing(row, 0.3, 0.8, 0.25, 0.8, work=("arms",), props=(("table", 22, 61, 25),)),
-    # Sitting with straight legs, hands planted beside the knees: lift the legs off the floor.
+    "inverted rows": Swing(row, 0.3, 0.8, 0.25, 0.8, work=("arms",), props=(("table", 22, 61, 25),), yaw=math.radians(34)),
+    "wide inverted rows": Swing(wide_row, 0.3, 0.8, 0.25, 0.8, work=("arms",), props=(("table", 22, 61, 25),), yaw=math.radians(44)),
+    "scapular rows": Swing(scap_row, 0.35, 0.65, 0.35, 0.65, work=("arms", "core"), props=(("table", 22, 61, 25),), yaw=math.radians(36)),
+    "tuck front lever": Move(held(
+        pose(supine=True, hip=(42, 11), torso=2, head=4, hands=((57, 29), (57, 29)),
+             feet=((44, 14), (44, 14)), toes=(160, 160), hand_z=(6.5, -6.5), foot_z=(3.0, -3.0)),
+        hip=(42, 12), torso=4), work=("arms", "core"), props=(("table", 22, 61, 29),), yaw=math.radians(36)),
     "seated pike ups": Move([
         (pose(hip=(36, 3), torso=84, head=80, hands=((44, 1), (44, 1)), feet=(("leg", -4, LEG), ("leg", -4, LEG)),
               toes=(-8, -8)), 0.3, 0.6),
         (pose(hip=(36, 4), torso=76, head=70, hands=((44, 1), (44, 1)), feet=(("leg", 14, LEG), ("leg", 14, LEG)),
               toes=(8, 8)), 0.35, 0.6),
     ], work=("core", "legs")),
-    # Seat down, hands on the floor out by the knees, the straight legs lifted off the floor and held.
     "compression hold": Move(held(
         pose(hip=(36, 3.5), torso=72, head=68, hands=((45.5, 1), (45.5, 1)), feet=(("leg", 8, LEG), ("leg", 8, LEG)),
              toes=(8, 8)),
         torso=70, feet=(("leg", 12, LEG), ("leg", 12, LEG)), toes=(12, 12)), work=("core", "legs")),
-    # Up on straight arms between two parallettes, legs held straight out level with the hips.
     "L-sit": Move(held(
         pose(hip=(36, 12.6), torso=80, head=86, hands=((35, 10), (35, 10)), feet=(("leg", 0, LEG), ("leg", 0, LEG)),
-             toes=(0, 0)),
+             toes=(0, 0), hand_z=(6.5, -6.5)),
         hip=(36, 13.6), torso=81), work=("core", "arms"), props=(("bar", 29, 41, 8),)),
 }
-
-# Stretches: holds that ease a little deeper as you breathe out. Side ones show the right side.
 
 _kneel_hip = (46, 12)
 
@@ -607,7 +833,6 @@ STRETCHES = {
         pose(hip=(36, 13), torso=88, hands=(("arm", -40, ARM), ("arm", -40, ARM)), feet=((51, 1), (24, 12)),
              toes=(0, 95)),
         torso=98, hip=(37, 12)), work=("legs",), props=(("wall", 23),)),
-    # David's hard hip flexor lunge: hips pushed down, a hand reaching back to pull the back foot up.
     "lunge with foot grab": Move(held(
         pose(hip=(46, 11), torso=96, hands=((34, 15), HIPS), feet=((60, 1), (33, 15)), toes=(0, 100)),
         hip=(47, 10), torso=100, hands=((34, 16), HIPS)), work=("legs",)),
@@ -657,7 +882,6 @@ STRETCHES = {
 
 
 def cycle(steps, period, **base):
-    """Keyframes for something that goes round: steps(i) gives a pose's overrides at i/8 of a turn."""
     return [(pose(**{**base, **steps(i / 8)}), 0, period / 8) for i in range(8)]
 
 
@@ -670,7 +894,6 @@ def pedal(t):
 
 
 def stroke_arms(t):
-    """Front crawl: each arm goes round, straight, half a turn apart."""
     a = 360 * t
     return {"hands": (("arm", -a, ARM), ("arm", 180 - a, ARM)),
             "feet": (("leg", 180 + 6 * math.sin(math.radians(2 * a)), LEG),
@@ -678,7 +901,6 @@ def stroke_arms(t):
 
 
 def stride(x, lift, reach, swing, lean, heel=4):
-    """One side of a gait: near leg forward, far leg back with the heel up, arms swinging opposite."""
     return pose(hip=(x, 22 + lift), torso=90 - lean, feet=((x + reach, 1 + lift), (x - reach + 2, 1 + heel + 2 * lift)),
                 toes=(0, -40), hands=(("arm", -90 - swing, 15), ("arm", -90 + swing, 15)))
 
@@ -690,12 +912,12 @@ def stride_b(*a, **kw):
 
 HOLDS = ((66, 47), (66, 37), (66, 27), (66, 13), (66, 5))
 
+
 def face(y):
-    """Where the boulder's overhanging face is at height y."""
     return 76 - 0.25 * y
 
 
-PAD = 2  # a crash pad's thickness: feet on it stand this much higher
+PAD = 2
 BOULDER = tuple((round(face(y)) - 1, y) for y in (8, 16, 26, 36, 46, 54))
 
 TRAINING = {
@@ -705,8 +927,6 @@ TRAINING = {
         (pose(hip=(57, 21), torso=94, head=70, hands=((65, 37), (65, 47)), feet=((64, 5), (64, 13)), toes=(20, 20)),
          0.5, 0.9),
     ], work=("arms", "core"), props=(("wall", 67, HOLDS),)),
-    # Sit start on the pad, pull on and climb the overhang, reach for the top hold, drop off onto
-    # the pad and walk back to sit down again.
     "bouldering": Move([
         (pose(hip=(55, 7), torso=70, head=60, hands=(BOULDER[2], BOULDER[1]), feet=((72, 8), (63, PAD + 1)),
               toes=(20, 0)), 0.6, 0.8),
@@ -723,6 +943,10 @@ TRAINING = {
         (pose(hip=(46, 23), torso=90, hands=((47, 12), (47, 12)), feet=((46, 1), (46, 1))), 0.3, 0.9),
         (pose(hip=(36, 15), torso=38, head=30, hands=((49, 5), (49, 5)), feet=((46, 1), (46, 1))), 0.2, 0.9),
     ], work=("legs", "core"), plate=True),
+    "gym": Move([
+        (pose(hip=(46, 23), torso=90, hands=((47, 12), (47, 12)), feet=((46, 1), (46, 1))), 0.3, 0.9),
+        (pose(hip=(36, 15), torso=38, head=30, hands=((49, 5), (49, 5)), feet=((46, 1), (46, 1))), 0.2, 0.9),
+    ], work=("legs", "core"), plate=True),
     "running": Move([
         (stride(48, 2, 9, 45, 12, 9), 0, 0.2), (stride(48, 0, 2, 5, 12, 12), 0, 0.12),
         (stride_b(48, 2, 9, 45, 12, 9), 0, 0.2), (stride_b(48, 0, 2, 5, 12, 12), 0, 0.12),
@@ -732,7 +956,6 @@ TRAINING = {
     "swimming": Move(cycle(stroke_arms, 1.6, hip=(42, 11), torso=0, head=-10, toes=(180, 180)),
                      work=("arms",), props=(("water", 15),)),
     "yoga": Move([
-        # Down dog to cobra: hands and toes stay where they are, the hips travel between them.
         (pose(hip=(48, 19.5), torso=-42, head=-55, hands=((70, 0), (70, 0)), feet=(tip(40, -10),) * 2,
               toes=(-10, -10)), 1.0, 1.2),
         (pose(hip=(57, 4), torso=55, head=70, hands=((70, 0), (70, 0)), feet=(tip(40, -50),) * 2,
@@ -753,12 +976,15 @@ TRAINING = {
 }
 TRAINING["hiit"] = Move(MOVES["burpees"].frames, work=("arms", "legs", "core"))
 
-# The challenge's stretches are David's versions of these positions.
 for _alias, _base in (("front split practice", "front split"), ("middle split practice", "middle split"),
                       ("PNF pancake", "pancake"), ("deep pigeon", "pigeon")):
     STRETCHES[_alias] = STRETCHES[_base]
 
-SUPINE_MOVES = {"inverted rows", "sit-ups", "hollow hold", "glute bridges", "lying hamstring"}
+SUPINE_MOVES = {
+    "inverted rows", "wide inverted rows", "scapular rows", "tuck front lever",
+    "sit-ups", "hollow hold", "hollow rocks", "lying leg raises", "dragon flag negatives",
+    "dead bugs", "flutter kicks", "v-ups", "glute bridges", "lying hamstring",
+}
 
 
 def every():
@@ -766,8 +992,6 @@ def every():
 
 
 def joint_turns(name, move, samples=24):
-    """Every elbow and knee turn across a loop, in degrees, signed as flexion: positive is the way
-    a real joint bends, negative is backwards. Side view only; a front view has no such sign."""
     flip = -1 if name in SUPINE_MOVES else 1
     out = []
     for i in range(samples):
@@ -783,9 +1007,6 @@ def joint_turns(name, move, samples=24):
 
 
 def slides(move, samples=240):
-    """How far each foot slides along the floor across a loop: whichever of ankle and toe tip
-    bears on the floor, summed over the stretches where it stays there. A heel rising off a
-    planted toe swings the ankle, which is not a slide."""
     out, prev = {}, None
     for i in range(samples + 1):
         sk = skeleton(move.at(move.period * i / samples), move.view == "front")
@@ -800,8 +1021,6 @@ def slides(move, samples=240):
 
 
 def check():
-    """Joints that bend backwards anywhere in a loop, by more than a straight limb's wobble, and
-    feet that slide along the floor instead of staying planted or stepping."""
     bad = []
     for name, move in every().items():
         if not move.glide:
@@ -818,7 +1037,6 @@ def check():
 
 
 def sheet(path, names=None, frames=8, scale=3, accent="#7fb3d4"):
-    """Every move as a row of frames across one loop, for checking poses by eye."""
     moves = every()
     names = names or list(moves)
     cw, ch = W * scale, H * scale
