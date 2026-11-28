@@ -109,7 +109,10 @@ def joined_wav(clips):
     found = [part for part in (_pcm(clip) for clip in clips) if part]
     if not found:
         return clips[0] if clips else b""
-    return _wav(found[0][0], b"".join(data for fmt, data in found if fmt == found[0][0]))
+    kept = [data for fmt, data in found if fmt == found[0][0]]
+    if len(kept) < len(clips):
+        log.warning("speech joined %d of %d clips, the rest were not wavs in one format", len(kept), len(clips))
+    return _wav(found[0][0], b"".join(kept))
 
 
 def _cartesia_runs(text, language, origin):
@@ -117,10 +120,9 @@ def _cartesia_runs(text, language, origin):
     runs = [(code, run.strip()) for code, run in pronunciation.segments(text, language) if run.strip()]
     if not runs:
         return _cartesia(text, language, origin)
-    if len(runs) == 1:
-        return _cartesia(runs[0][1], runs[0][0], origin)
-    log.info("speech in %d runs: %s", len(runs),
-             "; ".join(f"{code}: {run!r}" if code != language else f"{code}: {len(run)} chars" for code, run in runs))
+    if len(runs) > 1 or runs[0][0] != language:
+        log.info("speech in %d runs: %s", len(runs),
+                 "; ".join(f"{code}: {run!r}" if code != language else f"{code}: {len(run)} chars" for code, run in runs))
 
     def render(run):
         code, words = run
@@ -132,6 +134,8 @@ def _cartesia_runs(text, language, origin):
             log.warning("cartesia refused language %s (%s), said in %s", code, error.response.status_code, language)
             return _cartesia(words, language, origin)
 
+    if len(runs) == 1:
+        return render(runs[0])
     with ThreadPoolExecutor(max_workers=min(len(runs), 3)) as pool:
         return joined_wav(list(pool.map(render, runs)))
 

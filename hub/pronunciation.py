@@ -1,6 +1,6 @@
 """Words and phrases the voice says in another language, the pronunciation lexicon.
 
-Marcus asked on 2026-11-28 that listed words go to the TTS in their own language, so a Danish
+The owner asked on 2026-11-28 that listed words go to the TTS in their own language, so a Danish
 place name is said with Danish sounds inside an English reply. The lexicon is a box value, never
 a repo value: ~/.config/diablo/pronunciation.toml on the hub, one table per language code with a
 `words` list (hub/pronunciation.example.toml). It is read again whenever the file changes, so an
@@ -21,16 +21,22 @@ log = logging.getLogger("diablo.pronunciation")
 
 PATH = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "diablo" / "pronunciation.toml"
 
+_LETTER = re.compile(r"[^\W_]")
 _lock = threading.Lock()
 _cache = {"key": None, "words": {}, "pattern": None}
 
 
+def _spaced(phrase):
+    return " ".join(str(phrase).split())
+
+
 def _norm(phrase):
-    return " ".join(str(phrase).split()).lower()
+    return _spaced(phrase).casefold()
 
 
 def parse(data):
-    """{phrase: language} from the parsed toml, the first language listing a phrase keeping it."""
+    """({folded phrase: language}, [phrases as listed]) from the parsed toml, the first language
+    listing a phrase keeping it."""
     words = {}
     for language, entry in (data or {}).items():
         code = str(language).strip()
@@ -44,17 +50,17 @@ def parse(data):
         for phrase in listed:
             key = _norm(phrase) if isinstance(phrase, str) else ""
             if key and key not in words:
-                words[key] = code
-    return words
+                words[key] = (code, _spaced(phrase))
+    return {key: code for key, (code, spelled) in words.items()}, [spelled for code, spelled in words.values()]
 
 
-def compile_words(words):
-    if not words:
+def compile_words(phrases):
+    if not phrases:
         return None
     alternatives = []
-    for phrase in sorted(words, key=len, reverse=True):
+    for phrase in sorted(phrases, key=len, reverse=True):
         alternatives.append(r"\s+".join(re.escape(part) for part in phrase.split(" ")))
-    return re.compile(r"(?<!\w)(" + "|".join(alternatives) + r")(?!\w)", re.IGNORECASE)
+    return re.compile(r"(?<![^\W_])(" + "|".join(alternatives) + r")(?![^\W_])", re.IGNORECASE)
 
 
 def _load(path):
@@ -67,11 +73,11 @@ def _load(path):
         if _cache["key"] == key:
             return _cache["words"], _cache["pattern"]
         try:
-            words = parse(tomllib.loads(path.read_text(encoding="utf-8")))
+            words, phrases = parse(tomllib.loads(path.read_text(encoding="utf-8")))
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
             log.warning("pronunciation lexicon %s not read: %s", path, error)
-            words = {}
-        pattern = compile_words(words)
+            words, phrases = {}, []
+        pattern = compile_words(phrases)
         _cache.update(key=key, words=words, pattern=pattern)
         log.info("pronunciation lexicon loaded: %d entries in %s", len(words),
                  ", ".join(sorted(set(words.values()))) or "no languages")
@@ -96,9 +102,9 @@ def segments(text, language="en", path=None):
         parts.append([language, text[at:]])
     runs = []
     for part in parts:
-        if runs and (runs[-1][0] == part[0] or not re.search(r"\w", part[1])):
+        if runs and (runs[-1][0] == part[0] or not _LETTER.search(part[1])):
             runs[-1][1] += part[1]
-        elif runs and not re.search(r"\w", runs[-1][1]):
+        elif runs and not _LETTER.search(runs[-1][1]):
             part[1] = runs.pop()[1] + part[1]
             runs.append(part)
         else:

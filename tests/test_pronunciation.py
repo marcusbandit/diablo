@@ -88,6 +88,14 @@ class LexiconTest(unittest.TestCase):
     def test_a_phrase_in_the_base_language_stays_one_run(self):
         self.assertEqual(self.runs("We drive to Example Town.", "da"), [("da", "We drive to Example Town.")])
 
+    def test_underscores_are_not_word_letters(self):
+        self.assertEqual(self.runs("off to _Example Town_"), [("en", "off to _"), ("da", "Example Town_")])
+
+    def test_letters_whose_lower_case_is_longer_still_match(self):
+        write(self.path, '[tr]\nwords = ["İrnekköy"]\n')
+        self.assertEqual(self.runs("to İrnekköy"), [("en", "to "), ("tr", "İrnekköy")])
+        self.assertEqual(self.runs("to İRNEKKÖY"), [("en", "to "), ("tr", "İRNEKKÖY")])
+
     def test_a_missing_file_changes_nothing(self):
         said = "We drive to Example Town."
         self.assertEqual(pronunciation.segments(said, "en", Path(self.tmp.name) / "nope.toml"), [("en", said)])
@@ -162,6 +170,14 @@ class SpeechRunsTest(unittest.TestCase):
         self.assertIn(("en", "Probewort"), [(s["language"], s["transcript"]) for s in self.sent])
         with wave.open(io.BytesIO(audio)) as w:
             self.assertEqual(w.getnframes(), 30)
+
+    def test_a_reply_that_is_only_a_refused_word_is_still_said(self):
+        with mock.patch.object(tts.httpx, "post", self.post(refuse={"de-DE"})):
+            audio = tts.speak("Probewort")
+        self.assertEqual([(s["language"], s["transcript"]) for s in self.sent],
+                         [("de-DE", "Probewort"), ("en", "Probewort")])
+        with wave.open(io.BytesIO(audio)) as w:
+            self.assertEqual(w.getnframes(), 10)
 
     def test_the_english_speed_stays_on_english_runs_only(self):
         db.set_setting("speech_rate", "1.2")

@@ -36,7 +36,7 @@ assistant plays this, so it never speaks in a voice Android picks. No voice set 
 provider failing a 502, an empty text a 400 and over 4000 characters a 413.
 
 Every hub speech path (this endpoint, Telegram voice replies, the `send_voice` tool) goes through
-hub/tts.py, which reads the pronunciation lexicon at `~/.config/diablo/pronunciation.toml` on the
+hub/tts.py, which, when the voice is Cartesia, reads the pronunciation lexicon at `~/.config/diablo/pronunciation.toml` on the
 hub box (format in hub/pronunciation.example.toml): one table per language code with a `words`
 list. A listed word or phrase, matched whole word, ignoring case, longest first, is rendered by
 Cartesia in its own request with its own `language` and the clips are joined into one wav, since
