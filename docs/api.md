@@ -35,6 +35,15 @@ the voice the desk speaks with (`tts_provider`, `tts_voice_id`, `speech_rate`). 
 assistant plays this, so it never speaks in a voice Android picks. No voice set up is a 503, the
 provider failing a 502, an empty text a 400 and over 4000 characters a 413.
 
+Every hub speech path (this endpoint, Telegram voice replies, the `send_voice` tool) goes through
+hub/tts.py, which, when the voice is Cartesia, reads the pronunciation lexicon at `~/.config/diablo/pronunciation.toml` on the
+hub box (format in hub/pronunciation.example.toml): one table per language code with a `words`
+list. A listed word or phrase, matched whole word, ignoring case, longest first, is rendered by
+Cartesia in its own request with its own `language` and the clips are joined into one wav, since
+Cartesia has no language tag inside a transcript. A code Cartesia refuses with a 400 or 422 falls
+back to the reply's language. The file is read again when it changes; missing, nothing changes.
+The journal shows each split as `speech in N runs: ...`.
+
 Spoken turns carry `host` in `POST /v1/chat` and `POST /v1/voice/control`, the box whose ears heard
 them. Left out or `banditbox`, the origin stays his desk; any other box is named in the origin, and the
 lock guard asks that box whether its screen is locked. `POST /v1/ears/report` carries `host` too:
