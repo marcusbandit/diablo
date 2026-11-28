@@ -1,12 +1,16 @@
+import logging
 import pathlib
 import shutil
 import struct
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from . import saying, settings, usage
+from . import pronunciation, saying, settings, usage
+
+log = logging.getLogger("diablo.tts")
 
 CARTESIA_BASE = "https://api.cartesia.ai"
 
@@ -68,11 +72,10 @@ def _to_opus(wav_bytes):
         pathlib.Path(target_path).unlink(missing_ok=True)
 
 
-def whole_wav(audio):
-    """A wav with its real sizes. Cartesia streams one with placeholder sizes (0xFFFFFFFF) that
-    Android's player refuses; the fmt chunk and every byte after the data header are kept."""
+def _pcm(audio):
+    """(fmt chunk, sample bytes) of a wav, the data cut to what arrived and to whole frames, or None."""
     if len(audio) < 12 or audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
-        return audio
+        return None
     fmt, at = None, 12
     while at + 8 <= len(audio):
         kind, size = audio[at:at + 4], struct.unpack("<I", audio[at + 4:at + 8])[0]
@@ -81,20 +84,62 @@ def whole_wav(audio):
             fmt = audio[body:body + size]
         elif kind == b"data":
             if fmt is None:
-                return audio
+                return None
             data = audio[body:body + min(size, len(audio) - body)]
             block = struct.unpack("<H", fmt[12:14])[0] if len(fmt) >= 14 else 2
-            data = data[:len(data) - len(data) % max(block, 1)]
-            head = b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data))
-            return b"RIFF" + struct.pack("<I", 4 + len(head) + len(data)) + b"WAVE" + head + data
+            return fmt, data[:len(data) - len(data) % max(block, 1)]
         at = body + size + (size & 1)
-    return audio
+    return None
+
+
+def _wav(fmt, data):
+    head = b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data))
+    return b"RIFF" + struct.pack("<I", 4 + len(head) + len(data)) + b"WAVE" + head + data
+
+
+def whole_wav(audio):
+    """A wav with its real sizes. Cartesia streams one with placeholder sizes (0xFFFFFFFF) that
+    Android's player refuses; the fmt chunk and every byte after the data header are kept."""
+    found = _pcm(audio)
+    return _wav(*found) if found else audio
+
+
+def joined_wav(clips):
+    """One wav of the clips back to back, all in the first clip's format."""
+    found = [part for part in (_pcm(clip) for clip in clips) if part]
+    if not found:
+        return clips[0] if clips else b""
+    return _wav(found[0][0], b"".join(data for fmt, data in found if fmt == found[0][0]))
+
+
+def _cartesia_runs(text, language, origin):
+    """Listed words in their own language (hub/pronunciation.py), each run its own request."""
+    runs = [(code, run.strip()) for code, run in pronunciation.segments(text, language) if run.strip()]
+    if not runs:
+        return _cartesia(text, language, origin)
+    if len(runs) == 1:
+        return _cartesia(runs[0][1], runs[0][0], origin)
+    log.info("speech in %d runs: %s", len(runs),
+             "; ".join(f"{code}: {run!r}" if code != language else f"{code}: {len(run)} chars" for code, run in runs))
+
+    def render(run):
+        code, words = run
+        try:
+            return _cartesia(words, code, origin)
+        except httpx.HTTPStatusError as error:
+            if code == language or error.response.status_code not in (400, 422):
+                raise
+            log.warning("cartesia refused language %s (%s), said in %s", code, error.response.status_code, language)
+            return _cartesia(words, language, origin)
+
+    with ThreadPoolExecutor(max_workers=min(len(runs), 3)) as pool:
+        return joined_wav(list(pool.map(render, runs)))
 
 
 def speak(text, voice_note=False, language="en", origin="voice note"):
     provider = settings.get("tts_provider")
     if provider == "cartesia":
-        audio = _cartesia(text, language, origin)
+        audio = _cartesia_runs(text, language, origin)
     elif provider == "openai":
         audio = _openai(text)
     else:

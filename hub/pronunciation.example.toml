@@ -1,0 +1,10 @@
+# Words and phrases the voice says in another language.
+# Copy to ~/.config/diablo/pronunciation.toml on the hub box; edits load without a restart.
+# One table per language code the voice accepts (da, ja, de, sv, fr, or a locale like en-GB).
+# Matching is whole word and ignores case; the longest listed phrase wins.
+
+[da]
+words = ["Example Town", "Sample Phrase"]
+
+[ja]
+words = ["Samplebox"]
