@@ -155,14 +155,14 @@ export default function Workout() {
   const target: Picked | null = picked ?? (open && !changing ? { id: open.exercise, name: open.name, timed: open.timed, point: openMeta?.point } : null);
   const onOpen = !!open && !!target && target.id === open.exercise;
 
-  const parsedWeight = useMemo(() => {
+  const parsedWeight = useMemo((): { kg?: number; kind?: "total" | "added" | "assisted" } => {
     const raw = weightText.trim();
-    if (!raw) return { kg: undefined as number | undefined, kind: undefined as "total" | "added" | "assisted" | undefined };
+    if (!raw) return {};
     const m = /^([+-])?\s*(\d+(?:\.\d+)?)$/.exec(raw);
-    if (!m) return { kg: undefined, kind: undefined };
+    if (!m) return {};
     const kg = Number(m[2]);
-    if (!Number.isFinite(kg) || kg <= 0) return { kg: undefined, kind: undefined };
-    const kind = m[1] === "+" ? "added" : m[1] === "-" ? "assisted" : "total";
+    if (!Number.isFinite(kg) || kg <= 0) return {};
+    const kind: "total" | "added" | "assisted" = m[1] === "+" ? "added" : m[1] === "-" ? "assisted" : "total";
     return { kg, kind };
   }, [weightText]);
 
@@ -346,7 +346,7 @@ export default function Workout() {
               accessibilityRole="button"
               style={({ pressed }) => ({ paddingVertical: space(3), opacity: pressed ? 0.6 : 1 })}
             >
-              <Text style={{ color: color.accent, fontFamily: font.medium, ...type.body }}>{T.addCustom(query.trim())}</Text>
+              <Text style={{ color: color.text, fontFamily: font.medium, ...type.body }}>{T.addCustom(query.trim())}</Text>
             </Pressable>
           </View>
         ) : (
